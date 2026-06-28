@@ -1,0 +1,25 @@
+{
+  "name": "reservation-system",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c green,cyan \"npm run dev -w @reservation-system/api\" \"npm run dev -w @reservation-system/web\"",
+    "dev:api": "npm run dev -w @reservation-system/api",
+    "dev:web": "npm run dev -w @reservation-system/web",
+    "build": "npm run build -w @reservation-system/api && npm run build -w @reservation-system/web",
+    "typecheck": "npm run typecheck -w @reservation-system/api && npm run typecheck -w @reservation-system/web",
+    "db:generate": "npm run prisma:generate -w @reservation-system/api",
+    "db:push": "npm run prisma:push -w @reservation-system/api",
+    "db:seed": "npm run prisma:seed -w @reservation-system/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
