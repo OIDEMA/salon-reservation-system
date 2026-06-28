@@ -48,7 +48,7 @@ a {
 
 .appShell {
   display: grid;
-  grid-template-columns: 76px 1fr;
+  grid-template-columns: 248px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -1874,6 +1874,10 @@ a {
   }
 
   .adminShell {
+    grid-template-columns: 84px minmax(0, 1fr);
+  }
+
+  .appShell {
     grid-template-columns: 84px minmax(0, 1fr);
   }
 

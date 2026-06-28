@@ -11,18 +11,18 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  CircleAlert,
   Clock3,
   Columns3,
   Filter,
-  HelpCircle,
-  Home,
-  Mail,
+  LayoutDashboard,
   Plus,
-  Power,
   Printer,
   RefreshCw,
+  Scissors,
   Search,
   Settings,
+  Tags,
   UserRound,
   Users,
   Wrench,
@@ -50,16 +50,16 @@ const statusMeta: Record<ReservationStatus, { label: string; className: string; 
 };
 
 const navItems = [
-  { icon: Home, label: "予約表", href: "/" },
-  { icon: AlertCircle, label: "予約確認", href: "/confirmation" },
-  { icon: CalendarDays, label: "店舗カレンダー", href: "/calendar" },
-  { icon: Users, label: "予約者検索", href: "/reservations" },
-  { icon: Settings, label: "基本設定", href: "/settings" },
-  { icon: Wrench, label: "設備一覧", href: "/equipment" },
-  { icon: BookUser, label: "スタッフリスト", href: "/staff" },
-  { icon: Mail, label: "メニュー管理", href: "/menus" },
-  { icon: HelpCircle, label: "カテゴリー管理", href: "/categories" },
-  { icon: Power, label: "ログアウト", href: "#" }
+  { href: "/", label: "予約表", icon: LayoutDashboard },
+  { href: "/confirmation", label: "予約確認", icon: CircleAlert },
+  { href: "/calendar", label: "店舗カレンダー", icon: CalendarDays },
+  { href: "/reservations", label: "予約者検索", icon: Search },
+  { href: "/settings", label: "基本設定", icon: Settings },
+  { href: "/staff", label: "スタッフ", icon: Users },
+  { href: "/menus", label: "メニュー", icon: Scissors },
+  { href: "/categories", label: "カテゴリー", icon: Tags },
+  { href: "/equipment", label: "設備", icon: Wrench },
+  { href: "/customers", label: "顧客", icon: BookUser }
 ];
 
 function toMinutes(time: string) {
@@ -148,16 +148,17 @@ export function ReservationDashboard() {
 
   return (
     <main className="appShell">
-      <aside className="sidebar">
-        <div className="brandMark" title="SalonOps">
-          <CalendarCheck size={24} />
-        </div>
-        <nav className="iconNav" aria-label="primary">
-          {navItems.map((item, index) => {
+      <aside className="adminSidebar">
+        <a className="adminBrand" href="/" title="SalonOps">
+          <CalendarCheck size={25} />
+        </a>
+        <nav className="adminNav" aria-label="admin navigation">
+          {navItems.map((item) => {
             const Icon = item.icon;
             return (
-              <a className={index === 0 ? "navButton isActive" : "navButton"} href={item.href} key={item.label} title={item.label}>
-                <Icon size={22} />
+              <a className={item.href === "/" ? "adminNavItem isActive" : "adminNavItem"} href={item.href} key={item.href} title={item.label}>
+                <Icon size={21} />
+                <span>{item.label}</span>
               </a>
             );
           })}
