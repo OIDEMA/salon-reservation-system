@@ -1,6 +1,6 @@
 import { CalendarDays, ChevronLeft, ChevronRight, Clock3, Plus } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
-import { fetchDashboard } from "@/lib/api";
+import { fetchDashboardServer } from "@/lib/server-dashboard";
 
 const weekDays = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -9,7 +9,7 @@ export default async function StoreCalendarPage() {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(now);
   const [year, monthNumber] = today.split("-").map(Number);
   const monthIndex = monthNumber - 1;
-  const dashboard = await fetchDashboard(today);
+  const dashboard = await fetchDashboardServer(today);
   const month = buildMonth(year, monthIndex);
   const reservationsByDay = new Map<string, typeof dashboard.reservations>();
   reservationsByDay.set(today, dashboard.reservations);

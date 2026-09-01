@@ -1839,6 +1839,153 @@ a {
   font-weight: 900;
 }
 
+.authPage {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 32px;
+  background: linear-gradient(135deg, #e6fffb 0%, #f8fafc 55%, #eef2ff 100%);
+}
+
+.authCard {
+  width: min(460px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 34px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.12);
+}
+
+.authCard.tenantCard {
+  width: min(720px, 100%);
+}
+
+.authBrand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--teal-dark);
+  font-size: 20px;
+}
+
+.authCard h1 {
+  margin: 24px 0 8px;
+  font-size: 28px;
+}
+
+.authCard > p,
+.authMessage {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.authForm {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.authForm label {
+  display: grid;
+  gap: 7px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.authForm input {
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0 12px;
+  font: inherit;
+}
+
+.authTabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 5px;
+  border-radius: 10px;
+  background: #f1f5f9;
+}
+
+.authTabs button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font-weight: 900;
+}
+
+.authTabs button.isActive {
+  background: #fff;
+  color: var(--teal-dark);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+
+.authSubmit {
+  min-height: 48px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--teal);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.authSubmit:disabled {
+  opacity: 0.6;
+}
+
+.tenantSelector {
+  margin-top: 24px;
+}
+
+.tenantSelector h2 {
+  margin: 0 0 14px;
+  font-size: 18px;
+}
+
+.tenantCards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.tenantCards button {
+  display: grid;
+  gap: 6px;
+  min-height: 112px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  background: #fff;
+  text-align: left;
+}
+
+.tenantCards button:hover {
+  border-color: var(--teal);
+  background: #f0fdfa;
+}
+
+.tenantCards span,
+.tenantCards small {
+  color: #64748b;
+}
+
+.logoutButton {
+  margin: auto 12px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 9px 6px;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 @media (max-width: 1320px) {
   body {
     min-width: 1040px;

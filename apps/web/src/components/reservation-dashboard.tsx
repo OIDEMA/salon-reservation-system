@@ -32,6 +32,7 @@ import { format, parseISO } from "date-fns";
 import { ja } from "date-fns/locale";
 import { useEffect, useMemo, useState } from "react";
 import { fetchDashboard } from "@/lib/api";
+import { LogoutButton } from "@/components/logout-button";
 import { createEmptyDashboard, type DashboardData, type ReservationStatus, type ScheduleReservation } from "@/lib/types";
 
 const HOUR_WIDTH = 132;
@@ -174,6 +175,7 @@ export function ReservationDashboard() {
             );
           })}
         </nav>
+        <LogoutButton />
       </aside>
 
       <section className="workspace">

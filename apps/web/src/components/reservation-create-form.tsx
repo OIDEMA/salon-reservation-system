@@ -4,8 +4,6 @@ import { AlertCircle, CalendarCheck, CheckCircle2, Clock3, CreditCard, MessageCi
 import { useMemo, useState } from "react";
 import type { AdminMenu, AdminStaff } from "@/lib/admin-types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4001";
-
 const sourceOptions = [
   { value: "PHONE", label: "電話" },
   { value: "LINE", label: "LINE" },
@@ -115,7 +113,7 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
 
     setIsSubmitting(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/reservations`, {
+      const response = await fetch(`/api/backend/reservations`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"

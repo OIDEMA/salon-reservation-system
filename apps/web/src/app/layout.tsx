@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "SalonOps Reservation Console",
-  description: "Reservation operations console for LINE-first salons"
+  title: "SalonOps",
+  description: "サロン向けマルチテナント予約管理SaaS"
 };
 
 export default function RootLayout({

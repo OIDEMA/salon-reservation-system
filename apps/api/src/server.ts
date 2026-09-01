@@ -1,9 +1,10 @@
 import cors from "@fastify/cors";
-import { LineMessageStatus, PaymentStatus, PrismaClient, ReservationSource, ReservationStatus } from "@prisma/client";
+import { LineMessageStatus, PaymentStatus, ReservationSource, ReservationStatus, type TenantRole } from "@prisma/client";
 import Fastify from "fastify";
 import { z } from "zod";
+import { prisma } from "./database.js";
+import { requestedSalonId, requireAuthenticatedUser, requireTenantContext, type TenantContext } from "./tenant-context.js";
 
-const prisma = new PrismaClient();
 const server = Fastify({
   logger: {
     transport:
@@ -41,6 +42,20 @@ const createReservationSchema = z.object({
 const updateStatusSchema = z.object({
   status: z.nativeEnum(ReservationStatus)
 });
+
+const createTenantSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  slug: z
+    .string()
+    .trim()
+    .min(3)
+    .max(50)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  salonName: z.string().trim().min(1).max(100),
+  timezone: z.string().trim().min(1).max(50).default("Asia/Tokyo")
+});
+
+const writeRoles: TenantRole[] = ["OWNER", "ADMIN", "MANAGER", "STAFF"];
 
 function dayBounds(date: string) {
   const start = new Date(`${date}T00:00:00.000+09:00`);
@@ -95,9 +110,13 @@ function buildEmptyDashboard(date: string) {
   };
 }
 
-async function buildDashboardFromDatabase(date: string) {
+async function buildDashboardFromDatabase(date: string, tenantId: string, salonId?: string) {
   const { start, end } = dayBounds(date);
   const salon = await prisma.salon.findFirst({
+    where: {
+      tenantId,
+      ...(salonId ? { id: salonId } : {})
+    },
     include: {
       settings: true,
       staff: { orderBy: { sortOrder: "asc" } },
@@ -116,6 +135,7 @@ async function buildDashboardFromDatabase(date: string) {
   const [reservations, shifts] = await Promise.all([
     prisma.reservation.findMany({
       where: {
+        tenantId,
         salonId: salon.id,
         startsAt: { gte: start, lt: end }
       },
@@ -128,6 +148,7 @@ async function buildDashboardFromDatabase(date: string) {
     }),
     prisma.shift.findMany({
       where: {
+        tenantId,
         salonId: salon.id,
         startsAt: { lt: end },
         endsAt: { gt: start }
@@ -234,8 +255,28 @@ async function buildDashboardFromDatabase(date: string) {
   };
 }
 
-async function getPrimarySalon() {
-  return prisma.salon.findFirst({ orderBy: { createdAt: "asc" } });
+async function getTenantSalon(tenantId: string, salonId?: string) {
+  return prisma.salon.findFirst({
+    where: {
+      tenantId,
+      ...(salonId ? { id: salonId } : {})
+    },
+    orderBy: { createdAt: "asc" }
+  });
+}
+
+async function writeAuditLog(request: Parameters<typeof requestedSalonId>[0], context: TenantContext, action: string, resource: string, resourceId?: string) {
+  await prisma.auditLog.create({
+    data: {
+      tenantId: context.tenant.id,
+      actorUserId: context.user.id,
+      action,
+      resource,
+      resourceId,
+      ipAddress: request.ip,
+      userAgent: request.headers["user-agent"]
+    }
+  });
 }
 
 const corsOrigins = (process.env.CORS_ORIGINS ?? "")
@@ -254,136 +295,256 @@ server.get("/health", async () => ({
   time: new Date().toISOString()
 }));
 
-server.get("/api/dashboard", async (request) => {
+server.get("/api/me/tenants", async (request, reply) => {
+  const user = await requireAuthenticatedUser(request, reply);
+  if (!user) return;
+
+  return prisma.tenantMembership.findMany({
+    where: { userId: user.id, status: "ACTIVE", tenant: { status: "ACTIVE" } },
+    select: {
+      role: true,
+      tenant: {
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          salons: {
+            select: { id: true, name: true, timezone: true },
+            orderBy: { createdAt: "asc" }
+          }
+        }
+      }
+    },
+    orderBy: { createdAt: "asc" }
+  });
+});
+
+server.post("/api/tenants", async (request, reply) => {
+  const user = await requireAuthenticatedUser(request, reply);
+  if (!user) return;
+  const input = createTenantSchema.parse(request.body);
+
+  const existing = await prisma.tenant.findUnique({ where: { slug: input.slug } });
+  if (existing) {
+    return reply.code(409).send({ code: "TENANT_SLUG_EXISTS", message: "このテナントIDは既に使用されています。" });
+  }
+
+  const result = await prisma.$transaction(async (transaction) => {
+    const tenant = await transaction.tenant.create({ data: { name: input.name, slug: input.slug } });
+    await transaction.tenantMembership.create({
+      data: { tenantId: tenant.id, userId: user.id, role: "OWNER", status: "ACTIVE" }
+    });
+    const salon = await transaction.salon.create({
+      data: { tenantId: tenant.id, name: input.salonName, timezone: input.timezone }
+    });
+    await transaction.salonSettings.create({
+      data: {
+        tenantId: tenant.id,
+        salonId: salon.id,
+        storeId: input.slug,
+        cancellationMessage: "",
+        friendMessage: ""
+      }
+    });
+    await transaction.auditLog.create({
+      data: {
+        tenantId: tenant.id,
+        actorUserId: user.id,
+        action: "tenant.create",
+        resource: "tenant",
+        resourceId: tenant.id,
+        ipAddress: request.ip,
+        userAgent: request.headers["user-agent"]
+      }
+    });
+    return { tenant, salon };
+  });
+
+  return reply.code(201).send(result);
+});
+
+server.get("/api/dashboard", async (request, reply) => {
+  const context = await requireTenantContext(request, reply);
+  if (!context) return;
   const query = dateQuerySchema.parse(request.query);
-  return buildDashboardFromDatabase(query.date ?? currentDateInJapan());
+  return buildDashboardFromDatabase(query.date ?? currentDateInJapan(), context.tenant.id, requestedSalonId(request));
 });
 
-server.get("/api/staff", async () => {
-  const salon = await getPrimarySalon();
+server.get("/api/staff", async (request, reply) => {
+  const context = await requireTenantContext(request, reply);
+  if (!context) return;
+  const salon = await getTenantSalon(context.tenant.id, requestedSalonId(request));
   if (!salon) return [];
-  return prisma.staff.findMany({ where: { salonId: salon.id, active: true }, orderBy: { sortOrder: "asc" } });
+  return prisma.staff.findMany({
+    where: { tenantId: context.tenant.id, salonId: salon.id, active: true },
+    orderBy: { sortOrder: "asc" }
+  });
 });
 
-server.get("/api/services", async () => {
-  const salon = await getPrimarySalon();
+server.get("/api/services", async (request, reply) => {
+  const context = await requireTenantContext(request, reply);
+  if (!context) return;
+  const salon = await getTenantSalon(context.tenant.id, requestedSalonId(request));
   if (!salon) return [];
-  return prisma.service.findMany({ where: { salonId: salon.id, active: true }, orderBy: [{ category: "asc" }, { name: "asc" }] });
+  return prisma.service.findMany({
+    where: { tenantId: context.tenant.id, salonId: salon.id, active: true },
+    orderBy: [{ category: "asc" }, { name: "asc" }]
+  });
 });
 
-server.get("/api/admin/settings", async () => {
+server.get("/api/admin/settings", async (request, reply) => {
+  const context = await requireTenantContext(request, reply);
+  if (!context) return;
   const salon = await prisma.salon.findFirst({
+    where: {
+      tenantId: context.tenant.id,
+      ...(requestedSalonId(request) ? { id: requestedSalonId(request) } : {})
+    },
     orderBy: { createdAt: "asc" },
     include: { settings: true }
   });
 
-  if (!salon) {
-    return { salon: null, settings: null };
-  }
-
+  if (!salon) return { salon: null, settings: null };
   return {
-    salon: {
-      id: salon.id,
-      name: salon.name,
-      timezone: salon.timezone
-    },
+    salon: { id: salon.id, name: salon.name, timezone: salon.timezone },
     settings: salon.settings
   };
 });
 
-server.get("/api/admin/staff", async () => {
-  const salon = await getPrimarySalon();
+server.get("/api/admin/staff", async (request, reply) => {
+  const context = await requireTenantContext(request, reply);
+  if (!context) return;
+  const salon = await getTenantSalon(context.tenant.id, requestedSalonId(request));
   if (!salon) return [];
-  return prisma.staff.findMany({ where: { salonId: salon.id }, orderBy: { sortOrder: "asc" } });
+  return prisma.staff.findMany({ where: { tenantId: context.tenant.id, salonId: salon.id }, orderBy: { sortOrder: "asc" } });
 });
 
-server.get("/api/admin/menus", async () => {
-  const salon = await getPrimarySalon();
+server.get("/api/admin/menus", async (request, reply) => {
+  const context = await requireTenantContext(request, reply);
+  if (!context) return;
+  const salon = await getTenantSalon(context.tenant.id, requestedSalonId(request));
   if (!salon) return [];
-  return prisma.service.findMany({ where: { salonId: salon.id }, orderBy: { sortOrder: "asc" } });
+  return prisma.service.findMany({ where: { tenantId: context.tenant.id, salonId: salon.id }, orderBy: { sortOrder: "asc" } });
 });
 
-server.get("/api/admin/categories", async () => {
-  const salon = await getPrimarySalon();
+server.get("/api/admin/categories", async (request, reply) => {
+  const context = await requireTenantContext(request, reply);
+  if (!context) return;
+  const salon = await getTenantSalon(context.tenant.id, requestedSalonId(request));
   if (!salon) return [];
-  return prisma.menuCategory.findMany({ where: { salonId: salon.id }, orderBy: { sortOrder: "asc" } });
+  return prisma.menuCategory.findMany({ where: { tenantId: context.tenant.id, salonId: salon.id }, orderBy: { sortOrder: "asc" } });
 });
 
-server.get("/api/admin/equipment", async () => {
-  const salon = await getPrimarySalon();
+server.get("/api/admin/equipment", async (request, reply) => {
+  const context = await requireTenantContext(request, reply);
+  if (!context) return;
+  const salon = await getTenantSalon(context.tenant.id, requestedSalonId(request));
   if (!salon) return [];
-  return prisma.equipment.findMany({ where: { salonId: salon.id }, orderBy: { sortOrder: "asc" } });
+  return prisma.equipment.findMany({ where: { tenantId: context.tenant.id, salonId: salon.id }, orderBy: { sortOrder: "asc" } });
 });
 
 server.post("/api/reservations", async (request, reply) => {
+  const context = await requireTenantContext(request, reply, writeRoles);
+  if (!context) return;
   const input = createReservationSchema.parse(request.body);
-  const salon = await getPrimarySalon();
-  if (!salon) {
-    return reply.code(409).send({ message: "店舗情報を先に登録してください。" });
+  const salon = await getTenantSalon(context.tenant.id, requestedSalonId(request));
+  if (!salon) return reply.code(409).send({ message: "店舗情報を先に登録してください。" });
+
+  if (input.staffId) {
+    const staffExists = await prisma.staff.findFirst({
+      where: { id: input.staffId, tenantId: context.tenant.id, salonId: salon.id, active: true }
+    });
+    if (!staffExists) return reply.code(400).send({ code: "INVALID_STAFF", message: "担当スタッフが見つかりません。" });
   }
 
-  const customer = await prisma.customer.create({
-    data: {
-      salonId: salon.id,
-      name: input.customerName,
-      kana: input.customerKana || input.customerName,
-      phone: input.customerPhone,
-      tags: ["新規"],
-      memo: input.memo
-    }
-  });
-  const service =
-    (input.serviceId
-      ? await prisma.service.findFirst({
-          where: { id: input.serviceId, salonId: salon.id }
-        })
-      : null) ??
-    (await prisma.service.findFirst({
-      where: { salonId: salon.id, name: input.serviceName }
-    })) ??
-    (await prisma.service.create({
-      data: {
-        salonId: salon.id,
-        name: input.serviceName,
-        category: "Custom",
-        durationMinutes: input.durationMinutes,
-        price: 0,
-        color: "#0891b2"
-      }
-    }));
   const startsAt = new Date(`${input.date}T${input.startTime}:00.000+09:00`);
   const endsAt = new Date(startsAt.getTime() + input.durationMinutes * 60_000);
-
-  const reservation = await prisma.reservation.create({
+  const reservation = await prisma.$transaction(async (transaction) => {
+    const customer = await transaction.customer.create({
+      data: {
+        tenantId: context.tenant.id,
+        salonId: salon.id,
+        name: input.customerName,
+        kana: input.customerKana || input.customerName,
+        phone: input.customerPhone,
+        tags: ["新規"],
+        memo: input.memo
+      }
+    });
+    const service =
+      (input.serviceId
+        ? await transaction.service.findFirst({
+            where: { id: input.serviceId, tenantId: context.tenant.id, salonId: salon.id, active: true }
+          })
+        : null) ??
+      (await transaction.service.findFirst({
+        where: { tenantId: context.tenant.id, salonId: salon.id, name: input.serviceName }
+      })) ??
+      (await transaction.service.create({
         data: {
+          tenantId: context.tenant.id,
           salonId: salon.id,
-          staffId: input.staffId,
-          customerId: customer.id,
-          serviceId: service.id,
-          startsAt,
-          endsAt,
-          status: input.status,
-          source: input.source,
-          isRequest: input.isRequest ?? Boolean(input.staffId),
-          memo: input.memo,
-          paymentStatus: input.paymentStatus,
-          lineMessageStatus: input.lineMessageStatus
-        },
-        include: { customer: true, service: true, staff: true }
+          name: input.serviceName,
+          category: "Custom",
+          durationMinutes: input.durationMinutes,
+          price: 0,
+          color: "#0891b2"
+        }
+      }));
+
+    const created = await transaction.reservation.create({
+      data: {
+        tenantId: context.tenant.id,
+        salonId: salon.id,
+        staffId: input.staffId,
+        customerId: customer.id,
+        serviceId: service.id,
+        startsAt,
+        endsAt,
+        status: input.status,
+        source: input.source,
+        isRequest: input.isRequest ?? Boolean(input.staffId),
+        memo: input.memo,
+        paymentStatus: input.paymentStatus,
+        lineMessageStatus: input.lineMessageStatus
+      },
+      include: { customer: true, service: true, staff: true }
+    });
+    await transaction.auditLog.create({
+      data: {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "reservation.create",
+        resource: "reservation",
+        resourceId: created.id,
+        ipAddress: request.ip,
+        userAgent: request.headers["user-agent"]
+      }
+    });
+    return created;
   });
 
-  reply.code(201);
-  return reservation;
+  return reply.code(201).send(reservation);
 });
 
-server.patch("/api/reservations/:id/status", async (request) => {
+server.patch("/api/reservations/:id/status", async (request, reply) => {
+  const context = await requireTenantContext(request, reply, writeRoles);
+  if (!context) return;
+  const salon = await getTenantSalon(context.tenant.id, requestedSalonId(request));
+  if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
   const params = z.object({ id: z.string() }).parse(request.params);
   const input = updateStatusSchema.parse(request.body);
 
-  return prisma.reservation.update({
-    where: { id: params.id },
+  const result = await prisma.reservation.updateMany({
+    where: { id: params.id, tenantId: context.tenant.id, salonId: salon.id },
     data: { status: input.status }
   });
+  if (result.count === 0) {
+    return reply.code(404).send({ code: "RESERVATION_NOT_FOUND", message: "予約が見つかりません。" });
+  }
+
+  await writeAuditLog(request, context, "reservation.status.update", "reservation", params.id);
+  return prisma.reservation.findFirst({ where: { id: params.id, tenantId: context.tenant.id, salonId: salon.id } });
 });
 
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4001);

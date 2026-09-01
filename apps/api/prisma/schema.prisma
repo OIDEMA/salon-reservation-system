@@ -61,8 +61,105 @@ enum CategoryType {
   OPTION
 }
 
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
+enum TenantRole {
+  OWNER
+  ADMIN
+  MANAGER
+  STAFF
+  VIEWER
+}
+
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+}
+
+model Tenant {
+  id          String             @id @default(cuid())
+  slug        String             @unique
+  name        String
+  status      TenantStatus       @default(ACTIVE)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  auditLogs   AuditLog[]
+  invitations TenantInvitation[]
+  memberships TenantMembership[]
+  salons      Salon[]
+}
+
+model AppUser {
+  id              String             @id @default(cuid())
+  firebaseUid     String             @unique
+  email           String?            @unique
+  displayName     String?
+  disabled        Boolean            @default(false)
+  lastSignedInAt  DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  auditLogs       AuditLog[]         @relation("AuditActor")
+  invitationsSent TenantInvitation[] @relation("InvitationSender")
+  memberships     TenantMembership[]
+}
+
+model TenantMembership {
+  tenantId  String
+  userId    String
+  role      TenantRole       @default(STAFF)
+  status    MembershipStatus @default(ACTIVE)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user      AppUser          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, userId])
+  @@index([userId, status])
+}
+
+model TenantInvitation {
+  id              String     @id @default(cuid())
+  tenantId        String
+  email           String
+  role            TenantRole @default(STAFF)
+  tokenHash       String     @unique
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  invitedByUserId String
+  createdAt       DateTime   @default(now())
+  tenant          Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invitedBy       AppUser    @relation("InvitationSender", fields: [invitedByUserId], references: [id])
+
+  @@index([tenantId, email])
+  @@index([email, expiresAt])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  tenantId    String
+  actorUserId String?
+  action      String
+  resource    String
+  resourceId  String?
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actor       AppUser? @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@index([actorUserId, createdAt])
+}
+
 model Salon {
   id            String         @id @default(cuid())
+  tenantId      String
   name          String
   timezone      String         @default("Asia/Tokyo")
   createdAt     DateTime       @default(now())
@@ -76,56 +173,65 @@ model Salon {
   settings      SalonSettings?
   shifts        Shift[]
   staff         Staff[]
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, createdAt])
 }
 
 model Staff {
-  id           String        @id @default(cuid())
-  salonId      String
-  name         String
-  kana         String
-  role         StaffRole
-  color        String
-  imageUrl     String?
-  nominationFee Int          @default(0)
-  comment      String?
-  allocationOrder Int        @default(1)
-  parallelCapacity Int       @default(1)
-  active       Boolean       @default(true)
-  sortOrder    Int           @default(0)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  reservations Reservation[]
-  salon        Salon         @relation(fields: [salonId], references: [id], onDelete: Cascade)
-  shifts       Shift[]
+  id               String        @id @default(cuid())
+  tenantId         String
+  salonId          String
+  name             String
+  kana             String
+  role             StaffRole
+  color            String
+  imageUrl         String?
+  nominationFee    Int           @default(0)
+  comment          String?
+  allocationOrder  Int           @default(1)
+  parallelCapacity Int           @default(1)
+  active           Boolean       @default(true)
+  sortOrder        Int           @default(0)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  reservations     Reservation[]
+  salon            Salon         @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
+  shifts           Shift[]
 
-  @@index([salonId, sortOrder])
+  @@unique([tenantId, salonId, id])
+  @@index([tenantId, salonId, sortOrder])
 }
 
 model Service {
-  id              String        @id @default(cuid())
-  salonId         String
-  name            String
-  category        String
-  imageUrl        String?
-  description     String        @default("")
-  durationMinutes Int
-  price           Int
-  color           String
-  menuType        String        @default("通常メニュー")
-  lineVisible     Boolean       @default(true)
-  unlimitedBooking Boolean      @default(true)
-  sortOrder       Int           @default(0)
-  active          Boolean       @default(true)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  reservations    Reservation[]
-  salon           Salon         @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  id               String        @id @default(cuid())
+  tenantId         String
+  salonId          String
+  name             String
+  category         String
+  imageUrl         String?
+  description      String        @default("")
+  durationMinutes  Int
+  price            Int
+  color            String
+  menuType         String        @default("通常メニュー")
+  lineVisible      Boolean       @default(true)
+  unlimitedBooking Boolean       @default(true)
+  sortOrder        Int           @default(0)
+  active           Boolean       @default(true)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  reservations     Reservation[]
+  salon            Salon         @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
 
-  @@index([salonId, category])
+  @@unique([tenantId, salonId, id])
+  @@index([tenantId, salonId, category])
 }
 
 model MenuCategory {
   id          String       @id @default(cuid())
+  tenantId    String
   salonId     String
   name        String
   type        CategoryType @default(MENU)
@@ -135,13 +241,14 @@ model MenuCategory {
   sortOrder   Int          @default(0)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
-  salon       Salon        @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  salon       Salon        @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
 
-  @@index([salonId, type, sortOrder])
+  @@index([tenantId, salonId, type, sortOrder])
 }
 
 model Equipment {
   id              String   @id @default(cuid())
+  tenantId        String
   salonId         String
   name            String
   capacity        Int      @default(1)
@@ -152,54 +259,58 @@ model Equipment {
   sortOrder       Int      @default(0)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
-  salon           Salon    @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  salon           Salon    @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
 
-  @@index([salonId, sortOrder])
+  @@index([tenantId, salonId, sortOrder])
 }
 
 model SalonSettings {
-  id                         String   @id @default(cuid())
-  salonId                    String   @unique
-  storeId                    String
-  openTime                   String   @default("09:00")
-  closeTime                  String   @default("22:00")
-  closedDays                 String[] @default([])
-  maxConcurrentReservations  Int      @default(7)
-  bookingWindowType          String   @default("month")
-  bookingWindowValue         String   @default("1ヶ月先")
-  reservationCutoffMode      String   @default("previous_day")
-  reservationCutoffHours     Float    @default(0)
-  reservationCutoffDays      Int      @default(1)
-  reservationCutoffTime      String   @default("21:30")
-  cancellationCutoffMode     String   @default("previous_day")
-  cancellationCutoffHours    Float    @default(0)
-  cancellationCutoffDays     Int      @default(1)
-  cancellationCutoffTime     String   @default("21:30")
-  multiMenuBooking           Boolean  @default(true)
-  autoAssignUnspecified      Boolean  @default(true)
-  lineThemeColor             String   @default("#ff0000")
-  categoryDisplayMode        String   @default("collapsed")
-  candidateIntervalMinutes   Int      @default(30)
-  calendarDefaultView        String   @default("week")
-  calendarDisplayMode        String   @default("collapsed")
-  notifyReservationEmail     Boolean  @default(true)
-  notifyReservationLine      Boolean  @default(false)
-  notifyCancellation         Boolean  @default(true)
-  notifyCancellationEmail    Boolean  @default(true)
-  notifyCancellationLine     Boolean  @default(false)
-  cancellationMessage        String
-  friendMessage              String
-  preReservationMessage      String   @default("")
-  questionsEnabled           Boolean  @default(false)
-  paymentEnabled             Boolean  @default(false)
-  acceptingReservations      Boolean  @default(true)
-  createdAt                  DateTime @default(now())
-  updatedAt                  DateTime @updatedAt
-  salon                      Salon    @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  id                        String   @id @default(cuid())
+  tenantId                  String
+  salonId                   String
+  storeId                   String
+  openTime                  String   @default("09:00")
+  closeTime                 String   @default("22:00")
+  closedDays                String[] @default([])
+  maxConcurrentReservations Int      @default(7)
+  bookingWindowType         String   @default("month")
+  bookingWindowValue        String   @default("1ヶ月先")
+  reservationCutoffMode     String   @default("previous_day")
+  reservationCutoffHours    Float    @default(0)
+  reservationCutoffDays     Int      @default(1)
+  reservationCutoffTime     String   @default("21:30")
+  cancellationCutoffMode    String   @default("previous_day")
+  cancellationCutoffHours   Float    @default(0)
+  cancellationCutoffDays    Int      @default(1)
+  cancellationCutoffTime    String   @default("21:30")
+  multiMenuBooking          Boolean  @default(true)
+  autoAssignUnspecified     Boolean  @default(true)
+  lineThemeColor            String   @default("#ff0000")
+  categoryDisplayMode       String   @default("collapsed")
+  candidateIntervalMinutes  Int      @default(30)
+  calendarDefaultView       String   @default("week")
+  calendarDisplayMode       String   @default("collapsed")
+  notifyReservationEmail    Boolean  @default(true)
+  notifyReservationLine     Boolean  @default(false)
+  notifyCancellation        Boolean  @default(true)
+  notifyCancellationEmail   Boolean  @default(true)
+  notifyCancellationLine    Boolean  @default(false)
+  cancellationMessage       String
+  friendMessage             String
+  preReservationMessage     String   @default("")
+  questionsEnabled          Boolean  @default(false)
+  paymentEnabled            Boolean  @default(false)
+  acceptingReservations     Boolean  @default(true)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+  salon                     Salon    @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([tenantId, salonId])
 }
 
 model Customer {
   id              String        @id @default(cuid())
+  tenantId        String
   salonId         String
   name            String
   kana            String
@@ -213,13 +324,15 @@ model Customer {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   reservations    Reservation[]
-  salon           Salon         @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  salon           Salon         @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
 
-  @@index([salonId, kana])
+  @@unique([tenantId, salonId, id])
+  @@index([tenantId, salonId, kana])
 }
 
 model Reservation {
   id                String            @id @default(cuid())
+  tenantId          String
   salonId           String
   staffId           String?
   customerId        String
@@ -235,18 +348,19 @@ model Reservation {
   lineMessageStatus LineMessageStatus @default(NOT_SENT)
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
-  customer          Customer          @relation(fields: [customerId], references: [id])
-  salon             Salon             @relation(fields: [salonId], references: [id], onDelete: Cascade)
-  service           Service           @relation(fields: [serviceId], references: [id])
-  staff             Staff?            @relation(fields: [staffId], references: [id])
+  customer          Customer          @relation(fields: [tenantId, salonId, customerId], references: [tenantId, salonId, id])
+  salon             Salon             @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
+  service           Service           @relation(fields: [tenantId, salonId, serviceId], references: [tenantId, salonId, id])
+  staff             Staff?            @relation(fields: [tenantId, salonId, staffId], references: [tenantId, salonId, id])
 
-  @@index([salonId, startsAt])
-  @@index([staffId, startsAt])
-  @@index([customerId])
+  @@index([tenantId, salonId, startsAt])
+  @@index([tenantId, staffId, startsAt])
+  @@index([tenantId, customerId])
 }
 
 model Shift {
   id        String    @id @default(cuid())
+  tenantId  String
   salonId   String
   staffId   String?
   label     String
@@ -255,15 +369,16 @@ model Shift {
   endsAt    DateTime
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
-  salon     Salon     @relation(fields: [salonId], references: [id], onDelete: Cascade)
-  staff     Staff?    @relation(fields: [staffId], references: [id])
+  salon     Salon     @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
+  staff     Staff?    @relation(fields: [tenantId, salonId, staffId], references: [tenantId, salonId, id])
 
-  @@index([salonId, startsAt])
-  @@index([staffId, startsAt])
+  @@index([tenantId, salonId, startsAt])
+  @@index([tenantId, staffId, startsAt])
 }
 
 model Notification {
   id        String    @id @default(cuid())
+  tenantId  String
   salonId   String
   kind      String
   title     String
@@ -271,7 +386,7 @@ model Notification {
   severity  String    @default("info")
   readAt    DateTime?
   createdAt DateTime  @default(now())
-  salon     Salon     @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  salon     Salon     @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
 
-  @@index([salonId, readAt])
+  @@index([tenantId, salonId, readAt])
 }

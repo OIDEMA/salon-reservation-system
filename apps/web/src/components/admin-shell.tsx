@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { LogoutButton } from "@/components/logout-button";
 
 const navItems = [
   { href: "/", label: "予約表", icon: LayoutDashboard },
@@ -55,6 +56,7 @@ export function AdminShell({ active, title, subtitle, badge, actions, children }
             );
           })}
         </nav>
+        <LogoutButton />
       </aside>
 
       <section className="adminWorkspace">

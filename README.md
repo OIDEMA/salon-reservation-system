@@ -2,6 +2,8 @@
 
 Next.js frontend + Fastify API + Prisma + PostgreSQL for a salon reservation operations console.
 
+The application is a multi-tenant SaaS. Firebase Authentication verifies identities, while PostgreSQL stores tenant memberships, roles, salon ownership, and audit logs. See [docs/tenancy.md](docs/tenancy.md) for the isolation rules.
+
 ## Apps
 
 - `apps/web`: Next.js admin frontend
@@ -18,6 +20,8 @@ npm run db:generate
 npm run db:push
 npm run dev
 ```
+
+Firebase Authentication environment variables from `.env.example` are required for login. Email/password accounts must verify their email address before a server session is issued.
 
 - Frontend: http://localhost:3000
 - API: http://localhost:4001

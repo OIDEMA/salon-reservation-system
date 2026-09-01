@@ -1,7 +1,7 @@
 import { AlertCircle, CalendarCheck, CheckCircle2, CircleDollarSign, Clock3, Command, CreditCard, MessageCircle, Plus, Send, Sparkles, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 import { AdminShell } from "@/components/admin-shell";
-import { fetchDashboard } from "@/lib/api";
+import { fetchDashboardServer } from "@/lib/server-dashboard";
 import type { ReservationStatus, ScheduleReservation } from "@/lib/types";
 
 const statusMeta: Record<ReservationStatus, { label: string; className: string }> = {
@@ -29,7 +29,7 @@ type ConfirmationPageProps = {
 export default async function ConfirmationPage({ searchParams }: ConfirmationPageProps) {
   const params = await searchParams;
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date());
-  const dashboard = await fetchDashboard(today);
+  const dashboard = await fetchDashboardServer(today);
   const selectedReservation =
     dashboard.reservations.find((reservation) => reservation.id === params?.reservation) ??
     dashboard.queue[0] ??

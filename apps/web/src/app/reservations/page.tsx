@@ -1,6 +1,6 @@
 import { CalendarCheck, CheckCircle2, CreditCard, MessageCircle, Search } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
-import { fetchDashboard } from "@/lib/api";
+import { fetchDashboardServer } from "@/lib/server-dashboard";
 
 const yen = new Intl.NumberFormat("ja-JP", {
   style: "currency",
@@ -10,7 +10,7 @@ const yen = new Intl.NumberFormat("ja-JP", {
 
 export default async function ReservationSearchPage() {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date());
-  const dashboard = await fetchDashboard(today);
+  const dashboard = await fetchDashboardServer(today);
 
   return (
     <AdminShell
