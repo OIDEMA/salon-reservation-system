@@ -1,0 +1,20 @@
+{
+  "apphosting": [
+    {
+      "backendId": "salon-reserve-web",
+      "rootDir": "apps/web",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "/apps/api/**",
+        "/package.json",
+        "/package-lock.json",
+        "/docker-compose.yml",
+        "/.env.example",
+        "/README.md"
+      ]
+    }
+  ]
+}

@@ -278,8 +278,13 @@ const demoAdmin = {
   ]
 };
 
+const corsOrigins = (process.env.CORS_ORIGINS ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 await server.register(cors, {
-  origin: [/^http:\/\/localhost:\d+$/],
+  origin: [/^http:\/\/localhost:\d+$/, ...corsOrigins],
   credentials: true
 });
 
@@ -475,8 +480,18 @@ server.patch("/api/reservations/:id/status", async (request) => {
   );
 });
 
-const port = Number(process.env.API_PORT ?? 4001);
+const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4001);
 const host = process.env.API_HOST ?? "0.0.0.0";
+
+async function shutdown(signal: string) {
+  server.log.info({ signal }, "shutting down");
+  await server.close();
+  await prisma.$disconnect();
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
 
 try {
   await server.listen({ port, host });

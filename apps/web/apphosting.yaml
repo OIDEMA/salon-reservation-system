@@ -1,0 +1,13 @@
+runConfig:
+  minInstances: 0
+  maxInstances: 1
+  concurrency: 80
+  cpu: 1
+  memoryMiB: 512
+
+env:
+  - variable: NEXT_PUBLIC_API_BASE_URL
+    value: https://reservation-api-42401528382.asia-east1.run.app
+    availability:
+      - BUILD
+      - RUNTIME
