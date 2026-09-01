@@ -101,7 +101,7 @@ jobs:
             --set-cloudsql-instances="$PROJECT_ID:$REGION:salon-reserve-db" \
             --set-secrets=DATABASE_URL=reservation-database-url:latest \
             --command=npm \
-            --args=run,prisma:push \
+            --args=run,prisma:deploy \
             --tasks=1 \
             --max-retries=0 \
             --task-timeout=10m \

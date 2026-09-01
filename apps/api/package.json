@@ -9,7 +9,8 @@
     "start": "node dist/src/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prisma:generate": "prisma generate",
-    "prisma:push": "prisma db push"
+    "prisma:push": "prisma db push",
+    "prisma:deploy": "prisma db push --accept-data-loss"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
