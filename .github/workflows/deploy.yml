@@ -78,6 +78,7 @@ jobs:
           gcloud builds submit apps/api \
             --project="$PROJECT_ID" \
             --region="$REGION" \
+            --gcs-source-staging-dir="gs://run-sources-${PROJECT_ID}-${REGION}/github-actions" \
             --tag="$API_IMAGE" \
             --quiet
 
