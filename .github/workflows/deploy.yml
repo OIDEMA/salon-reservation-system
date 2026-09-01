@@ -74,8 +74,6 @@ jobs:
 
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v3
-        with:
-          version: ">= 580.0.0"
 
       - name: Configure Artifact Registry authentication
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
@@ -114,7 +112,6 @@ jobs:
             --network="$VPC_NETWORK" \
             --subnet="$VPC_SUBNET" \
             --vpc-egress=private-ranges-only \
-            --clear-cloudsql-instances \
             --set-secrets=DATABASE_URL=reservation-database-url:latest \
             --set-env-vars=DB_CONNECTIVITY=private-ip \
             --command=npm \
@@ -144,7 +141,6 @@ jobs:
             --network="$VPC_NETWORK" \
             --subnet="$VPC_SUBNET" \
             --vpc-egress=private-ranges-only \
-            --clear-cloudsql-instances \
             --set-secrets=DATABASE_URL=reservation-database-url:latest \
             --set-env-vars=NODE_ENV=production,DB_CONNECTIVITY=private-ip,CORS_ORIGINS=https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app \
             --cpu=1 \
@@ -158,6 +154,22 @@ jobs:
 
       - name: Verify API
         run: |
+          gcloud run services describe "$API_SERVICE" \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --format=json \
+            | jq -e --arg network "$VPC_NETWORK" --arg subnet "$VPC_SUBNET" \
+              '(.spec.template.metadata.annotations["run.googleapis.com/cloudsql-instances"] // "") == "" and
+               (.spec.template.metadata.annotations["run.googleapis.com/network-interfaces"] | fromjson | .[0].network) == $network and
+               (.spec.template.metadata.annotations["run.googleapis.com/network-interfaces"] | fromjson | .[0].subnetwork) == $subnet'
+          gcloud run jobs describe reservation-db-migrate \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --format=json \
+            | jq -e --arg network "$VPC_NETWORK" --arg subnet "$VPC_SUBNET" \
+              '(.spec.template.metadata.annotations["run.googleapis.com/cloudsql-instances"] // "") == "" and
+               (.spec.template.metadata.annotations["run.googleapis.com/network-interfaces"] | fromjson | .[0].network) == $network and
+               (.spec.template.metadata.annotations["run.googleapis.com/network-interfaces"] | fromjson | .[0].subnetwork) == $subnet'
           curl --fail --silent --show-error \
             --retry 6 --retry-delay 5 --retry-all-errors \
             "https://reservation-api-${PROJECT_NUMBER}.${REGION}.run.app/health"
