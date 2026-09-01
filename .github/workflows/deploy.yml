@@ -149,11 +149,7 @@ jobs:
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Deploy frontend to Firebase App Hosting
-        run: |
-          npx --yes firebase-tools@15.19.1 deploy \
-            --only="apphosting:${APP_HOSTING_BACKEND}" \
-            --project="$PROJECT_ID" \
-            --force
+        run: bash .github/scripts/deploy-app-hosting.sh
 
       - name: Verify frontend
         run: |
