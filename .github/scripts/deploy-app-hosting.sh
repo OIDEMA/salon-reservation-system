@@ -68,7 +68,7 @@ poll_operation() {
 }
 
 echo "Creating source archive for ${GITHUB_SHA}."
-git archive --format=zip --output="$ARCHIVE_PATH" HEAD
+git archive --format=zip --output="$ARCHIVE_PATH" HEAD apps/web
 
 SOURCE_URI="gs://${SOURCE_BUCKET}/${ARCHIVE_NAME}"
 echo "Uploading source archive to ${SOURCE_URI}."
