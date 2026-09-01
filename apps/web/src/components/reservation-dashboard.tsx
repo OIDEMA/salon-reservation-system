@@ -32,8 +32,7 @@ import { format, parseISO } from "date-fns";
 import { ja } from "date-fns/locale";
 import { useEffect, useMemo, useState } from "react";
 import { fetchDashboard } from "@/lib/api";
-import { mockDashboard } from "@/lib/mock-dashboard";
-import type { DashboardData, ReservationStatus, ScheduleReservation } from "@/lib/types";
+import { createEmptyDashboard, type DashboardData, type ReservationStatus, type ScheduleReservation } from "@/lib/types";
 
 const HOUR_WIDTH = 132;
 const ROW_HEIGHT = 76;
@@ -87,17 +86,19 @@ function iconButtonLabel(label: string, icon: React.ReactNode) {
 }
 
 export function ReservationDashboard() {
-  const [date, setDate] = useState("2026-06-28");
-  const [dashboard, setDashboard] = useState<DashboardData>(mockDashboard);
-  const [selectedId, setSelectedId] = useState("res-003");
+  const [date, setDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
+  const [dashboard, setDashboard] = useState<DashboardData>(() => createEmptyDashboard(format(new Date(), "yyyy-MM-dd")));
+  const [selectedId, setSelectedId] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | ReservationStatus>("ALL");
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<"timeline" | "agenda">("timeline");
   const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     let ignore = false;
     setIsLoading(true);
+    setLoadError("");
     fetchDashboard(date)
       .then((data) => {
         if (!ignore) {
@@ -105,6 +106,13 @@ export function ReservationDashboard() {
           if (!data.reservations.some((reservation) => reservation.id === selectedId)) {
             setSelectedId(data.reservations[0]?.id ?? "");
           }
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setDashboard(createEmptyDashboard(date));
+          setSelectedId("");
+          setLoadError("予約データを取得できませんでした。APIとデータベースの状態を確認してください。");
         }
       })
       .finally(() => {
@@ -143,7 +151,10 @@ export function ReservationDashboard() {
     });
   }, [dashboard.reservations, query, statusFilter]);
 
-  const currentMinute = toMinutes("17:48") - timeline.start;
+  const now = new Date();
+  const today = format(now, "yyyy-MM-dd");
+  const currentMinute = now.getHours() * 60 + now.getMinutes() - timeline.start;
+  const showNowLine = date === today && currentMinute >= 0 && currentMinute <= timeline.end - timeline.start;
   const boardHeight = dashboard.rows.length * ROW_HEIGHT;
 
   return (
@@ -170,8 +181,8 @@ export function ReservationDashboard() {
           <div className="storeIdentity">
             <Building2 size={20} />
             <div>
-              <p>{dashboard.salon.name}</p>
-              <span>{dashboard.salon.plan} / {dashboard.salon.timezone}</span>
+              <p>{dashboard.salon?.name ?? "店舗未設定"}</p>
+              <span>{dashboard.salon?.timezone ?? "店舗情報を登録してください"}</span>
             </div>
           </div>
           <div className="noticeRail">
@@ -245,6 +256,9 @@ export function ReservationDashboard() {
               </a>
             </div>
 
+            {loadError ? <div className="adminNotice">{loadError}</div> : null}
+            {!loadError && !dashboard.salon ? <div className="adminNotice">店舗情報が未登録です。基本設定から店舗を登録してください。</div> : null}
+
             {viewMode === "timeline" ? (
               <div className="scheduleShell">
                 <div className="resourceColumn">
@@ -316,9 +330,11 @@ export function ReservationDashboard() {
                           />
                         );
                       })}
-                      <div className="nowLine" style={{ left: (currentMinute / 60) * HOUR_WIDTH }}>
-                        <span />
-                      </div>
+                      {showNowLine ? (
+                        <div className="nowLine" style={{ left: (currentMinute / 60) * HOUR_WIDTH }}>
+                          <span />
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 </div>

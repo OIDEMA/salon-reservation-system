@@ -45,8 +45,7 @@ export type DashboardData = {
     id: string;
     name: string;
     timezone: string;
-    plan: string;
-  };
+  } | null;
   hours: {
     start: string;
     end: string;
@@ -79,3 +78,31 @@ export type DashboardData = {
     averageTicket: number;
   };
 };
+
+export function createEmptyDashboard(date: string): DashboardData {
+  return {
+    date,
+    salon: null,
+    hours: {
+      start: "09:00",
+      end: "20:00",
+      stepMinutes: 30
+    },
+    rows: [],
+    reservations: [],
+    blocks: [],
+    notifications: [],
+    queue: [],
+    suggestions: [],
+    summary: {
+      revenue: 0,
+      pendingCount: 0,
+      confirmedCount: 0,
+      occupancyRate: 0,
+      waitlistCount: 0,
+      noShowRiskCount: 0,
+      lineReadRate: 0,
+      averageTicket: 0
+    }
+  };
+}

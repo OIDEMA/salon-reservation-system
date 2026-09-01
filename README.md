@@ -5,7 +5,7 @@ Next.js frontend + Fastify API + Prisma + PostgreSQL for a salon reservation ope
 ## Apps
 
 - `apps/web`: Next.js admin frontend
-- `apps/api`: Fastify API, Prisma schema, seed data
+- `apps/api`: Fastify API and Prisma schema
 - `docker-compose.yml`: local PostgreSQL
 
 ## Quick Start
@@ -16,7 +16,6 @@ docker compose up -d
 npm install
 npm run db:generate
 npm run db:push
-npm run db:seed
 npm run dev
 ```
 
@@ -24,7 +23,7 @@ npm run dev
 - API: http://localhost:4001
 - Health check: http://localhost:4001/health
 
-The frontend includes a resilient demo-data fallback, so the interface still opens while PostgreSQL is being prepared.
+PostgreSQL is the source of truth. When no store has been registered, the application shows an empty state instead of sample data.
 
 ## Deploy Notes
 

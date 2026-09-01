@@ -28,7 +28,8 @@ type ConfirmationPageProps = {
 
 export default async function ConfirmationPage({ searchParams }: ConfirmationPageProps) {
   const params = await searchParams;
-  const dashboard = await fetchDashboard("2026-06-28");
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date());
+  const dashboard = await fetchDashboard(today);
   const selectedReservation =
     dashboard.reservations.find((reservation) => reservation.id === params?.reservation) ??
     dashboard.queue[0] ??

@@ -5,6 +5,7 @@ import { fetchAdminMenus, fetchAdminStaff } from "@/lib/admin-api";
 
 export default async function ReservationCreatePage() {
   const [menus, staff] = await Promise.all([fetchAdminMenus(), fetchAdminStaff()]);
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date());
 
   return (
     <AdminShell
@@ -33,7 +34,7 @@ export default async function ReservationCreatePage() {
           </div>
           <strong>{menus.length}メニュー / {staff.length}枠</strong>
         </section>
-        <ReservationCreateForm menus={menus} staff={staff} defaultDate="2026-06-28" />
+        <ReservationCreateForm menus={menus} staff={staff} defaultDate={today} />
       </div>
     </AdminShell>
   );

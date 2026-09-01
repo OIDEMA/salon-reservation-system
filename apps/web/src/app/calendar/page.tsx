@@ -5,17 +5,21 @@ import { fetchDashboard } from "@/lib/api";
 const weekDays = ["日", "月", "火", "水", "木", "金", "土"];
 
 export default async function StoreCalendarPage() {
-  const dashboard = await fetchDashboard("2026-06-28");
-  const month = buildMonth(2026, 5);
+  const now = new Date();
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(now);
+  const [year, monthNumber] = today.split("-").map(Number);
+  const monthIndex = monthNumber - 1;
+  const dashboard = await fetchDashboard(today);
+  const month = buildMonth(year, monthIndex);
   const reservationsByDay = new Map<string, typeof dashboard.reservations>();
-  reservationsByDay.set("2026-06-28", dashboard.reservations);
+  reservationsByDay.set(today, dashboard.reservations);
 
   return (
     <AdminShell
       active="/calendar"
       title="店舗カレンダー"
       subtitle="月間の営業日、予約密度、未確認リスクを俯瞰します。"
-      badge="2026年6月"
+      badge={`${year}年${monthNumber}月`}
       actions={
         <>
           <button className="secondaryButton" type="button">
@@ -44,7 +48,7 @@ export default async function StoreCalendarPage() {
               const reservations = reservationsByDay.get(key) ?? [];
               const pending = reservations.filter((reservation) => reservation.status === "PENDING").length;
               return (
-                <article className={key === "2026-06-28" ? "calendarDay isToday" : "calendarDay"} key={key}>
+                <article className={key === today ? "calendarDay isToday" : "calendarDay"} key={key}>
                   <div className="calendarDayHead">
                     <strong>{day.date.getDate()}</strong>
                     {!day.inMonth ? <span>対象外</span> : null}

@@ -2,18 +2,32 @@ import { Bell, CheckCircle2, MessageCircle, Palette, RefreshCw, Save, Store, Tog
 import type { ReactNode } from "react";
 import { AdminShell } from "@/components/admin-shell";
 import { fetchAdminSettings } from "@/lib/admin-api";
-import { mockAdminSettings } from "@/lib/admin-mock";
 
 export default async function SettingsPage() {
   const data = await fetchAdminSettings();
-  const settings = data.settings ?? mockAdminSettings.settings!;
+  if (!data.salon || !data.settings) {
+    return (
+      <AdminShell
+        active="/settings"
+        title="基本設定"
+        subtitle="店舗情報、予約受付、LINE予約画面、通知文面を一画面で管理します。"
+        badge="未設定"
+      >
+        <div className="adminContent">
+          <section className="adminNotice">店舗情報が未登録です。店舗登録機能の実装後にここから設定できます。</section>
+        </div>
+      </AdminShell>
+    );
+  }
+
+  const { salon, settings } = data;
 
   return (
     <AdminShell
       active="/settings"
       title="基本設定"
       subtitle="店舗情報、予約受付、LINE予約画面、通知文面を一画面で管理します。"
-      badge={data.salon.name}
+      badge={salon.name}
       actions={
         <>
           <button className="secondaryButton" type="button">
@@ -32,7 +46,7 @@ export default async function SettingsPage() {
           <PanelTitle icon={<Store size={19} />} title="店舗情報" />
           <div className="settingsGrid">
             <SettingField label="店舗ID" value={settings.storeId} />
-            <SettingField label="店舗名" value={data.salon.name} />
+            <SettingField label="店舗名" value={salon.name} />
             <SettingField label="営業時間 開始" value={settings.openTime} />
             <SettingField label="営業時間 終了" value={settings.closeTime} />
           </div>
@@ -104,7 +118,7 @@ export default async function SettingsPage() {
           <div className="settingsGrid three">
             <ToggleField label="事前決済" enabled={settings.paymentEnabled} />
             <ToggleField label="予約受付/停止" enabled={settings.acceptingReservations} />
-            <SettingField label="タイムゾーン" value={data.salon.timezone} />
+            <SettingField label="タイムゾーン" value={salon.timezone} />
           </div>
         </section>
       </div>

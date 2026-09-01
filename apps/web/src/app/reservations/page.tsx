@@ -9,7 +9,8 @@ const yen = new Intl.NumberFormat("ja-JP", {
 });
 
 export default async function ReservationSearchPage() {
-  const dashboard = await fetchDashboard("2026-06-28");
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date());
+  const dashboard = await fetchDashboard(today);
 
   return (
     <AdminShell
@@ -35,8 +36,8 @@ export default async function ReservationSearchPage() {
             <option value="PENDING">未確認</option>
             <option value="CONFIRMED">確定</option>
           </select>
-          <select defaultValue="2026-06-28">
-            <option value="2026-06-28">2026/06/28</option>
+          <select defaultValue={today}>
+            <option value={today}>{today.replaceAll("-", "/")}</option>
           </select>
           <button className="primaryButton" type="button">検索</button>
         </section>

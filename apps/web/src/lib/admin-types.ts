@@ -43,7 +43,7 @@ export type SalonSettings = {
 };
 
 export type AdminSettingsPayload = {
-  salon: AdminSalon;
+  salon: AdminSalon | null;
   settings: SalonSettings | null;
 };
 

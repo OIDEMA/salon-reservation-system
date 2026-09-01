@@ -165,11 +165,11 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
           <div className="createFieldGrid three">
             <label className="createField">
               <span>顧客名</span>
-              <input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="例: 河田 優" required />
+              <input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="顧客名" required />
             </label>
             <label className="createField">
               <span>カナ</span>
-              <input value={customerKana} onChange={(event) => setCustomerKana(event.target.value)} placeholder="例: カワダ ユウ" />
+              <input value={customerKana} onChange={(event) => setCustomerKana(event.target.value)} placeholder="顧客名（カナ）" />
             </label>
             <label className="createField">
               <span>電話番号</span>
