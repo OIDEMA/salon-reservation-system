@@ -12,6 +12,8 @@ The production Cloud SQL instance `salon-reserve-db` must not have a public IP a
 
 The production workflow checks that `ipv4Enabled` is `false` and that the expected private network is attached before applying the database schema. A deployment fails closed if public IP is re-enabled or the private network is detached.
 
+Direct VPC connectivity can take time to become available when a new Cloud Run instance or job task starts. Schema deployment retries transient connection failures, and the API startup probe calls `/ready` until PostgreSQL is reachable before the revision accepts traffic.
+
 ## Network resources
 
 | Resource | Name | Range/region |

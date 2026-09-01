@@ -150,6 +150,7 @@ jobs:
             --concurrency=40 \
             --timeout=60 \
             --port=8080 \
+            --startup-probe=httpGet.path=/ready,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=5,failureThreshold=24 \
             --quiet
 
       - name: Verify API
@@ -172,7 +173,7 @@ jobs:
                (.spec.template.metadata.annotations["run.googleapis.com/network-interfaces"] | fromjson | .[0].subnetwork) == $subnet'
           curl --fail --silent --show-error \
             --retry 6 --retry-delay 5 --retry-all-errors \
-            "https://reservation-api-${PROJECT_NUMBER}.${REGION}.run.app/health"
+            "https://reservation-api-${PROJECT_NUMBER}.${REGION}.run.app/ready"
 
       - name: Refresh Google Cloud authentication for App Hosting
         uses: google-github-actions/auth@v3

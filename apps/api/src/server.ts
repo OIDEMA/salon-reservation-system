@@ -283,6 +283,16 @@ server.get("/health", async () => ({
   time: new Date().toISOString()
 }));
 
+server.get("/ready", async (request, reply) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return { ok: true, service: "reservation-api", database: "ready", time: new Date().toISOString() };
+  } catch (error) {
+    request.log.error({ error }, "database readiness check failed");
+    return reply.code(503).send({ ok: false, service: "reservation-api", database: "unavailable" });
+  }
+});
+
 server.get("/api/me/tenants", async (request, reply) => {
   const user = await requireAuthenticatedUser(request, reply);
   if (!user) return;

@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
-    "prisma:deploy": "prisma db push --accept-data-loss",
+    "prisma:deploy": "node dist/src/scripts/deploy-schema.js",
     "tenant:provision": "node dist/src/scripts/provision-tenant.js"
   },
   "dependencies": {
