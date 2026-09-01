@@ -1868,6 +1868,17 @@ a {
   font-size: 20px;
 }
 
+.authLogo {
+  display: flex;
+  width: 100%;
+  justify-content: center;
+}
+
+.authLogo img {
+  width: min(280px, 85%);
+  height: auto;
+}
+
 .authCard h1 {
   margin: 24px 0 8px;
   font-size: 28px;
