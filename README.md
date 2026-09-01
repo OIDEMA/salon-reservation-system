@@ -4,6 +4,8 @@ Next.js frontend + Fastify API + Prisma + PostgreSQL for a salon reservation ope
 
 The application is a multi-tenant SaaS. Firebase Authentication verifies identities, while PostgreSQL stores tenant memberships, roles, salon ownership, and audit logs. See [docs/tenancy.md](docs/tenancy.md) for the isolation rules.
 
+Production Cloud SQL is private-IP only and is reached from Cloud Run through Direct VPC egress. See [docs/infrastructure.md](docs/infrastructure.md) for the network invariants.
+
 ## Apps
 
 - `apps/web`: Next.js admin frontend

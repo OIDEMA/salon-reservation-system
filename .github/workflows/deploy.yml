@@ -28,6 +28,9 @@ env:
   REGION: asia-east1
   API_SERVICE: reservation-api
   API_RUNTIME_SERVICE_ACCOUNT: reservation-api-runtime@salon-reserve-bg.iam.gserviceaccount.com
+  DB_INSTANCE: salon-reserve-db
+  VPC_NETWORK: salon-reserve-vpc
+  VPC_SUBNET: salon-reserve-run-asia-east1
   APP_HOSTING_BACKEND: salon-reserve-web
   WIF_PROVIDER: projects/42401528382/locations/global/workloadIdentityPools/github-actions/providers/github
   DEPLOY_SERVICE_ACCOUNT: github-deploy@salon-reserve-bg.iam.gserviceaccount.com
@@ -89,6 +92,14 @@ jobs:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
 
+      - name: Verify private database network
+        run: |
+          gcloud sql instances describe "$DB_INSTANCE" \
+            --project="$PROJECT_ID" \
+            --format=json \
+            | jq -e --arg network "projects/$PROJECT_ID/global/networks/$VPC_NETWORK" \
+              '.settings.ipConfiguration.ipv4Enabled == false and .settings.ipConfiguration.privateNetwork == $network'
+
       - name: Apply database schema
         env:
           API_IMAGE: asia-east1-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/reservation-api:${{ github.sha }}
@@ -98,8 +109,12 @@ jobs:
             --region="$REGION" \
             --image="$API_IMAGE" \
             --service-account="$API_RUNTIME_SERVICE_ACCOUNT" \
-            --set-cloudsql-instances="$PROJECT_ID:$REGION:salon-reserve-db" \
+            --network="$VPC_NETWORK" \
+            --subnet="$VPC_SUBNET" \
+            --vpc-egress=private-ranges-only \
+            --clear-cloudsql-instances \
             --set-secrets=DATABASE_URL=reservation-database-url:latest \
+            --set-env-vars=DB_CONNECTIVITY=private-ip \
             --command=npm \
             --args=run,prisma:deploy \
             --tasks=1 \
@@ -124,9 +139,12 @@ jobs:
             --image="$API_IMAGE" \
             --service-account="$API_RUNTIME_SERVICE_ACCOUNT" \
             --allow-unauthenticated \
-            --set-cloudsql-instances="$PROJECT_ID:$REGION:salon-reserve-db" \
+            --network="$VPC_NETWORK" \
+            --subnet="$VPC_SUBNET" \
+            --vpc-egress=private-ranges-only \
+            --clear-cloudsql-instances \
             --set-secrets=DATABASE_URL=reservation-database-url:latest \
-            --set-env-vars=NODE_ENV=production,CORS_ORIGINS=https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app \
+            --set-env-vars=NODE_ENV=production,DB_CONNECTIVITY=private-ip,CORS_ORIGINS=https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app \
             --cpu=1 \
             --memory=512Mi \
             --min-instances=0 \
