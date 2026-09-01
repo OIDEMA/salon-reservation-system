@@ -10,7 +10,7 @@ const roleLabel: Record<string, string> = {
   ROOM_RESOURCE: "設備枠"
 };
 
-export default async function StaffPage() {
+export default async function TenantStaffPage() {
   const staff = await fetchAdminStaff();
 
   return (

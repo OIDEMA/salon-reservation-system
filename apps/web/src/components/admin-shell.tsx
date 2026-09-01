@@ -1,3 +1,5 @@
+"use client";
+
 import {
   BookUser,
   CircleAlert,
@@ -15,6 +17,8 @@ import {
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { LogoutButton } from "@/components/logout-button";
+import { useTenantSlug } from "@/components/tenant-provider";
+import { tenantPath } from "@/lib/tenant-routing";
 
 const navItems = [
   { href: "/", label: "予約表", icon: LayoutDashboard },
@@ -39,17 +43,24 @@ type AdminShellProps = {
 };
 
 export function AdminShell({ active, title, subtitle, badge, actions, children }: AdminShellProps) {
+  const tenantSlug = useTenantSlug();
+
   return (
     <main className="adminShell">
       <aside className="adminSidebar">
-        <Link className="adminBrand" href="/" title="SalonOps">
+        <Link className="adminBrand" href={tenantPath(tenantSlug)} title="SalonOps">
           <CalendarCheck size={25} />
         </Link>
         <nav className="adminNav" aria-label="admin navigation">
           {navItems.map((item) => {
             const Icon = item.icon;
             return (
-              <Link className={item.href === active ? "adminNavItem isActive" : "adminNavItem"} href={item.href} key={item.href} title={item.label}>
+              <Link
+                className={item.href === active ? "adminNavItem isActive" : "adminNavItem"}
+                href={tenantPath(tenantSlug, item.href)}
+                key={item.href}
+                title={item.label}
+              >
                 <Icon size={21} />
                 <span>{item.label}</span>
               </Link>

@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { firebaseAdminAuth } from "@/lib/firebase-admin";
-import { ACTIVE_SALON_COOKIE, ACTIVE_TENANT_COOKIE, CSRF_COOKIE, SESSION_COOKIE } from "@/lib/session-constants";
+import {
+  ACTIVE_SALON_COOKIE,
+  ACTIVE_TENANT_COOKIE,
+  ACTIVE_TENANT_SLUG_COOKIE,
+  CSRF_COOKIE,
+  SESSION_COOKIE
+} from "@/lib/session-constants";
 
 const sessionSchema = z.object({
   idToken: z.string().min(1),
@@ -59,6 +65,7 @@ export async function POST(request: NextRequest) {
   });
   response.cookies.delete(CSRF_COOKIE);
   response.cookies.delete(ACTIVE_TENANT_COOKIE);
+  response.cookies.delete(ACTIVE_TENANT_SLUG_COOKIE);
   response.cookies.delete(ACTIVE_SALON_COOKIE);
   return response;
 }
@@ -68,6 +75,7 @@ export async function DELETE(request: NextRequest) {
   const response = NextResponse.json({ ok: true });
   response.cookies.delete(SESSION_COOKIE);
   response.cookies.delete(ACTIVE_TENANT_COOKIE);
+  response.cookies.delete(ACTIVE_TENANT_SLUG_COOKIE);
   response.cookies.delete(ACTIVE_SALON_COOKIE);
   return response;
 }

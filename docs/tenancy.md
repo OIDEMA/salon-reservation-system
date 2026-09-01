@@ -7,7 +7,7 @@
 The following invariants are mandatory:
 
 1. A request is authenticated with a Firebase ID token or Firebase session cookie.
-2. `X-Tenant-ID` selects an active tenant but never grants access to it.
+2. The first URL segment (`/{tenantSlug}`) selects an active tenant but never grants access to it.
 3. The API verifies an active `TenantMembership` for the authenticated `AppUser` before reading or writing business data.
 4. Every business query filters by `tenantId`; salon-level queries also filter by `salonId`.
 5. Composite foreign keys prevent a record from referencing a salon, customer, service, or staff member owned by another tenant.
@@ -27,11 +27,13 @@ Tenant creation and the first `OWNER` assignment are not self-service. An operat
 
 The web application exchanges a recently issued Firebase ID token for an HttpOnly, Secure, SameSite session cookie. Server-side requests forward that credential to Cloud Run. The Cloud Run API verifies the credential again and performs the membership check; the Next.js proxy is only an optimistic navigation guard.
 
-## Tenant and salon selection
+## Tenant URL and salon selection
 
-After login, `/api/me/tenants` returns only memberships belonging to the authenticated user. The selected tenant and salon are stored in HttpOnly cookies and forwarded as `X-Tenant-ID` and `X-Salon-ID`.
+After login, `/api/me/tenants` returns only memberships belonging to the authenticated user. Tenant-scoped screens use URLs such as `/{tenantSlug}`, `/{tenantSlug}/calendar`, and `/{tenantSlug}/reservations`. The Next.js server forwards the URL slug as `X-Tenant-Slug`, and the API resolves it through an active membership before accessing business data.
 
-Selection headers are routing inputs, not trust boundaries. A forged tenant or salon identifier is rejected because the API verifies membership and scopes the salon lookup to the verified tenant.
+The selected salon remains in an HttpOnly cookie and is forwarded as `X-Salon-ID` only when its selected tenant slug matches the URL. Direct navigation to another authorized tenant therefore falls back to that tenant's first salon instead of reusing a salon from a different tenant. `X-Tenant-ID` remains only as a compatibility fallback for global server routes without a tenant URL.
+
+Tenant slugs are immutable, globally unique routing identifiers and must not be display names. Application and legacy route names are reserved. URL segments and selection headers are routing inputs, not trust boundaries. A forged slug, tenant identifier, or salon identifier is rejected because the API verifies membership and scopes the salon lookup to the verified tenant.
 
 ## Audit trail
 

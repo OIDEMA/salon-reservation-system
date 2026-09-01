@@ -2,6 +2,7 @@ import type { AppUser, Tenant, TenantMembership, TenantRole } from "@prisma/clie
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { prisma } from "./database.js";
 import { verifyFirebaseCredential } from "./auth.js";
+import { isTenantSlug } from "./tenant-slug.js";
 
 export type AuthenticatedUser = AppUser;
 
@@ -56,17 +57,28 @@ export async function requireTenantContext(
   const user = await requireAuthenticatedUser(request, reply);
   if (!user) return null;
 
+  const tenantSlugHeader = request.headers["x-tenant-slug"];
+  const tenantSlug = Array.isArray(tenantSlugHeader) ? tenantSlugHeader[0] : tenantSlugHeader;
   const tenantIdHeader = request.headers["x-tenant-id"];
   const tenantId = Array.isArray(tenantIdHeader) ? tenantIdHeader[0] : tenantIdHeader;
-  if (!tenantId) {
+  if (!tenantSlug && !tenantId) {
     reply.code(400).send({ code: "TENANT_REQUIRED", message: "利用するテナントを選択してください。" });
     return null;
   }
+  if (tenantSlug && !isTenantSlug(tenantSlug)) {
+    reply.code(400).send({ code: "INVALID_TENANT_SLUG", message: "テナントURLが正しくありません。" });
+    return null;
+  }
 
-  const membership = await prisma.tenantMembership.findUnique({
-    where: { tenantId_userId: { tenantId, userId: user.id } },
-    include: { tenant: true }
-  });
+  const membership = tenantSlug
+    ? await prisma.tenantMembership.findFirst({
+        where: { userId: user.id, tenant: { slug: tenantSlug } },
+        include: { tenant: true }
+      })
+    : await prisma.tenantMembership.findUnique({
+        where: { tenantId_userId: { tenantId: tenantId!, userId: user.id } },
+        include: { tenant: true }
+      });
 
   if (!membership || membership.status !== "ACTIVE" || membership.tenant.status !== "ACTIVE") {
     reply.code(403).send({ code: "TENANT_ACCESS_DENIED", message: "このテナントを利用する権限がありません。" });

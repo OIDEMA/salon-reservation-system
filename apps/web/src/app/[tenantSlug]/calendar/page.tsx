@@ -4,7 +4,7 @@ import { fetchDashboardServer } from "@/lib/server-dashboard";
 
 const weekDays = ["日", "月", "火", "水", "木", "金", "土"];
 
-export default async function StoreCalendarPage() {
+export default async function TenantCalendarPage() {
   const now = new Date();
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(now);
   const [year, monthNumber] = today.split("-").map(Number);

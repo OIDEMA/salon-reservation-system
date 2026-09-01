@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { firebaseAdminAuth } from "../auth.js";
 import { prisma } from "../database.js";
+import { isTenantSlug } from "../tenant-slug.js";
 
 const inputSchema = z.object({
   ownerEmail: z.string().trim().email().transform((value) => value.toLowerCase()),
@@ -11,7 +12,8 @@ const inputSchema = z.object({
     .trim()
     .min(3)
     .max(50)
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+    .refine(isTenantSlug, "This tenant slug is reserved for an application route."),
   salonName: z.string().trim().min(1).max(100),
   timezone: z.string().trim().min(1).max(50).default("Asia/Tokyo")
 });

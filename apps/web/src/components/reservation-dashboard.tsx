@@ -33,6 +33,8 @@ import { ja } from "date-fns/locale";
 import { useEffect, useMemo, useState } from "react";
 import { fetchDashboard } from "@/lib/api";
 import { LogoutButton } from "@/components/logout-button";
+import { useTenantSlug } from "@/components/tenant-provider";
+import { tenantPath } from "@/lib/tenant-routing";
 import { createEmptyDashboard, type DashboardData, type ReservationStatus, type ScheduleReservation } from "@/lib/types";
 
 const HOUR_WIDTH = 132;
@@ -87,6 +89,7 @@ function iconButtonLabel(label: string, icon: React.ReactNode) {
 }
 
 export function ReservationDashboard() {
+  const tenantSlug = useTenantSlug();
   const [date, setDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [dashboard, setDashboard] = useState<DashboardData>(() => createEmptyDashboard(format(new Date(), "yyyy-MM-dd")));
   const [selectedId, setSelectedId] = useState("");
@@ -100,7 +103,7 @@ export function ReservationDashboard() {
     let ignore = false;
     setIsLoading(true);
     setLoadError("");
-    fetchDashboard(date)
+    fetchDashboard(date, tenantSlug)
       .then((data) => {
         if (!ignore) {
           setDashboard(data);
@@ -125,7 +128,7 @@ export function ReservationDashboard() {
     return () => {
       ignore = true;
     };
-  }, [date, selectedId]);
+  }, [date, selectedId, tenantSlug]);
 
   const timeline = useMemo(() => {
     const start = toMinutes(dashboard.hours.start);
@@ -161,14 +164,19 @@ export function ReservationDashboard() {
   return (
     <main className="appShell">
       <aside className="adminSidebar">
-        <a className="adminBrand" href="/" title="SalonOps">
+        <a className="adminBrand" href={tenantPath(tenantSlug)} title="SalonOps">
           <CalendarCheck size={25} />
         </a>
         <nav className="adminNav" aria-label="admin navigation">
           {navItems.map((item) => {
             const Icon = item.icon;
             return (
-              <a className={item.href === "/" ? "adminNavItem isActive" : "adminNavItem"} href={item.href} key={item.href} title={item.label}>
+              <a
+                className={item.href === "/" ? "adminNavItem isActive" : "adminNavItem"}
+                href={tenantPath(tenantSlug, item.href)}
+                key={item.href}
+                title={item.label}
+              >
                 <Icon size={21} />
                 <span>{item.label}</span>
               </a>
@@ -234,7 +242,7 @@ export function ReservationDashboard() {
                 <button className="primaryButton" type="button">
                   {iconButtonLabel("複数日程", <CalendarRange size={18} />)}
                 </button>
-                <a className="primaryButton" href="/confirmation">
+                <a className="primaryButton" href={tenantPath(tenantSlug, "/confirmation")}>
                   {iconButtonLabel("予約確認", <AlertCircle size={18} />)}
                 </a>
               </div>
@@ -253,7 +261,7 @@ export function ReservationDashboard() {
                   </button>
                 ))}
               </div>
-              <a className="createButton" href="/reservations/new">
+              <a className="createButton" href={tenantPath(tenantSlug, "/reservations/new")}>
                 {iconButtonLabel("新規予約", <Plus size={18} />)}
               </a>
             </div>

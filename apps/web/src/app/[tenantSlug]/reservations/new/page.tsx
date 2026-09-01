@@ -1,9 +1,10 @@
 import { ArrowLeft, CalendarCheck, Search } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
 import { ReservationCreateForm } from "@/components/reservation-create-form";
+import { TenantLink } from "@/components/tenant-link";
 import { fetchAdminMenus, fetchAdminStaff } from "@/lib/admin-api";
 
-export default async function ReservationCreatePage() {
+export default async function TenantReservationCreatePage() {
   const [menus, staff] = await Promise.all([fetchAdminMenus(), fetchAdminStaff()]);
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date());
 
@@ -15,14 +16,14 @@ export default async function ReservationCreatePage() {
       badge="即時登録"
       actions={
         <>
-          <a className="secondaryButton" href="/">
+          <TenantLink className="secondaryButton" href="/">
             <ArrowLeft size={17} />
             予約表へ
-          </a>
-          <a className="primaryButton" href="/reservations">
+          </TenantLink>
+          <TenantLink className="primaryButton" href="/reservations">
             <Search size={17} />
             予約者検索
-          </a>
+          </TenantLink>
         </>
       }
     >

@@ -27,7 +27,8 @@ Firebase Authentication environment variables from `.env.example` are required f
 
 Tenant creation and the first owner assignment are operator-managed rather than self-service. See [docs/provisioning.md](docs/provisioning.md).
 
-- Frontend: http://localhost:3000
+- Frontend login: http://localhost:3000/login
+- Tenant screen: `http://localhost:3000/{tenantSlug}`
 - API: http://localhost:4001
 - Health check: http://localhost:4001/health
 

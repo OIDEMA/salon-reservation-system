@@ -2,7 +2,9 @@
 
 import { AlertCircle, CalendarCheck, CheckCircle2, Clock3, CreditCard, MessageCircle, Phone, Send, UserRound } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useTenantSlug } from "@/components/tenant-provider";
 import type { AdminMenu, AdminStaff } from "@/lib/admin-types";
+import { tenantApiPath, tenantPath } from "@/lib/tenant-routing";
 
 const sourceOptions = [
   { value: "PHONE", label: "電話" },
@@ -63,6 +65,7 @@ function addMinutes(time: string, minutes: number) {
 }
 
 export function ReservationCreateForm({ menus, staff, defaultDate }: ReservationCreateFormProps) {
+  const tenantSlug = useTenantSlug();
   const activeMenus = useMemo(() => menus.filter((menu) => menu.active), [menus]);
   const activeStaff = useMemo(() => staff.filter((member) => member.active), [staff]);
   const categories = useMemo(() => ["すべて", ...Array.from(new Set(activeMenus.map((menu) => menu.category)))], [activeMenus]);
@@ -113,7 +116,7 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
 
     setIsSubmitting(true);
     try {
-      const response = await fetch(`/api/backend/reservations`, {
+      const response = await fetch(tenantApiPath(tenantSlug, "/reservations"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -322,23 +325,23 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
             <span>{isSubmitting ? "作成中" : "予約を作成"}</span>
           </button>
           <div className="createSubActions">
-            <a href="/">
+            <a href={tenantPath(tenantSlug)}>
               <Clock3 size={15} />
               予約表
             </a>
-            <a href="/confirmation">
+            <a href={tenantPath(tenantSlug, "/confirmation")}>
               <MessageCircle size={15} />
               確認
             </a>
-            <a href="/reservations">
+            <a href={tenantPath(tenantSlug, "/reservations")}>
               <Phone size={15} />
               検索
             </a>
-            <a href={source === "LINE" ? "/confirmation" : "/reservations"}>
+            <a href={tenantPath(tenantSlug, source === "LINE" ? "/confirmation" : "/reservations")}>
               <Send size={15} />
               通知
             </a>
-            <a href="/reservations">
+            <a href={tenantPath(tenantSlug, "/reservations")}>
               <CreditCard size={15} />
               決済
             </a>

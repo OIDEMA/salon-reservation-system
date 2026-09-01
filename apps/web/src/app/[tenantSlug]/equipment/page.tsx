@@ -2,7 +2,7 @@ import { Edit3, GripVertical, Plus, Save, Trash2, Wrench } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
 import { fetchAdminEquipment } from "@/lib/admin-api";
 
-export default async function EquipmentPage() {
+export default async function TenantEquipmentPage() {
   const equipment = await fetchAdminEquipment();
 
   return (

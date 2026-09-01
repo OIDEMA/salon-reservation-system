@@ -8,7 +8,7 @@ const yen = new Intl.NumberFormat("ja-JP", {
   maximumFractionDigits: 0
 });
 
-export default async function MenusPage() {
+export default async function TenantMenusPage() {
   const menus = await fetchAdminMenus();
 
   return (

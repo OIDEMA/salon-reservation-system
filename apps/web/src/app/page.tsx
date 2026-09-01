@@ -1,5 +1,5 @@
-import { ReservationDashboard } from "@/components/reservation-dashboard";
+import { redirect } from "next/navigation";
 
-export default function Home() {
-  return <ReservationDashboard />;
+export default function RootPage() {
+  redirect("/select-tenant");
 }

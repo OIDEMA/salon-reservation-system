@@ -34,7 +34,8 @@ export function TenantSelector() {
       setMessage("テナントを選択できませんでした。");
       return;
     }
-    window.location.assign("/");
+    const result = (await response.json()) as { tenantSlug: string };
+    window.location.assign(`/${encodeURIComponent(result.tenantSlug)}`);
   }
 
   async function logout() {

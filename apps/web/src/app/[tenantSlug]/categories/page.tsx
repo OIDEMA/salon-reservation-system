@@ -2,7 +2,7 @@ import { Edit3, ImagePlus, Plus, Tags, Trash2 } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
 import { fetchAdminCategories } from "@/lib/admin-api";
 
-export default async function CategoriesPage() {
+export default async function TenantCategoriesPage() {
   const categories = await fetchAdminCategories();
 
   return (

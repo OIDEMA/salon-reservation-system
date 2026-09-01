@@ -1,6 +1,7 @@
 import { AlertCircle, CalendarCheck, CheckCircle2, CircleDollarSign, Clock3, Command, CreditCard, MessageCircle, Plus, Send, Sparkles, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 import { AdminShell } from "@/components/admin-shell";
+import { TenantLink } from "@/components/tenant-link";
 import { fetchDashboardServer } from "@/lib/server-dashboard";
 import type { ReservationStatus, ScheduleReservation } from "@/lib/types";
 
@@ -26,7 +27,7 @@ type ConfirmationPageProps = {
   }>;
 };
 
-export default async function ConfirmationPage({ searchParams }: ConfirmationPageProps) {
+export default async function TenantConfirmationPage({ searchParams }: ConfirmationPageProps) {
   const params = await searchParams;
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date());
   const dashboard = await fetchDashboardServer(today);
@@ -44,10 +45,10 @@ export default async function ConfirmationPage({ searchParams }: ConfirmationPag
       badge={`${dashboard.summary.pendingCount}件未確認`}
       actions={
         <>
-          <a className="secondaryButton" href="/">
+          <TenantLink className="secondaryButton" href="/">
             <CalendarCheck size={17} />
             予約表へ
-          </a>
+          </TenantLink>
           <button className="primaryButton" type="button">
             <MessageCircle size={17} />
             一括LINE再送
@@ -89,10 +90,10 @@ export default async function ConfirmationPage({ searchParams }: ConfirmationPag
                 <input placeholder="開始 13:00" />
                 <input placeholder="分数 60" />
               </div>
-              <a href="/reservations/new">
+              <TenantLink href="/reservations/new">
                 <Plus size={17} />
                 <span>予約を作成</span>
-              </a>
+              </TenantLink>
             </div>
           </article>
         </section>
@@ -159,11 +160,15 @@ function QueueSection({ reservations, selectedId }: { reservations: ScheduleRese
       </div>
       <div className="queueList">
         {reservations.map((reservation) => (
-          <a key={reservation.id} className={reservation.id === selectedId ? "queueItem isSelected" : "queueItem"} href={`/confirmation?reservation=${reservation.id}`}>
+          <TenantLink
+            key={reservation.id}
+            className={reservation.id === selectedId ? "queueItem isSelected" : "queueItem"}
+            href={`/confirmation?reservation=${reservation.id}`}
+          >
             <span>{reservation.startTime}</span>
             <strong>{reservation.customerName}</strong>
             <em>{reservation.riskScore}</em>
-          </a>
+          </TenantLink>
         ))}
       </div>
     </section>

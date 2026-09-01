@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { AdminShell } from "@/components/admin-shell";
 import { fetchAdminSettings } from "@/lib/admin-api";
 
-export default async function SettingsPage() {
+export default async function TenantSettingsPage() {
   const data = await fetchAdminSettings();
   if (!data.salon || !data.settings) {
     return (

@@ -1,5 +1,6 @@
 import { CalendarCheck, CheckCircle2, CreditCard, MessageCircle, Search } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
+import { TenantLink } from "@/components/tenant-link";
 import { fetchDashboardServer } from "@/lib/server-dashboard";
 
 const yen = new Intl.NumberFormat("ja-JP", {
@@ -8,7 +9,7 @@ const yen = new Intl.NumberFormat("ja-JP", {
   maximumFractionDigits: 0
 });
 
-export default async function ReservationSearchPage() {
+export default async function TenantReservationSearchPage() {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date());
   const dashboard = await fetchDashboardServer(today);
 
@@ -19,10 +20,10 @@ export default async function ReservationSearchPage() {
       subtitle="顧客名、来店状況、決済、LINE通知状態をまとめて確認します。"
       badge={`${dashboard.reservations.length}件`}
       actions={
-        <a className="primaryButton" href="/reservations/new">
+        <TenantLink className="primaryButton" href="/reservations/new">
           <CalendarCheck size={17} />
           予約を作成
-        </a>
+        </TenantLink>
       }
     >
       <div className="adminContent">
