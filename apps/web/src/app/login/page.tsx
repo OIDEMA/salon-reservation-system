@@ -7,7 +7,7 @@ export default function LoginPage() {
       <section className="authCard">
         <div className="authBrand"><CalendarCheck size={30} /><strong>SalonOps</strong></div>
         <h1>サロン管理へログイン</h1>
-        <p>テナントごとにデータと権限を分離して管理します。</p>
+        <p>管理者から案内されたアカウントでログインしてください。</p>
         <LoginForm />
       </section>
     </main>

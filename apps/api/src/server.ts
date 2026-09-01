@@ -43,18 +43,6 @@ const updateStatusSchema = z.object({
   status: z.nativeEnum(ReservationStatus)
 });
 
-const createTenantSchema = z.object({
-  name: z.string().trim().min(1).max(100),
-  slug: z
-    .string()
-    .trim()
-    .min(3)
-    .max(50)
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-  salonName: z.string().trim().min(1).max(100),
-  timezone: z.string().trim().min(1).max(50).default("Asia/Tokyo")
-});
-
 const writeRoles: TenantRole[] = ["OWNER", "ADMIN", "MANAGER", "STAFF"];
 
 function dayBounds(date: string) {
@@ -317,50 +305,6 @@ server.get("/api/me/tenants", async (request, reply) => {
     },
     orderBy: { createdAt: "asc" }
   });
-});
-
-server.post("/api/tenants", async (request, reply) => {
-  const user = await requireAuthenticatedUser(request, reply);
-  if (!user) return;
-  const input = createTenantSchema.parse(request.body);
-
-  const existing = await prisma.tenant.findUnique({ where: { slug: input.slug } });
-  if (existing) {
-    return reply.code(409).send({ code: "TENANT_SLUG_EXISTS", message: "このテナントIDは既に使用されています。" });
-  }
-
-  const result = await prisma.$transaction(async (transaction) => {
-    const tenant = await transaction.tenant.create({ data: { name: input.name, slug: input.slug } });
-    await transaction.tenantMembership.create({
-      data: { tenantId: tenant.id, userId: user.id, role: "OWNER", status: "ACTIVE" }
-    });
-    const salon = await transaction.salon.create({
-      data: { tenantId: tenant.id, name: input.salonName, timezone: input.timezone }
-    });
-    await transaction.salonSettings.create({
-      data: {
-        tenantId: tenant.id,
-        salonId: salon.id,
-        storeId: input.slug,
-        cancellationMessage: "",
-        friendMessage: ""
-      }
-    });
-    await transaction.auditLog.create({
-      data: {
-        tenantId: tenant.id,
-        actorUserId: user.id,
-        action: "tenant.create",
-        resource: "tenant",
-        resourceId: tenant.id,
-        ipAddress: request.ip,
-        userAgent: request.headers["user-agent"]
-      }
-    });
-    return { tenant, salon };
-  });
-
-  return reply.code(201).send(result);
 });
 
 server.get("/api/dashboard", async (request, reply) => {

@@ -25,6 +25,8 @@ npm run dev
 
 Firebase Authentication environment variables from `.env.example` are required for login. Email/password accounts must verify their email address before a server session is issued.
 
+Tenant creation and the first owner assignment are operator-managed rather than self-service. See [docs/provisioning.md](docs/provisioning.md).
+
 - Frontend: http://localhost:3000
 - API: http://localhost:4001
 - Health check: http://localhost:4001/health

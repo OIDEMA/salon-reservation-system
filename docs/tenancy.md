@@ -23,6 +23,8 @@ Firebase Authentication owns credentials and email verification. PostgreSQL owns
 - Suspended users, memberships, and tenants are rejected by the API.
 - Mutations require a write-capable role.
 
+Tenant creation and the first `OWNER` assignment are not self-service. An operator provisions them with the private `tenant:provision` job. The public application exposes login and password setup only; authenticated users without an active membership cannot create a tenant or access business data. See [provisioning.md](provisioning.md).
+
 The web application exchanges a recently issued Firebase ID token for an HttpOnly, Secure, SameSite session cookie. Server-side requests forward that credential to Cloud Run. The Cloud Run API verifies the credential again and performs the membership check; the Next.js proxy is only an optimistic navigation guard.
 
 ## Tenant and salon selection

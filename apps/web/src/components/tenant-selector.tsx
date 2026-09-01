@@ -12,9 +12,6 @@ export function TenantSelector() {
   const [memberships, setMemberships] = useState<Membership[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
-  const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const [salonName, setSalonName] = useState("");
 
   useEffect(() => {
     fetch("/api/backend/me/tenants", { cache: "no-store" })
@@ -40,20 +37,9 @@ export function TenantSelector() {
     window.location.assign("/");
   }
 
-  async function createTenant(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setMessage("");
-    const response = await fetch("/api/backend/tenants", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, slug, salonName, timezone: "Asia/Tokyo" })
-    });
-    const result = (await response.json().catch(() => null)) as { tenant?: { id: string }; salon?: { id: string }; message?: string } | null;
-    if (!response.ok || !result?.tenant || !result.salon) {
-      setMessage(result?.message ?? "テナントを作成できませんでした。");
-      return;
-    }
-    await select(result.tenant.id, result.salon.id);
+  async function logout() {
+    await fetch("/api/session", { method: "DELETE" });
+    window.location.assign("/login");
   }
 
   if (loading) return <p className="authMessage">テナント情報を読み込んでいます…</p>;
@@ -76,14 +62,10 @@ export function TenantSelector() {
           </div>
         </section>
       ) : (
-        <section>
-          <h2>最初のテナントを作成</h2>
-          <form className="authForm" onSubmit={createTenant}>
-            <label><span>事業者名</span><input value={name} onChange={(event) => setName(event.target.value)} required /></label>
-            <label><span>テナントID</span><input value={slug} onChange={(event) => setSlug(event.target.value.toLowerCase())} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" minLength={3} required /></label>
-            <label><span>店舗名</span><input value={salonName} onChange={(event) => setSalonName(event.target.value)} required /></label>
-            <button className="authSubmit" type="submit">テナントを作成</button>
-          </form>
+        <section className="tenantEmptyState">
+          <h2>利用可能な店舗がありません</h2>
+          <p>このアカウントにはテナントが割り当てられていません。管理者へお問い合わせください。</p>
+          <button className="authSecondary" type="button" onClick={logout}>別のアカウントでログイン</button>
         </section>
       )}
       {message ? <p className="authMessage">{message}</p> : null}

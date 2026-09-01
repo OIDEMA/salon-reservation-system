@@ -8,16 +8,17 @@ const firebaseApp =
     projectId: process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT ?? "salon-reserve-bg"
   });
 
+export const firebaseAdminAuth = getAuth(firebaseApp);
+
 export async function verifyFirebaseCredential(authorization?: string): Promise<DecodedIdToken> {
   const [scheme, credential] = authorization?.split(" ") ?? [];
   if (scheme?.toLowerCase() !== "bearer" || !credential) {
     throw new Error("Missing bearer credential");
   }
 
-  const auth = getAuth(firebaseApp);
   try {
-    return await auth.verifySessionCookie(credential, true);
+    return await firebaseAdminAuth.verifySessionCookie(credential, true);
   } catch {
-    return auth.verifyIdToken(credential, true);
+    return firebaseAdminAuth.verifyIdToken(credential, true);
   }
 }

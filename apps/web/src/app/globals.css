@@ -1939,6 +1939,21 @@ a {
   opacity: 0.6;
 }
 
+.authSecondary {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  color: #475569;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.authSecondary:disabled {
+  opacity: 0.6;
+}
+
 .tenantSelector {
   margin-top: 24px;
 }
@@ -1946,6 +1961,23 @@ a {
 .tenantSelector h2 {
   margin: 0 0 14px;
   font-size: 18px;
+}
+
+.tenantEmptyState {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+  background: #f8fafc;
+}
+
+.tenantEmptyState p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.7;
 }
 
 .tenantCards {

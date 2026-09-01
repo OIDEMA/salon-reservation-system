@@ -1,0 +1,107 @@
+name: Provision tenant
+
+on:
+  workflow_dispatch:
+    inputs:
+      owner_email:
+        description: Initial OWNER email address
+        required: true
+        type: string
+      owner_display_name:
+        description: Initial OWNER display name
+        required: false
+        type: string
+      tenant_name:
+        description: Business or company name
+        required: true
+        type: string
+      tenant_slug:
+        description: Unique lowercase tenant identifier
+        required: true
+        type: string
+      salon_name:
+        description: Initial salon name
+        required: true
+        type: string
+      timezone:
+        description: IANA timezone
+        required: true
+        default: Asia/Tokyo
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tenant-provisioning
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: salon-reserve-bg
+  REGION: asia-east1
+  VPC_NETWORK: salon-reserve-vpc
+  VPC_SUBNET: salon-reserve-run-asia-east1
+  PROVISION_JOB: reservation-tenant-provision
+  PROVISION_SERVICE_ACCOUNT: reservation-provisioner@salon-reserve-bg.iam.gserviceaccount.com
+  WIF_PROVIDER: projects/42401528382/locations/global/workloadIdentityPools/github-actions/providers/github
+  DEPLOY_SERVICE_ACCOUNT: github-deploy@salon-reserve-bg.iam.gserviceaccount.com
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Validate provisioning input
+        env:
+          OWNER_EMAIL: ${{ inputs.owner_email }}
+          TENANT_SLUG: ${{ inputs.tenant_slug }}
+        run: |
+          [[ "$OWNER_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]
+          [[ "$TENANT_SLUG" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]
+          [[ ${#TENANT_SLUG} -ge 3 && ${#TENANT_SLUG} -le 50 ]]
+
+      - name: Provision tenant and first owner
+        env:
+          API_IMAGE: asia-east1-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/reservation-api:${{ github.sha }}
+          OWNER_EMAIL: ${{ inputs.owner_email }}
+          OWNER_DISPLAY_NAME: ${{ inputs.owner_display_name }}
+          TENANT_NAME: ${{ inputs.tenant_name }}
+          TENANT_SLUG: ${{ inputs.tenant_slug }}
+          SALON_NAME: ${{ inputs.salon_name }}
+          TIMEZONE: ${{ inputs.timezone }}
+        run: |
+          gcloud artifacts docker images describe "$API_IMAGE" --project="$PROJECT_ID" >/dev/null
+          gcloud run jobs deploy "$PROVISION_JOB" \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --image="$API_IMAGE" \
+            --service-account="$PROVISION_SERVICE_ACCOUNT" \
+            --network="$VPC_NETWORK" \
+            --subnet="$VPC_SUBNET" \
+            --vpc-egress=private-ranges-only \
+            --set-secrets=DATABASE_URL=reservation-database-url:latest \
+            --set-env-vars="^|^PROVISION_OWNER_EMAIL=$OWNER_EMAIL|PROVISION_OWNER_DISPLAY_NAME=$OWNER_DISPLAY_NAME|PROVISION_TENANT_NAME=$TENANT_NAME|PROVISION_TENANT_SLUG=$TENANT_SLUG|PROVISION_SALON_NAME=$SALON_NAME|PROVISION_TIMEZONE=$TIMEZONE" \
+            --command=npm \
+            --args=run,tenant:provision \
+            --tasks=1 \
+            --max-retries=0 \
+            --task-timeout=10m \
+            --cpu=1 \
+            --memory=512Mi \
+            --quiet
+          gcloud run jobs execute "$PROVISION_JOB" \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --wait

@@ -1,11 +1,10 @@
 "use client";
 
-import { createUserWithEmailAndPassword, sendEmailVerification, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { useState } from "react";
 import { firebaseAuth, firebaseAuthReady } from "@/lib/firebase-client";
 
 export function LoginForm() {
-  const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
@@ -17,20 +16,10 @@ export function LoginForm() {
     setMessage("");
     try {
       await firebaseAuthReady;
-      if (mode === "signup") {
-        const credential = await createUserWithEmailAndPassword(firebaseAuth, email, password);
-        await sendEmailVerification(credential.user);
-        await signOut(firebaseAuth);
-        setMode("login");
-        setMessage("確認メールを送信しました。メール内のリンクを開いてからログインしてください。");
-        return;
-      }
-
       const credential = await signInWithEmailAndPassword(firebaseAuth, email, password);
       if (!credential.user.emailVerified) {
-        await sendEmailVerification(credential.user);
         await signOut(firebaseAuth);
-        setMessage("メールアドレスが未確認です。確認メールを再送しました。");
+        setMessage("アカウントが利用可能になっていません。管理者へお問い合わせください。");
         return;
       }
 
@@ -56,24 +45,40 @@ export function LoginForm() {
     }
   }
 
+  async function requestPasswordSetup() {
+    if (!email) {
+      setMessage("管理者から案内されたメールアドレスを入力してください。");
+      return;
+    }
+
+    setSubmitting(true);
+    setMessage("");
+    try {
+      await firebaseAuthReady;
+      await sendPasswordResetEmail(firebaseAuth, email);
+      setMessage("パスワード設定メールを送信しました。メールが届かない場合は管理者へお問い合わせください。");
+    } catch {
+      setMessage("パスワード設定メールを送信できませんでした。管理者へお問い合わせください。");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <form className="authForm" onSubmit={submit}>
-      <div className="authTabs">
-        <button className={mode === "login" ? "isActive" : ""} type="button" onClick={() => setMode("login")}>ログイン</button>
-        <button className={mode === "signup" ? "isActive" : ""} type="button" onClick={() => setMode("signup")}>新規登録</button>
-      </div>
       <label>
         <span>メールアドレス</span>
         <input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
       </label>
       <label>
         <span>パスワード</span>
-        <input type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} required />
+        <input type="password" autoComplete="current-password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} required />
       </label>
       {message ? <p className="authMessage">{message}</p> : null}
       <button className="authSubmit" type="submit" disabled={submitting}>
-        {submitting ? "処理中…" : mode === "login" ? "ログイン" : "アカウントを作成"}
+        {submitting ? "処理中…" : "ログイン"}
       </button>
+      <button className="authSecondary" type="button" disabled={submitting} onClick={requestPasswordSetup}>初回ログイン・パスワード再設定</button>
     </form>
   );
 }

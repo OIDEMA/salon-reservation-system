@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
-    "prisma:deploy": "prisma db push --accept-data-loss"
+    "prisma:deploy": "prisma db push --accept-data-loss",
+    "tenant:provision": "node dist/src/scripts/provision-tenant.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
