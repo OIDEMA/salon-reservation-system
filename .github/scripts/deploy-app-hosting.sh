@@ -67,6 +67,33 @@ poll_operation() {
   return 1
 }
 
+poll_resource_state() {
+  local url="$1"
+  local expected_state="$2"
+  local label="$3"
+  local response
+  local state
+
+  for _ in $(seq 1 120); do
+    response="$(api_request GET "$url")"
+    state="$(jq -r '.state // "UNKNOWN"' <<<"$response")"
+    if [[ "$state" == "$expected_state" ]]; then
+      echo "${label} reached ${expected_state}."
+      return 0
+    fi
+    if [[ "$state" =~ ^(FAILED|CANCELLED|PAUSED)$ ]]; then
+      echo "${label} entered terminal state ${state}:" >&2
+      jq '{state, error, errors}' <<<"$response" >&2
+      return 1
+    fi
+    sleep 5
+  done
+
+  echo "Timed out waiting for ${label} to reach ${expected_state}." >&2
+  jq '{state, error, errors}' <<<"$response" >&2
+  return 1
+}
+
 echo "Creating source archive for ${GITHUB_SHA}."
 git archive --format=zip --output="$ARCHIVE_PATH" HEAD apps/web
 
@@ -123,6 +150,8 @@ ROLLOUT_OPERATION_NAME="$(jq -er '.name' <<<"$ROLLOUT_OPERATION")"
 
 poll_operation "$BUILD_OPERATION_NAME" "App Hosting build"
 poll_operation "$ROLLOUT_OPERATION_NAME" "App Hosting rollout"
+poll_resource_state "${API_ROOT}/${BACKEND_PATH}/builds/${BUILD_ID}" "READY" "App Hosting build"
+poll_resource_state "${API_ROOT}/${BACKEND_PATH}/rollouts/${BUILD_ID}" "SUCCEEDED" "App Hosting rollout"
 
 BUILD="$(api_request GET "${API_ROOT}/${BACKEND_PATH}/builds/${BUILD_ID}")"
 ROLLOUT="$(api_request GET "${API_ROOT}/${BACKEND_PATH}/rollouts/${BUILD_ID}")"
