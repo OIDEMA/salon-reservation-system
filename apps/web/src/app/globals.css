@@ -2029,6 +2029,410 @@ a {
   font-weight: 800;
 }
 
+.formMessage {
+  margin: 0 0 14px;
+  border: 1px solid #99f6e4;
+  border-radius: 9px;
+  padding: 11px 14px;
+  background: #f0fdfa;
+  color: #115e59;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.formMessage.error {
+  border-color: #fecdd3;
+  background: #fff1f2;
+  color: #be123c;
+}
+
+.customerWorkspace {
+  display: grid;
+  grid-template-columns: minmax(420px, 0.9fr) minmax(500px, 1.1fr);
+  min-height: 680px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.customerListPanel {
+  border-right: 1px solid var(--line);
+  background: #f8fafc;
+}
+
+.customerToolbar,
+.masterToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 16px;
+}
+
+.customerToolbar .searchBox {
+  min-width: 0;
+}
+
+.customerRows {
+  max-height: 680px;
+  overflow: auto;
+}
+
+.customerRow {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 14px 16px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.customerRow:hover,
+.customerRow.isSelected {
+  background: #ecfeff;
+}
+
+.customerRow.isSelected {
+  box-shadow: inset 4px 0 var(--teal);
+}
+
+.customerAvatar {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 50%;
+  background: #ccfbf1;
+  color: #0f766e;
+  font-weight: 900;
+}
+
+.customerRow strong,
+.customerRow small {
+  display: block;
+}
+
+.customerRow small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.customerStats {
+  text-align: right;
+}
+
+.customerDetailPanel {
+  min-width: 0;
+  padding: 24px;
+}
+
+.detailPanelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 22px;
+}
+
+.detailPanelHeader h2,
+.detailPanelHeader p {
+  margin: 4px 0 0;
+}
+
+.detailPanelHeader > div > span {
+  color: var(--teal-dark);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.customerMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.customerMetricGrid > div {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 14px;
+  background: #f8fafc;
+}
+
+.customerMetricGrid span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.karteBox {
+  display: flex;
+  gap: 12px;
+  margin: 18px 0;
+  border: 1px solid #bae6fd;
+  border-radius: 10px;
+  padding: 16px;
+  background: #f0f9ff;
+}
+
+.karteBox p {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  line-height: 1.7;
+}
+
+.subsectionTitle {
+  margin: 24px 0 10px;
+  font-size: 15px;
+}
+
+.historyList {
+  display: grid;
+  gap: 8px;
+}
+
+.historyList article {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) minmax(120px, 0.6fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px 12px;
+}
+
+.historyList time,
+.historyList span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.historyList em {
+  font-style: normal;
+  font-weight: 900;
+}
+
+.detailEmpty {
+  display: grid;
+  min-height: 560px;
+  place-items: center;
+  align-content: center;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.detailEmpty h2,
+.detailEmpty p {
+  margin: 10px 0 0;
+}
+
+.customerForm,
+.reservationEditForm,
+.masterForm {
+  display: grid;
+  gap: 16px;
+}
+
+.createFieldGrid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.emptyState {
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.reservationSearchControls {
+  grid-template-columns: minmax(260px, 1fr) 150px 150px auto 150px auto;
+}
+
+.compactMetrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.reservationStatus {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #e2e8f0;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.status-confirmed,
+.status-completed {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status-pending,
+.status-waitlist {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status-cancelled,
+.status-no_show {
+  background: #ffe4e6;
+  color: #be123c;
+}
+
+.drawerBackdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 100;
+}
+
+.editDrawer {
+  width: min(620px, 90vw);
+  height: 100%;
+  overflow: auto;
+  padding: 26px;
+  background: #fff;
+  box-shadow: -20px 0 50px rgba(15, 23, 42, 0.18);
+}
+
+.statusActionGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 7px;
+  margin-bottom: 20px;
+}
+
+.statusActionGrid button {
+  display: grid;
+  place-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 4px;
+  background: #f8fafc;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.statusActionGrid button.danger {
+  border-color: #fecdd3;
+  background: #fff1f2;
+  color: #be123c;
+}
+
+.statusQuickActions {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.settingsForm {
+  display: grid;
+  gap: 18px;
+}
+
+.toggleGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.toggleButton {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 12px;
+  background: #f8fafc;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.stickySaveBar {
+  position: sticky;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #99f6e4;
+  border-radius: 11px;
+  padding: 12px 16px;
+  background: rgba(240, 253, 250, 0.96);
+  box-shadow: var(--shadow);
+  color: #115e59;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.masterToolbar {
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.masterToolbar p {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.tableActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dangerButton.large {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  height: 44px;
+  padding: 0 14px;
+}
+
+.checkboxField {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  font-weight: 800;
+}
+
+.checkboxField input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--teal-dark);
+}
+
+.shiftManager {
+  display: grid;
+  gap: 18px;
+}
+
+.shiftCreateForm .primaryButton {
+  margin-top: 16px;
+}
+
 @media (max-width: 1320px) {
   body {
     min-width: 1040px;
@@ -2091,6 +2495,18 @@ a {
   .createFieldGrid.three,
   .createFieldGrid.four {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .customerWorkspace {
+    grid-template-columns: minmax(360px, 0.8fr) minmax(480px, 1.2fr);
+  }
+
+  .reservationSearchControls {
+    grid-template-columns: minmax(240px, 1fr) 140px 140px auto;
+  }
+
+  .toggleGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .confirmationDetail .detailGrid {

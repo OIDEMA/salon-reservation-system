@@ -98,3 +98,72 @@ export type AdminEquipment = {
   active: boolean;
   sortOrder: number;
 };
+
+export type AdminCustomer = {
+  id: string;
+  name: string;
+  kana: string;
+  phone: string | null;
+  lineDisplayName: string | null;
+  tags: string[];
+  visitCount: number;
+  totalSpent: number;
+  lastVisitAt: string | null;
+  memo: string | null;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { reservations: number };
+};
+
+export type AdminCustomerDetail = AdminCustomer & {
+  reservations: Array<{
+    id: string;
+    startsAt: string;
+    endsAt: string;
+    status: string;
+    memo: string | null;
+    service: { id: string; name: string; price: number };
+    staff: { id: string; name: string } | null;
+  }>;
+};
+
+export type AdminReservation = {
+  id: string;
+  updatedAt: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  status: string;
+  source: string;
+  isRequest: boolean;
+  memo: string;
+  riskScore: number;
+  paymentStatus: string;
+  lineMessageStatus: string;
+  customer: {
+    id: string;
+    name: string;
+    kana: string;
+    phone: string | null;
+    visitCount: number;
+    tags: string[];
+  };
+  service: {
+    id: string;
+    name: string;
+    category: string;
+    durationMinutes: number;
+    price: number;
+  };
+  staff: { id: string; name: string } | null;
+};
+
+export type AdminShift = {
+  id: string;
+  staffId: string | null;
+  label: string;
+  type: "AVAILABLE" | "OFF" | "BREAK" | "SALES_STOP" | "TRAINING" | string;
+  startsAt: string;
+  endsAt: string;
+  staff: { id: string; name: string } | null;
+};

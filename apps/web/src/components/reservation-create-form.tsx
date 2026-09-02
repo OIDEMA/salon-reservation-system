@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, CalendarCheck, CheckCircle2, Clock3, CreditCard, MessageCircle, Phone, Send, UserRound } from "lucide-react";
+import { AlertCircle, CalendarCheck, CheckCircle2, Clock3, MessageCircle, Phone, UserRound } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTenantSlug } from "@/components/tenant-provider";
 import type { AdminMenu, AdminStaff } from "@/lib/admin-types";
@@ -8,9 +8,7 @@ import { tenantApiPath, tenantPath } from "@/lib/tenant-routing";
 
 const sourceOptions = [
   { value: "PHONE", label: "電話" },
-  { value: "LINE", label: "LINE" },
-  { value: "MINI_APP", label: "ミニアプリ" },
-  { value: "WEB", label: "Web" },
+  { value: "WEB", label: "自社Web" },
   { value: "WALK_IN", label: "来店" }
 ];
 
@@ -18,18 +16,6 @@ const statusOptions = [
   { value: "CONFIRMED", label: "確定" },
   { value: "PENDING", label: "未確認" },
   { value: "WAITLIST", label: "待ち" }
-];
-
-const lineOptions = [
-  { value: "NOT_SENT", label: "未送信" },
-  { value: "QUEUED", label: "送信待ち" },
-  { value: "SENT", label: "送信済み" }
-];
-
-const paymentOptions = [
-  { value: "UNPAID", label: "未決済" },
-  { value: "AUTHORIZED", label: "仮決済" },
-  { value: "PAID", label: "決済済み" }
 ];
 
 const yen = new Intl.NumberFormat("ja-JP", {
@@ -80,8 +66,6 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
   const [durationMinutes, setDurationMinutes] = useState(String(activeMenus[0]?.durationMinutes ?? 60));
   const [source, setSource] = useState("PHONE");
   const [status, setStatus] = useState("CONFIRMED");
-  const [lineMessageStatus, setLineMessageStatus] = useState("NOT_SENT");
-  const [paymentStatus, setPaymentStatus] = useState("UNPAID");
   const [memo, setMemo] = useState("");
   const [category, setCategory] = useState("すべて");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -133,8 +117,6 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
           customerPhone: customerPhone.trim() || undefined,
           source,
           status,
-          paymentStatus,
-          lineMessageStatus,
           isRequest: Boolean(selectedStaffId),
           memo: memo.trim() || undefined
         })
@@ -250,7 +232,7 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
               </button>
             ))}
           </div>
-          <div className="createFieldGrid four stateFields">
+          <div className="createFieldGrid two stateFields">
             <label className="createField">
               <span>経路</span>
               <select value={source} onChange={(event) => setSource(event.target.value)}>
@@ -263,22 +245,6 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
               <span>予約状態</span>
               <select value={status} onChange={(event) => setStatus(event.target.value)}>
                 {statusOptions.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="createField">
-              <span>LINE</span>
-              <select value={lineMessageStatus} onChange={(event) => setLineMessageStatus(event.target.value)}>
-                {lineOptions.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="createField">
-              <span>決済</span>
-              <select value={paymentStatus} onChange={(event) => setPaymentStatus(event.target.value)}>
-                {paymentOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
@@ -336,14 +302,6 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
             <a href={tenantPath(tenantSlug, "/reservations")}>
               <Phone size={15} />
               検索
-            </a>
-            <a href={tenantPath(tenantSlug, source === "LINE" ? "/confirmation" : "/reservations")}>
-              <Send size={15} />
-              通知
-            </a>
-            <a href={tenantPath(tenantSlug, "/reservations")}>
-              <CreditCard size={15} />
-              決済
             </a>
           </div>
         </section>

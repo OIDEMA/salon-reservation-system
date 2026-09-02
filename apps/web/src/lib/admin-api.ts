@@ -1,4 +1,4 @@
-import type { AdminCategory, AdminEquipment, AdminMenu, AdminSettingsPayload, AdminStaff } from "./admin-types";
+import type { AdminCategory, AdminCustomer, AdminEquipment, AdminMenu, AdminSettingsPayload, AdminStaff } from "./admin-types";
 import { backendJson } from "./backend";
 
 export function fetchAdminSettings() {
@@ -19,4 +19,8 @@ export function fetchAdminCategories() {
 
 export function fetchAdminEquipment() {
   return backendJson<AdminEquipment[]>("/api/admin/equipment");
+}
+
+export function fetchAdminCustomers() {
+  return backendJson<AdminCustomer[]>("/api/admin/customers");
 }

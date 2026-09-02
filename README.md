@@ -34,6 +34,17 @@ Tenant creation and the first owner assignment are operator-managed rather than 
 
 PostgreSQL is the source of truth. When no store has been registered, the application shows an empty state instead of sample data.
 
+## Implemented Operations
+
+- Customer directory, customer notes (karte), tags, and reservation history
+- Reservation creation, search, editing, status transitions, cancellation, and no-show tracking
+- Staff and whole-store shift blocks with reservation conflict and capacity checks
+- Persistent salon hours, closure days, booking cutoffs, and reservation acceptance settings
+- CRUD for staff, menus, categories, and equipment
+- Tenant-scoped roles and audit logs for write operations
+
+External acquisition and publishing integrations are intentionally out of scope for now. The application does not publish to HOT PEPPER Beauty, manage external reviews or coupons, send LINE/email messages, or process external payments.
+
 ## Deploy Notes
 
 This repository is a monorepo. The frontend and API can be deployed as separate services from the same GitHub repository.

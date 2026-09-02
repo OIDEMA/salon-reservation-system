@@ -1,6 +1,7 @@
-import { AlertCircle, CalendarCheck, CheckCircle2, CircleDollarSign, Clock3, Command, CreditCard, MessageCircle, Plus, Send, Sparkles, UserRound } from "lucide-react";
+import { AlertCircle, CalendarCheck, CircleDollarSign, Clock3, Command, Plus, Send, Sparkles, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 import { AdminShell } from "@/components/admin-shell";
+import { ReservationStatusActions } from "@/components/reservation-status-actions";
 import { TenantLink } from "@/components/tenant-link";
 import { fetchDashboardServer } from "@/lib/server-dashboard";
 import type { ReservationStatus, ScheduleReservation } from "@/lib/types";
@@ -41,20 +42,9 @@ export default async function TenantConfirmationPage({ searchParams }: Confirmat
     <AdminShell
       active="/confirmation"
       title="予約確認センター"
-      subtitle="未確認予約、LINE送信、決済確認、当日リスクをこの画面でまとめて処理します。"
+      subtitle="未確認、来店、完了、キャンセル、無断キャンセルをまとめて処理します。"
       badge={`${dashboard.summary.pendingCount}件未確認`}
-      actions={
-        <>
-          <TenantLink className="secondaryButton" href="/">
-            <CalendarCheck size={17} />
-            予約表へ
-          </TenantLink>
-          <button className="primaryButton" type="button">
-            <MessageCircle size={17} />
-            一括LINE再送
-          </button>
-        </>
-      }
+      actions={<TenantLink className="secondaryButton" href="/"><CalendarCheck size={17} />予約表へ</TenantLink>}
     >
       <div className="confirmationContent">
         <section className="confirmationHero">
@@ -133,20 +123,7 @@ function ReservationDetail({ reservation }: { reservation?: ScheduleReservation 
           <span key={tag}>{tag}</span>
         ))}
       </div>
-      <div className="quickActions">
-        <button type="button">
-          <MessageCircle size={17} />
-          <span>LINE送信</span>
-        </button>
-        <button type="button">
-          <CheckCircle2 size={17} />
-          <span>確認済み</span>
-        </button>
-        <button type="button">
-          <CreditCard size={17} />
-          <span>決済</span>
-        </button>
-      </div>
+      <ReservationStatusActions reservationId={reservation.id} />
     </section>
   );
 }

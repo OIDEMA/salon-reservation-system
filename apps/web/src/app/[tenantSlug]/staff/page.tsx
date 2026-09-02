@@ -1,98 +1,27 @@
-import { Edit3, GripVertical, Plus, Save, Trash2, Users } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
+import { MasterDataManager, type MasterColumn, type MasterField } from "@/components/master-data-manager";
 import { fetchAdminStaff } from "@/lib/admin-api";
 
-const roleLabel: Record<string, string> = {
-  MANAGER: "管理者",
-  STYLIST: "施術スタッフ",
-  ESTHETICIAN: "エステ",
-  ASSISTANT: "補助",
-  ROOM_RESOURCE: "設備枠"
-};
+const fields: MasterField[] = [
+  { key: "name", label: "スタッフ名", required: true },
+  { key: "kana", label: "カナ" },
+  { key: "role", label: "役割", type: "select", options: [
+    { value: "MANAGER", label: "管理者" }, { value: "STYLIST", label: "施術スタッフ" },
+    { value: "ESTHETICIAN", label: "エステ" }, { value: "ASSISTANT", label: "補助" }, { value: "ROOM_RESOURCE", label: "設備枠" }
+  ] },
+  { key: "color", label: "予約表カラー", type: "color" },
+  { key: "nominationFee", label: "指名料", type: "number" },
+  { key: "comment", label: "コメント", type: "textarea" },
+  { key: "allocationOrder", label: "自動割当順", type: "number" },
+  { key: "parallelCapacity", label: "同時対応数", type: "number" },
+  { key: "active", label: "有効", type: "checkbox" }
+];
+const columns: MasterColumn[] = [
+  { key: "name", label: "スタッフ名" }, { key: "role", label: "役割" }, { key: "nominationFee", label: "指名料", format: "currency" },
+  { key: "allocationOrder", label: "割当順" }, { key: "parallelCapacity", label: "同時対応" }, { key: "active", label: "状態", format: "boolean" }
+];
 
 export default async function TenantStaffPage() {
   const staff = await fetchAdminStaff();
-
-  return (
-    <AdminShell
-      active="/staff"
-      title="スタッフリスト"
-      subtitle="基本就業時間、指名料、予約割当順、同時対応数をスタッフ単位で管理します。"
-      badge={`${staff.length}名`}
-      actions={
-        <>
-          <button className="secondaryButton" type="button">
-            <Save size={17} />
-            ソート確定
-          </button>
-          <button className="primaryButton" type="button">
-            <Plus size={17} />
-            新規登録
-          </button>
-        </>
-      }
-    >
-      <div className="adminContent">
-        <section className="adminNotice">
-          <Users size={18} />
-          メニューとスタッフを連携すると、予約受付時に担当可能なスタッフだけが候補に表示されます。
-        </section>
-
-        <section className="tablePanel">
-          <table className="adminTable staffTable">
-            <thead>
-              <tr>
-                <th>並び</th>
-                <th>編集</th>
-                <th>基本就業時間</th>
-                <th>画像</th>
-                <th>スタッフ名</th>
-                <th>指名料</th>
-                <th>コメント</th>
-                <th>割当順</th>
-                <th>同時対応</th>
-                <th>削除</th>
-              </tr>
-            </thead>
-            <tbody>
-              {staff.map((member) => (
-                <tr key={member.id}>
-                  <td>
-                    <GripVertical className="dragIcon" size={18} />
-                  </td>
-                  <td>
-                    <button className="miniButton" type="button">
-                      <Edit3 size={15} />
-                      編集
-                    </button>
-                  </td>
-                  <td>
-                    <button className="purpleButton" type="button">基本就業時間</button>
-                  </td>
-                  <td>
-                    <div className="staffPhoto" style={{ borderColor: member.color }}>
-                      {member.imageUrl ? <img alt="" src={member.imageUrl} /> : <span>{member.name.slice(0, 2)}</span>}
-                    </div>
-                  </td>
-                  <td>
-                    <strong>{member.name}</strong>
-                    <small>{member.kana} / {roleLabel[member.role] ?? member.role}</small>
-                  </td>
-                  <td>{member.nominationFee.toLocaleString("ja-JP")}円</td>
-                  <td className="mutedCell">{member.comment || "未登録"}</td>
-                  <td>{member.allocationOrder}</td>
-                  <td>{member.parallelCapacity}</td>
-                  <td>
-                    <button className="dangerButton" type="button" title="削除">
-                      <Trash2 size={15} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      </div>
-    </AdminShell>
-  );
+  return <AdminShell active="/staff" title="スタッフ管理" subtitle="担当者、指名料、自動割当順、同時対応数を管理します。" badge={`${staff.length}名`}><div className="adminContent"><MasterDataManager resource="staff" initialItems={staff} fields={fields} columns={columns} itemLabel="スタッフ" defaults={{ name: "", kana: "", role: "STYLIST", color: "#18c7bd", nominationFee: 0, comment: "", allocationOrder: 1, parallelCapacity: 1, active: true, sortOrder: staff.length }} /></div></AdminShell>;
 }
