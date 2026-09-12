@@ -27,9 +27,10 @@ import {
   Wrench,
   XCircle
 } from "lucide-react";
-import { format, parseISO } from "date-fns";
+import { format, isValid, parseISO } from "date-fns";
 import { ja } from "date-fns/locale";
 import Image from "next/image";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { fetchDashboard } from "@/lib/api";
 import { LogoutButton } from "@/components/logout-button";
@@ -80,6 +81,12 @@ function addDays(date: string, days: number) {
   return format(next, "yyyy-MM-dd");
 }
 
+function validDateParam(value: string | null) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const parsed = parseISO(value);
+  return isValid(parsed) && format(parsed, "yyyy-MM-dd") === value ? value : null;
+}
+
 function iconButtonLabel(label: string, icon: React.ReactNode) {
   return (
     <>
@@ -91,14 +98,25 @@ function iconButtonLabel(label: string, icon: React.ReactNode) {
 
 export function ReservationDashboard() {
   const tenantSlug = useTenantSlug();
-  const [date, setDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
-  const [dashboard, setDashboard] = useState<DashboardData>(() => createEmptyDashboard(format(new Date(), "yyyy-MM-dd")));
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const today = format(new Date(), "yyyy-MM-dd");
+  const date = validDateParam(searchParams.get("date")) ?? today;
+  const [dashboard, setDashboard] = useState<DashboardData>(() => createEmptyDashboard(date));
   const [selectedId, setSelectedId] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | ReservationStatus>("ALL");
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<"timeline" | "agenda">("timeline");
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  function changeDate(nextDate: string) {
+    const nextSearchParams = new URLSearchParams(searchParams.toString());
+    nextSearchParams.set("date", nextDate);
+    router.push(`${pathname}?${nextSearchParams.toString()}`, { scroll: false });
+  }
 
   useEffect(() => {
     let ignore = false;
@@ -129,7 +147,7 @@ export function ReservationDashboard() {
     return () => {
       ignore = true;
     };
-  }, [date, selectedId, tenantSlug]);
+  }, [date, refreshKey, selectedId, tenantSlug]);
 
   const timeline = useMemo(() => {
     const start = toMinutes(dashboard.hours.start);
@@ -157,7 +175,6 @@ export function ReservationDashboard() {
   }, [dashboard.reservations, query, statusFilter]);
 
   const now = new Date();
-  const today = format(now, "yyyy-MM-dd");
   const currentMinute = now.getHours() * 60 + now.getMinutes() - timeline.start;
   const showNowLine = date === today && currentMinute >= 0 && currentMinute <= timeline.end - timeline.start;
   const boardHeight = dashboard.rows.length * ROW_HEIGHT;
@@ -212,23 +229,23 @@ export function ReservationDashboard() {
           <section className="mainPane">
             <div className="commandSurface">
               <div className="dateControls">
-                <button className="secondaryButton" type="button" onClick={() => setDate(addDays(date, -1))}>
+                <button className="secondaryButton" type="button" onClick={() => changeDate(addDays(date, -1))}>
                   {iconButtonLabel("前日", <ChevronLeft size={18} />)}
                 </button>
                 <div className="dateBadge">
                   <strong>{formatDisplayDate(date)}</strong>
                   <CalendarDays size={25} />
                 </div>
-                <button className="secondaryButton" type="button" onClick={() => setDate(format(new Date(), "yyyy-MM-dd"))}>
+                <button className="secondaryButton" type="button" onClick={() => changeDate(today)}>
                   本日
                 </button>
-                <button className="secondaryButton" type="button" onClick={() => setDate(addDays(date, 1))}>
+                <button className="secondaryButton" type="button" onClick={() => changeDate(addDays(date, 1))}>
                   {iconButtonLabel("翌日", <ChevronRight size={18} />)}
                 </button>
               </div>
 
               <div className="actionCluster">
-                <button className="primaryButton" type="button" onClick={() => setDate(date)}>
+                <button className="primaryButton" type="button" onClick={() => setRefreshKey((current) => current + 1)}>
                   {iconButtonLabel(isLoading ? "同期中" : "更新", <RefreshCw size={18} />)}
                 </button>
                 <div className="segmentedControl" aria-label="view mode">
