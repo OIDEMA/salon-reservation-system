@@ -50,22 +50,35 @@ async function resolveOwner(email: string, displayName?: string) {
 
 async function provision() {
   const input = readInput();
-  const firebaseUser = await resolveOwner(input.ownerEmail, input.ownerDisplayName);
+  const existingApplicationUser = await prisma.appUser.findUnique({
+    where: { email: input.ownerEmail }
+  });
+  const firebaseUser = existingApplicationUser
+    ? null
+    : await resolveOwner(input.ownerEmail, input.ownerDisplayName);
 
   const result = await prisma.$transaction(async (transaction) => {
-    const user = await transaction.appUser.upsert({
-      where: { firebaseUid: firebaseUser.uid },
-      create: {
-        firebaseUid: firebaseUser.uid,
-        email: input.ownerEmail,
-        displayName: input.ownerDisplayName ?? firebaseUser.displayName
-      },
-      update: {
-        email: input.ownerEmail,
-        displayName: input.ownerDisplayName ?? firebaseUser.displayName,
-        disabled: false
-      }
-    });
+    const user = existingApplicationUser
+      ? await transaction.appUser.update({
+          where: { id: existingApplicationUser.id },
+          data: {
+            disabled: false,
+            ...(input.ownerDisplayName ? { displayName: input.ownerDisplayName } : {})
+          }
+        })
+      : await transaction.appUser.upsert({
+          where: { firebaseUid: firebaseUser!.uid },
+          create: {
+            firebaseUid: firebaseUser!.uid,
+            email: input.ownerEmail,
+            displayName: input.ownerDisplayName ?? firebaseUser!.displayName
+          },
+          update: {
+            email: input.ownerEmail,
+            displayName: input.ownerDisplayName ?? firebaseUser!.displayName,
+            disabled: false
+          }
+        });
 
     const existingTenant = await transaction.tenant.findUnique({
       where: { slug: input.tenantSlug },

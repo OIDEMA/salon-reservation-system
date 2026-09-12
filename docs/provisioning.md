@@ -12,7 +12,7 @@ The `tenant:provision` command performs one transaction that creates:
 4. the first salon and its settings;
 5. the provisioning audit event.
 
-If no Firebase user exists for the selected email, the command creates a verified, passwordless Firebase user. The owner then uses **初回ログイン・パスワード再設定** on the login screen to receive a Firebase password-reset email. If the Firebase user already exists, their email must already be verified; an unverified pre-existing account is never promoted to `OWNER`.
+If an application user with the selected email already exists, the command reuses that user and only adds the new tenant membership; Firebase Authentication is not queried or changed. Otherwise, if no Firebase user exists for the selected email, the command creates a verified, passwordless Firebase user. The owner then uses the password-reset link on the login screen to receive a Firebase password-reset email. If the Firebase user already exists, their email must already be verified; an unverified pre-existing account is never promoted to `OWNER`.
 
 The command is idempotent only when the same tenant slug is already owned by the selected owner and has a salon. Any conflicting or application-reserved slug fails without changing PostgreSQL. The slug becomes the stable URL prefix, for example `/beauty-gum/calendar`, and should not be renamed as ordinary display text.
 
