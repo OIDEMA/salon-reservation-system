@@ -12,6 +12,7 @@ export type ScheduleRow = {
 export type ScheduleReservation = {
   id: string;
   rowId: string;
+  serviceId: string;
   startTime: string;
   endTime: string;
   customerName: string;

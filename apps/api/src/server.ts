@@ -286,6 +286,7 @@ async function buildDashboardFromDatabase(date: string, tenantId: string, salonI
   const mappedReservations = reservations.map((reservation) => ({
     id: reservation.id,
     rowId: reservation.staffId ?? "unassigned",
+    serviceId: reservation.serviceId,
     startTime: toTime(reservation.startsAt),
     endTime: toTime(reservation.endsAt),
     customerName: reservation.customer.name,

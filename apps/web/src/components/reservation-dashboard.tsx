@@ -31,17 +31,51 @@ import { format, isValid, parseISO } from "date-fns";
 import { ja } from "date-fns/locale";
 import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchDashboard } from "@/lib/api";
 import { LogoutButton } from "@/components/logout-button";
 import { useTenantSlug } from "@/components/tenant-provider";
 import { TenantSwitcher } from "@/components/tenant-switcher";
-import { tenantPath } from "@/lib/tenant-routing";
+import { TimelineReservationEditor, type TimelineEditorValue } from "@/components/timeline-reservation-editor";
+import type { AdminMenu } from "@/lib/admin-types";
+import { tenantApiPath, tenantPath } from "@/lib/tenant-routing";
 import { createEmptyDashboard, type DashboardData, type ReservationStatus, type ScheduleReservation } from "@/lib/types";
 
 const HOUR_WIDTH = 132;
 const ROW_HEIGHT = 76;
 const HEADER_HEIGHT = 42;
+
+type TimelineInteraction =
+  | {
+      mode: "create";
+      pointerId: number;
+      rowIndex: number;
+      anchorMinutes: number;
+      currentMinutes: number;
+    }
+  | {
+      mode: "move";
+      pointerId: number;
+      reservation: ScheduleReservation;
+      rowIndex: number;
+      startMinutes: number;
+      durationMinutes: number;
+      grabOffsetMinutes: number;
+      originClientX: number;
+      originClientY: number;
+      moved: boolean;
+    }
+  | {
+      mode: "resize";
+      pointerId: number;
+      reservation: ScheduleReservation;
+      rowIndex: number;
+      startMinutes: number;
+      durationMinutes: number;
+      originClientX: number;
+      originClientY: number;
+      moved: boolean;
+    };
 
 const statusMeta: Record<ReservationStatus, { label: string; className: string; icon: typeof CheckCircle2 }> = {
   PENDING: { label: "未確認", className: "statusPending", icon: AlertCircle },
@@ -69,6 +103,19 @@ const navItems = [
 function toMinutes(time: string) {
   const [hour, minute] = time.split(":").map(Number);
   return hour * 60 + minute;
+}
+
+function toTime(minutes: number) {
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+async function responseError(response: Response) {
+  const body = (await response.json().catch(() => null)) as { message?: string } | null;
+  return body?.message ?? `処理に失敗しました (${response.status})`;
 }
 
 function formatDisplayDate(date: string) {
@@ -111,6 +158,12 @@ export function ReservationDashboard() {
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [menus, setMenus] = useState<AdminMenu[]>([]);
+  const [editor, setEditor] = useState<TimelineEditorValue | null>(null);
+  const [interaction, setInteraction] = useState<TimelineInteraction | null>(null);
+  const [scheduleMessage, setScheduleMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+  const gridRef = useRef<HTMLDivElement>(null);
 
   function changeDate(nextDate: string) {
     const nextSearchParams = new URLSearchParams(searchParams.toString());
@@ -126,9 +179,7 @@ export function ReservationDashboard() {
       .then((data) => {
         if (!ignore) {
           setDashboard(data);
-          if (!data.reservations.some((reservation) => reservation.id === selectedId)) {
-            setSelectedId(data.reservations[0]?.id ?? "");
-          }
+          setSelectedId((current) => data.reservations.some((reservation) => reservation.id === current) ? current : data.reservations[0]?.id ?? "");
         }
       })
       .catch(() => {
@@ -147,7 +198,19 @@ export function ReservationDashboard() {
     return () => {
       ignore = true;
     };
-  }, [date, refreshKey, selectedId, tenantSlug]);
+  }, [date, refreshKey, tenantSlug]);
+
+  useEffect(() => {
+    let ignore = false;
+    fetch(tenantApiPath(tenantSlug, "/services"), { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await responseError(response));
+        return response.json() as Promise<AdminMenu[]>;
+      })
+      .then((data) => { if (!ignore) setMenus(data); })
+      .catch(() => { if (!ignore) setMenus([]); });
+    return () => { ignore = true; };
+  }, [tenantSlug]);
 
   const timeline = useMemo(() => {
     const start = toMinutes(dashboard.hours.start);
@@ -178,6 +241,183 @@ export function ReservationDashboard() {
   const currentMinute = now.getHours() * 60 + now.getMinutes() - timeline.start;
   const showNowLine = date === today && currentMinute >= 0 && currentMinute <= timeline.end - timeline.start;
   const boardHeight = dashboard.rows.length * ROW_HEIGHT;
+
+  function pointerSlot(clientX: number, clientY: number) {
+    const element = gridRef.current;
+    if (!element || dashboard.rows.length === 0) return null;
+    const bounds = element.getBoundingClientRect();
+    const x = clamp(clientX - bounds.left, 0, timeline.width - 1);
+    const y = clamp(clientY - bounds.top, 0, Math.max(0, boardHeight - 1));
+    const rawMinutes = timeline.start + (x / HOUR_WIDTH) * 60;
+    const step = dashboard.hours.stepMinutes;
+    return {
+      minutes: clamp(Math.floor(rawMinutes / step) * step, timeline.start, timeline.end - step),
+      rowIndex: clamp(Math.floor(y / ROW_HEIGHT), 0, dashboard.rows.length - 1)
+    };
+  }
+
+  function updateInteractionPosition(current: TimelineInteraction, clientX: number, clientY: number): TimelineInteraction {
+    const slot = pointerSlot(clientX, clientY);
+    if (!slot) return current;
+    if (current.mode === "create") return { ...current, currentMinutes: slot.minutes, rowIndex: slot.rowIndex };
+    if (current.mode === "move") {
+      const startMinutes = clamp(
+        slot.minutes - current.grabOffsetMinutes,
+        timeline.start,
+        timeline.end - current.durationMinutes
+      );
+      return {
+        ...current,
+        rowIndex: slot.rowIndex,
+        startMinutes,
+        moved: current.moved || Math.hypot(clientX - current.originClientX, clientY - current.originClientY) > 4
+      };
+    }
+    const endMinutes = clamp(slot.minutes + dashboard.hours.stepMinutes, current.startMinutes + dashboard.hours.stepMinutes, timeline.end);
+    return {
+      ...current,
+      durationMinutes: endMinutes - current.startMinutes,
+      moved: current.moved || Math.hypot(clientX - current.originClientX, clientY - current.originClientY) > 4
+    };
+  }
+
+  function handleGridPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || isSavingSchedule || (event.target as HTMLElement).closest("[data-reservation-card]")) return;
+    const slot = pointerSlot(event.clientX, event.clientY);
+    if (!slot) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setScheduleMessage(null);
+    setInteraction({
+      mode: "create",
+      pointerId: event.pointerId,
+      rowIndex: slot.rowIndex,
+      anchorMinutes: slot.minutes,
+      currentMinutes: slot.minutes
+    });
+  }
+
+  function handleGridPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (!interaction || interaction.pointerId !== event.pointerId || interaction.mode !== "create") return;
+    setInteraction(updateInteractionPosition(interaction, event.clientX, event.clientY));
+  }
+
+  function finishGridInteraction(event: React.PointerEvent<HTMLDivElement>) {
+    if (!interaction || interaction.pointerId !== event.pointerId || interaction.mode !== "create") return;
+    const finalInteraction = updateInteractionPosition(interaction, event.clientX, event.clientY);
+    if (finalInteraction.mode !== "create") return;
+    const startMinutes = Math.min(finalInteraction.anchorMinutes, finalInteraction.currentMinutes);
+    const endMinutes = Math.max(finalInteraction.anchorMinutes, finalInteraction.currentMinutes) + dashboard.hours.stepMinutes;
+    const row = dashboard.rows[finalInteraction.rowIndex];
+    setInteraction(null);
+    if (!row) return;
+    setEditor({
+      kind: "create",
+      date,
+      startTime: toTime(startMinutes),
+      durationMinutes: endMinutes - startMinutes,
+      rowId: row.id
+    });
+  }
+
+  function startReservationInteraction(event: React.PointerEvent<HTMLElement>, reservation: ScheduleReservation) {
+    if (event.button !== 0 || isSavingSchedule) return;
+    const slot = pointerSlot(event.clientX, event.clientY);
+    if (!slot) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setSelectedId(reservation.id);
+    setScheduleMessage(null);
+    const startMinutes = toMinutes(reservation.startTime);
+    const durationMinutes = toMinutes(reservation.endTime) - startMinutes;
+    const resizing = Boolean((event.target as HTMLElement).closest("[data-resize-handle]"));
+    setInteraction(
+      resizing
+        ? {
+            mode: "resize",
+            pointerId: event.pointerId,
+            reservation,
+            rowIndex: dashboard.rows.findIndex((row) => row.id === reservation.rowId),
+            startMinutes,
+            durationMinutes,
+            originClientX: event.clientX,
+            originClientY: event.clientY,
+            moved: false
+          }
+        : {
+            mode: "move",
+            pointerId: event.pointerId,
+            reservation,
+            rowIndex: slot.rowIndex,
+            startMinutes,
+            durationMinutes,
+            grabOffsetMinutes: clamp(slot.minutes - startMinutes, 0, Math.max(0, durationMinutes - dashboard.hours.stepMinutes)),
+            originClientX: event.clientX,
+            originClientY: event.clientY,
+            moved: false
+          }
+    );
+  }
+
+  function moveReservationInteraction(event: React.PointerEvent<HTMLElement>) {
+    if (!interaction || interaction.pointerId !== event.pointerId || interaction.mode === "create") return;
+    event.preventDefault();
+    setInteraction(updateInteractionPosition(interaction, event.clientX, event.clientY));
+  }
+
+  async function saveTimelineChange(current: Extract<TimelineInteraction, { mode: "move" | "resize" }>) {
+    const row = dashboard.rows[current.rowIndex];
+    if (!row) return;
+    const unchanged =
+      current.startMinutes === toMinutes(current.reservation.startTime) &&
+      current.durationMinutes === toMinutes(current.reservation.endTime) - toMinutes(current.reservation.startTime) &&
+      row.id === current.reservation.rowId;
+    if (unchanged) return;
+
+    setIsSavingSchedule(true);
+    try {
+      const response = await fetch(tenantApiPath(tenantSlug, `/reservations/${current.reservation.id}`), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date,
+          startTime: toTime(current.startMinutes),
+          durationMinutes: current.durationMinutes,
+          staffId: row.id === "unassigned" ? null : row.id,
+          isRequest: row.id !== "unassigned"
+        })
+      });
+      if (!response.ok) throw new Error(await responseError(response));
+      setScheduleMessage({ type: "success", text: "予約日時を更新しました。" });
+      setRefreshKey((value) => value + 1);
+    } catch (error) {
+      setScheduleMessage({ type: "error", text: error instanceof Error ? error.message : "予約日時を更新できませんでした。" });
+    } finally {
+      setIsSavingSchedule(false);
+    }
+  }
+
+  function finishReservationInteraction(event: React.PointerEvent<HTMLElement>) {
+    if (!interaction || interaction.pointerId !== event.pointerId || interaction.mode === "create") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const finalInteraction = updateInteractionPosition(interaction, event.clientX, event.clientY);
+    if (finalInteraction.mode === "create") return;
+    setInteraction(null);
+    if (finalInteraction.moved) {
+      void saveTimelineChange(finalInteraction);
+      return;
+    }
+    setEditor({
+      kind: "edit",
+      date,
+      startTime: finalInteraction.reservation.startTime,
+      durationMinutes: toMinutes(finalInteraction.reservation.endTime) - toMinutes(finalInteraction.reservation.startTime),
+      rowId: finalInteraction.reservation.rowId,
+      reservation: finalInteraction.reservation
+    });
+  }
 
   return (
     <main className="appShell">
@@ -288,9 +528,21 @@ export function ReservationDashboard() {
 
             {loadError ? <div className="adminNotice">{loadError}</div> : null}
             {!loadError && !dashboard.salon ? <div className="adminNotice">店舗情報が未登録です。基本設定から店舗を登録してください。</div> : null}
+            {viewMode === "timeline" && dashboard.salon ? (
+              <div className="timelineHelp">
+                <span>空き枠をクリック／ドラッグして予約登録</span>
+                <span>予約をドラッグして移動</span>
+                <span>右端をドラッグして時間変更</span>
+              </div>
+            ) : null}
+            {scheduleMessage ? (
+              <div className={`timelineMessage ${scheduleMessage.type === "error" ? "isError" : "isSuccess"}`} role="status">
+                {scheduleMessage.text}
+              </div>
+            ) : null}
 
             {viewMode === "timeline" ? (
-              <div className="scheduleShell">
+              <div className={`scheduleShell ${interaction ? "isInteracting" : ""}`}>
                 <div className="resourceColumn">
                   <div className="resourceHeader">予約枠</div>
                   {dashboard.rows.map((row) => (
@@ -313,7 +565,15 @@ export function ReservationDashboard() {
                         </div>
                       ))}
                     </div>
-                    <div className="gridLayer" style={{ top: HEADER_HEIGHT, height: boardHeight }}>
+                    <div
+                      className="gridLayer"
+                      ref={gridRef}
+                      style={{ top: HEADER_HEIGHT, height: boardHeight }}
+                      onPointerDown={handleGridPointerDown}
+                      onPointerMove={handleGridPointerMove}
+                      onPointerUp={finishGridInteraction}
+                      onPointerCancel={() => setInteraction(null)}
+                    >
                       {dashboard.rows.map((row, rowIndex) => (
                         <div className="gridRow" key={row.id} style={{ top: rowIndex * ROW_HEIGHT, height: ROW_HEIGHT }} />
                       ))}
@@ -323,6 +583,24 @@ export function ReservationDashboard() {
                       {timeline.hours.slice(0, -1).map((hour, index) => (
                         <div className="halfHourLine" key={`${hour}-half`} style={{ left: index * HOUR_WIDTH + HOUR_WIDTH / 2 }} />
                       ))}
+                      {interaction?.mode === "create" ? (() => {
+                        const startMinutes = Math.min(interaction.anchorMinutes, interaction.currentMinutes);
+                        const endMinutes = Math.max(interaction.anchorMinutes, interaction.currentMinutes) + dashboard.hours.stepMinutes;
+                        return (
+                          <div
+                            className="slotSelection"
+                            style={{
+                              left: ((startMinutes - timeline.start) / 60) * HOUR_WIDTH,
+                              top: interaction.rowIndex * ROW_HEIGHT + 7,
+                              width: ((endMinutes - startMinutes) / 60) * HOUR_WIDTH,
+                              height: ROW_HEIGHT - 14
+                            }}
+                          >
+                            <strong>{toTime(startMinutes)}–{toTime(endMinutes)}</strong>
+                            <span>予約を登録</span>
+                          </div>
+                        );
+                      })() : null}
                       {dashboard.blocks.map((block) => {
                         const rowIndex = dashboard.rows.findIndex((row) => row.id === block.rowId);
                         if (rowIndex < 0) return null;
@@ -343,20 +621,40 @@ export function ReservationDashboard() {
                         );
                       })}
                       {filteredReservations.map((reservation) => {
-                        const rowIndex = dashboard.rows.findIndex((row) => row.id === reservation.rowId);
+                        const activeInteraction = interaction?.mode !== "create" && interaction?.reservation.id === reservation.id ? interaction : null;
+                        const rowIndex = activeInteraction?.rowIndex ?? dashboard.rows.findIndex((row) => row.id === reservation.rowId);
                         if (rowIndex < 0) return null;
+                        const startMinutes = activeInteraction?.startMinutes ?? toMinutes(reservation.startTime);
+                        const durationMinutes = activeInteraction?.durationMinutes ?? toMinutes(reservation.endTime) - toMinutes(reservation.startTime);
                         return (
                           <ReservationCard
                             key={reservation.id}
                             reservation={reservation}
                             selected={reservation.id === selectedId}
+                            dragging={Boolean(activeInteraction)}
                             style={{
-                              left: ((toMinutes(reservation.startTime) - timeline.start) / 60) * HOUR_WIDTH,
+                              left: ((startMinutes - timeline.start) / 60) * HOUR_WIDTH,
                               top: rowIndex * ROW_HEIGHT + 12,
-                              width: Math.max(72, ((toMinutes(reservation.endTime) - toMinutes(reservation.startTime)) / 60) * HOUR_WIDTH - 8),
+                              width: Math.max(72, (durationMinutes / 60) * HOUR_WIDTH - 8),
                               height: ROW_HEIGHT - 20
                             }}
-                            onSelect={() => setSelectedId(reservation.id)}
+                            displayStartTime={toTime(startMinutes)}
+                            displayEndTime={toTime(startMinutes + durationMinutes)}
+                            onPointerDown={(event) => startReservationInteraction(event, reservation)}
+                            onPointerMove={moveReservationInteraction}
+                            onPointerUp={finishReservationInteraction}
+                            onPointerCancel={() => setInteraction(null)}
+                            onKeyboardOpen={() => {
+                              setSelectedId(reservation.id);
+                              setEditor({
+                                kind: "edit",
+                                date,
+                                startTime: reservation.startTime,
+                                durationMinutes: toMinutes(reservation.endTime) - toMinutes(reservation.startTime),
+                                rowId: reservation.rowId,
+                                reservation
+                              });
+                            }}
                           />
                         );
                       })}
@@ -375,6 +673,20 @@ export function ReservationDashboard() {
           </section>
         </div>
       </section>
+      {editor ? (
+        <TimelineReservationEditor
+          key={`${editor.kind}-${editor.reservation?.id ?? "new"}-${editor.startTime}-${editor.rowId}`}
+          value={editor}
+          menus={menus}
+          rows={dashboard.rows}
+          onClose={() => setEditor(null)}
+          onSaved={() => {
+            setEditor(null);
+            setScheduleMessage({ type: "success", text: editor.kind === "create" ? "予約を登録しました。" : "予約を更新しました。" });
+            setRefreshKey((value) => value + 1);
+          }}
+        />
+      ) : null}
     </main>
   );
 }
@@ -382,25 +694,52 @@ export function ReservationDashboard() {
 function ReservationCard({
   reservation,
   selected,
+  dragging,
   style,
-  onSelect
+  displayStartTime,
+  displayEndTime,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
+  onKeyboardOpen
 }: {
   reservation: ScheduleReservation;
   selected: boolean;
+  dragging: boolean;
   style: React.CSSProperties;
-  onSelect: () => void;
+  displayStartTime: string;
+  displayEndTime: string;
+  onPointerDown: (event: React.PointerEvent<HTMLElement>) => void;
+  onPointerMove: (event: React.PointerEvent<HTMLElement>) => void;
+  onPointerUp: (event: React.PointerEvent<HTMLElement>) => void;
+  onPointerCancel: () => void;
+  onKeyboardOpen: () => void;
 }) {
   const StatusIcon = statusMeta[reservation.status].icon;
   return (
-    <button className={`reservationCard ${statusMeta[reservation.status].className} ${selected ? "isSelected" : ""}`} style={style} type="button" onClick={onSelect}>
-      <span className="cardTime">{reservation.startTime}-{reservation.endTime}</span>
+    <div
+      className={`reservationCard ${statusMeta[reservation.status].className} ${selected ? "isSelected" : ""} ${dragging ? "isDragging" : ""}`}
+      style={style}
+      role="button"
+      tabIndex={0}
+      data-reservation-card
+      aria-label={`${reservation.customerName} ${displayStartTime}から${displayEndTime}。クリックで編集、ドラッグで移動`}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onKeyboardOpen(); } }}
+    >
+      <span className="cardTime">{displayStartTime}-{displayEndTime}</span>
       <strong>{reservation.customerName}</strong>
       <small>{reservation.serviceName}</small>
       <em>
         {reservation.isRequest ? "指" : "フ"}
         <StatusIcon size={12} />
       </em>
-    </button>
+      <span className="reservationResizeHandle" data-resize-handle title="ドラッグして所要時間を変更" aria-hidden="true" />
+    </div>
   );
 }
 
