@@ -14,4 +14,7 @@ const firebaseConfig = {
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
 export const firebaseAuth = getAuth(app);
+// Firebase uses the Auth instance's language code when generating email
+// action links and localized templates (including password reset emails).
+firebaseAuth.languageCode = "ja";
 export const firebaseAuthReady = setPersistence(firebaseAuth, inMemoryPersistence);
