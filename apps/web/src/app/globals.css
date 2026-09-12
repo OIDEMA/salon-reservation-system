@@ -357,7 +357,6 @@ a {
   align-items: center;
   gap: 2px 10px;
   border: 1px solid var(--line);
-  border-left-width: 5px;
   border-radius: 8px;
   background: var(--surface);
   padding: 12px;
@@ -384,12 +383,6 @@ a {
   font-size: 21px;
   line-height: 1.1;
 }
-
-.metricCard.green { border-left-color: var(--green); }
-.metricCard.blue { border-left-color: var(--blue); }
-.metricCard.red { border-left-color: var(--red); }
-.metricCard.teal { border-left-color: var(--teal-dark); }
-.metricCard.amber { border-left-color: var(--amber); }
 
 .filterBar {
   display: grid;
@@ -948,14 +941,10 @@ a {
 }
 
 .suggestionItem {
-  border-left: 4px solid var(--blue);
+  border: 1px solid var(--line);
   border-radius: 8px;
   background: #f8fafc;
   padding: 11px;
-}
-
-.suggestionItem.high {
-  border-left-color: var(--red);
 }
 
 .suggestionItem strong,
@@ -2389,10 +2378,6 @@ a {
 .customerRow:hover,
 .customerRow.isSelected {
   background: #ecfeff;
-}
-
-.customerRow.isSelected {
-  box-shadow: inset 4px 0 var(--teal);
 }
 
 .customerAvatar {
