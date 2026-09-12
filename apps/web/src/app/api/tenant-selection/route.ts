@@ -3,13 +3,13 @@ import { z } from "zod";
 import { backendJson } from "@/lib/backend";
 import { ACTIVE_SALON_COOKIE, ACTIVE_TENANT_COOKIE, ACTIVE_TENANT_SLUG_COOKIE } from "@/lib/session-constants";
 import { isTenantSlug } from "@/lib/tenant-routing";
+import { sameOrigin } from "@/lib/request-security";
 
 const selectionSchema = z.object({ tenantId: z.string().min(1), salonId: z.string().min(1) });
 type Membership = { tenant: { id: string; slug: string; salons: Array<{ id: string }> } };
 
 export async function POST(request: NextRequest) {
-  const origin = request.headers.get("origin");
-  if (origin && origin !== request.nextUrl.origin) return NextResponse.json({ message: "Invalid origin" }, { status: 403 });
+  if (!sameOrigin(request)) return NextResponse.json({ message: "Invalid origin" }, { status: 403 });
   const input = selectionSchema.parse(await request.json());
   const memberships = await backendJson<Membership[]>("/api/me/tenants");
   const selectedMembership = memberships.find(

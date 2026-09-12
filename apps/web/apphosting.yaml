@@ -6,6 +6,10 @@ runConfig:
   memoryMiB: 512
 
 env:
+  - variable: APP_PUBLIC_ORIGIN
+    value: https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app
+    availability:
+      - RUNTIME
   - variable: NEXT_PUBLIC_API_BASE_URL
     value: https://reservation-api-42401528382.asia-east1.run.app
     availability:

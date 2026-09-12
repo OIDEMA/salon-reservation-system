@@ -1,15 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { firebaseAdminAuth } from "@/lib/firebase-admin";
+import { sameOrigin } from "@/lib/request-security";
 
 const inputSchema = z.object({
   email: z.string().trim().toLowerCase().email()
 });
-
-function sameOrigin(request: NextRequest) {
-  const origin = request.headers.get("origin");
-  return !origin || origin === request.nextUrl.origin;
-}
 
 export async function POST(request: NextRequest) {
   if (!sameOrigin(request)) {

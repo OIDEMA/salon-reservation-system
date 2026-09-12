@@ -9,6 +9,7 @@ import {
   CSRF_COOKIE,
   SESSION_COOKIE
 } from "@/lib/session-constants";
+import { sameOrigin } from "@/lib/request-security";
 
 const sessionSchema = z.object({
   idToken: z.string().min(1),
@@ -19,11 +20,6 @@ const expiresIn = 5 * 24 * 60 * 60 * 1000;
 
 function secureCookie(request: NextRequest) {
   return process.env.NODE_ENV === "production" || request.nextUrl.protocol === "https:";
-}
-
-function sameOrigin(request: NextRequest) {
-  const origin = request.headers.get("origin");
-  return !origin || origin === request.nextUrl.origin;
 }
 
 export async function GET(request: NextRequest) {
