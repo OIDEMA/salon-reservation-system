@@ -34,6 +34,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchDashboard } from "@/lib/api";
 import { LogoutButton } from "@/components/logout-button";
 import { useTenantSlug } from "@/components/tenant-provider";
+import { TenantSwitcher } from "@/components/tenant-switcher";
 import { tenantPath } from "@/lib/tenant-routing";
 import { createEmptyDashboard, type DashboardData, type ReservationStatus, type ScheduleReservation } from "@/lib/types";
 
@@ -195,13 +196,16 @@ export function ReservationDashboard() {
               <span>{dashboard.salon?.timezone ?? "店舗情報を登録してください"}</span>
             </div>
           </div>
-          <div className="noticeRail">
-            {dashboard.notifications.map((notification) => (
-              <button className={`noticePill ${notification.severity}`} key={notification.id} type="button">
-                <Bell size={15} />
-                <span>{notification.title}</span>
-              </button>
-            ))}
+          <div className="topbarTools">
+            <div className="noticeRail">
+              {dashboard.notifications.map((notification) => (
+                <button className={`noticePill ${notification.severity}`} key={notification.id} type="button">
+                  <Bell size={15} />
+                  <span>{notification.title}</span>
+                </button>
+              ))}
+            </div>
+            <TenantSwitcher />
           </div>
         </header>
 

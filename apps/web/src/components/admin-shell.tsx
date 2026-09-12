@@ -19,6 +19,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { LogoutButton } from "@/components/logout-button";
 import { useTenantSlug } from "@/components/tenant-provider";
+import { TenantSwitcher } from "@/components/tenant-switcher";
 import { tenantPath } from "@/lib/tenant-routing";
 
 const navItems = [
@@ -83,7 +84,10 @@ export function AdminShell({ active, title, subtitle, badge, actions, children }
             <h1>{title}</h1>
             <p>{subtitle}</p>
           </div>
-          {actions ? <div className="adminActions">{actions}</div> : null}
+          <div className="adminTopbarControls">
+            <TenantSwitcher />
+            {actions ? <div className="adminActions">{actions}</div> : null}
+          </div>
         </header>
         {children}
       </section>

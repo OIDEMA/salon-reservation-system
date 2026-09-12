@@ -138,6 +138,96 @@ a {
   gap: 12px;
 }
 
+.topbarTools,
+.adminTopbarControls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.tenantSwitcher {
+  position: relative;
+  min-width: 220px;
+}
+
+.tenantSwitcherControl {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 16px;
+  min-height: 48px;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--teal-dark);
+  padding: 6px 10px;
+  box-shadow: 0 5px 16px rgba(15, 23, 42, 0.06);
+}
+
+.tenantSwitcherControl > div {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.tenantSwitcherControl span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.tenantSwitcherControl strong {
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.tenantSwitcherControl select {
+  width: 100%;
+  min-width: 0;
+  appearance: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 0;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.tenantSwitcherControl select:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.tenantSwitcherChevron {
+  pointer-events: none;
+  color: #64748b;
+}
+
+.tenantSwitcherError {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 280px;
+  margin: 0;
+  border: 1px solid #fecdd3;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #be123c;
+  padding: 9px 11px;
+  box-shadow: var(--shadow);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.5;
+  z-index: 20;
+}
+
 .noticePill {
   display: inline-flex;
   height: 34px;
@@ -965,6 +1055,10 @@ a {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.adminTopbarControls {
+  flex-wrap: wrap;
 }
 
 .adminContent {
