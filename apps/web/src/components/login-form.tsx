@@ -119,6 +119,25 @@ export function LoginForm() {
     }
   }
 
+  async function requestPasswordReset() {
+    if (!email) {
+      setFeedback({ tone: "error", text: "パスワードを再設定するメールアドレスを入力してください。" });
+      return;
+    }
+
+    setSubmitting(true);
+    setFeedback(null);
+    try {
+      await firebaseAuthReady;
+      await sendPasswordResetEmail(firebaseAuth, email);
+      setFeedback({ tone: "success", text: "パスワード再設定メールを送信しました。メールをご確認ください。" });
+    } catch (error) {
+      setFeedback({ tone: "error", text: localizedFirebaseError(error) });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <form className="authForm" onSubmit={submit}>
       <label>
@@ -143,6 +162,9 @@ export function LoginForm() {
       {feedback ? <p className={`authMessage ${feedback.tone}`} role={feedback.tone === "error" ? "alert" : "status"}>{feedback.text}</p> : null}
       <button className="authSubmit" type="submit" disabled={submitting}>
         {submitting ? "処理中…" : "ログイン"}
+      </button>
+      <button className="authResetLink" type="button" disabled={submitting} onClick={() => void requestPasswordReset()}>
+        パスワードをお忘れですか？
       </button>
     </form>
   );

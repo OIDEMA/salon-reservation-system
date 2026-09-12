@@ -2042,6 +2042,27 @@ a {
   opacity: 0.6;
 }
 
+.authResetLink {
+  justify-self: center;
+  border: 0;
+  background: transparent;
+  color: var(--teal-dark);
+  padding: 2px 8px;
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.authResetLink:hover,
+.authResetLink:focus-visible {
+  color: #115e59;
+}
+
+.authResetLink:disabled {
+  opacity: 0.6;
+}
+
 .tenantSelector {
   margin-top: 24px;
 }
