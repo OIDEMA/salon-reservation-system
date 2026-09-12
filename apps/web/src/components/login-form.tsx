@@ -1,6 +1,7 @@
 "use client";
 
 import { sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { firebaseAuth, firebaseAuthReady } from "@/lib/firebase-client";
 
@@ -54,6 +55,7 @@ function localizedApiError(payload: ErrorPayload | null) {
 export function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -125,7 +127,18 @@ export function LoginForm() {
       </label>
       <label>
         <span>パスワード</span>
-        <input type="password" autoComplete="current-password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} />
+        <div className="passwordInput">
+          <input type={showPassword ? "text" : "password"} autoComplete="current-password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} />
+          <button
+            className="passwordToggle"
+            type="button"
+            aria-label={showPassword ? "パスワードを隠す" : "パスワードを表示"}
+            aria-pressed={showPassword}
+            onClick={() => setShowPassword((current) => !current)}
+          >
+            {showPassword ? <EyeOff size={19} aria-hidden="true" /> : <Eye size={19} aria-hidden="true" />}
+          </button>
+        </div>
       </label>
       {feedback ? <p className={`authMessage ${feedback.tone}`} role={feedback.tone === "error" ? "alert" : "status"}>{feedback.text}</p> : null}
       <button className="authSubmit" type="submit" disabled={submitting}>

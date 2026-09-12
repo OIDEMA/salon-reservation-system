@@ -1926,6 +1926,39 @@ a {
   font: inherit;
 }
 
+.passwordInput {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.passwordInput input {
+  width: 100%;
+  padding-right: 48px;
+}
+
+.passwordToggle {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #64748b;
+  padding: 0;
+}
+
+.passwordToggle:hover,
+.passwordToggle:focus-visible {
+  background: #f1f5f9;
+  color: var(--teal-dark);
+}
+
 .authTabs {
   display: grid;
   grid-template-columns: 1fr 1fr;

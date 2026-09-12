@@ -1,6 +1,7 @@
 "use client";
 
 import { confirmPasswordReset, verifyPasswordResetCode } from "firebase/auth";
+import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { firebaseAuth, firebaseAuthReady } from "@/lib/firebase-client";
@@ -37,6 +38,8 @@ export function AuthActionForm({ mode, oobCode }: AuthActionFormProps) {
   const [email, setEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmation, setShowConfirmation] = useState(false);
   const [state, setState] = useState<ActionState>("loading");
   const [message, setMessage] = useState("");
 
@@ -128,25 +131,47 @@ export function AuthActionForm({ mode, oobCode }: AuthActionFormProps) {
       <p className="authActionAccount">{email}</p>
       <label>
         <span>新しいパスワード</span>
-        <input
-          type="password"
-          autoComplete="new-password"
-          minLength={8}
-          value={newPassword}
-          onChange={(event) => setNewPassword(event.target.value)}
-          required
-        />
+        <div className="passwordInput">
+          <input
+            type={showNewPassword ? "text" : "password"}
+            autoComplete="new-password"
+            minLength={8}
+            value={newPassword}
+            onChange={(event) => setNewPassword(event.target.value)}
+            required
+          />
+          <button
+            className="passwordToggle"
+            type="button"
+            aria-label={showNewPassword ? "パスワードを隠す" : "パスワードを表示"}
+            aria-pressed={showNewPassword}
+            onClick={() => setShowNewPassword((current) => !current)}
+          >
+            {showNewPassword ? <EyeOff size={19} aria-hidden="true" /> : <Eye size={19} aria-hidden="true" />}
+          </button>
+        </div>
       </label>
       <label>
         <span>新しいパスワード（確認）</span>
-        <input
-          type="password"
-          autoComplete="new-password"
-          minLength={8}
-          value={confirmation}
-          onChange={(event) => setConfirmation(event.target.value)}
-          required
-        />
+        <div className="passwordInput">
+          <input
+            type={showConfirmation ? "text" : "password"}
+            autoComplete="new-password"
+            minLength={8}
+            value={confirmation}
+            onChange={(event) => setConfirmation(event.target.value)}
+            required
+          />
+          <button
+            className="passwordToggle"
+            type="button"
+            aria-label={showConfirmation ? "パスワードを隠す" : "パスワードを表示"}
+            aria-pressed={showConfirmation}
+            onClick={() => setShowConfirmation((current) => !current)}
+          >
+            {showConfirmation ? <EyeOff size={19} aria-hidden="true" /> : <Eye size={19} aria-hidden="true" />}
+          </button>
+        </div>
       </label>
       {message ? <p className="authMessage error" role="alert">{message}</p> : null}
       <button className="authSubmit" type="submit">パスワードを設定する</button>
