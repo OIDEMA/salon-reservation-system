@@ -86,7 +86,6 @@ export function TenantSwitcher() {
       <div className="tenantSwitcherControl">
         <Building2 aria-hidden="true" size={18} />
         <div>
-          <span>テナント</span>
           {loading ? (
             <strong>読み込み中…</strong>
           ) : (

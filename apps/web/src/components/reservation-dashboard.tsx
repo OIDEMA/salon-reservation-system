@@ -193,7 +193,6 @@ export function ReservationDashboard() {
             <Building2 size={20} />
             <div>
               <p>{dashboard.salon?.name ?? "店舗未設定"}</p>
-              <span>{dashboard.salon?.timezone ?? "店舗情報を登録してください"}</span>
             </div>
           </div>
           <div className="topbarTools">

@@ -126,13 +126,6 @@ a {
   font-weight: 800;
 }
 
-.storeIdentity span {
-  display: block;
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .noticeRail {
   display: flex;
   gap: 12px;
@@ -170,12 +163,6 @@ a {
   display: grid;
   min-width: 0;
   gap: 1px;
-}
-
-.tenantSwitcherControl span {
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 800;
 }
 
 .tenantSwitcherControl strong {
