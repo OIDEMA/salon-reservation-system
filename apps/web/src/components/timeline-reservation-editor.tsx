@@ -130,11 +130,10 @@ export function TimelineReservationEditor({ value, menus, rows, onClose, onSaved
   }
 
   return (
-    <div className="drawerBackdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target && !busy) onClose(); }}>
+    <div className="drawerBackdrop timelineModalBackdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target && !busy) onClose(); }}>
       <aside className="editDrawer timelineEditDrawer" role="dialog" aria-modal="true" aria-labelledby="timeline-editor-title">
         <header className="timelineEditorHeader">
           <div>
-            <span>{value.kind === "create" ? "New reservation" : "Edit reservation"}</span>
             <h2 id="timeline-editor-title">{value.kind === "create" ? "予約を登録" : "予約を編集"}</h2>
             <p>{value.date}　{startTime}–{addMinutes(startTime, durationMinutes)}</p>
           </div>

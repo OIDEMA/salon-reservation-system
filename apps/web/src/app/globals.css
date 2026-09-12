@@ -2572,7 +2572,17 @@ a {
 }
 
 .timelineEditDrawer {
-  width: min(560px, 94vw);
+  width: min(720px, calc(100vw - 48px));
+  height: auto;
+  max-height: calc(100vh - 48px);
+  border-radius: 12px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
+}
+
+.timelineModalBackdrop {
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
 }
 
 .timelineEditorHeader {
@@ -2585,16 +2595,8 @@ a {
   border-bottom: 1px solid var(--line);
 }
 
-.timelineEditorHeader span {
-  color: var(--teal-dark);
-  font-size: 11px;
-  font-weight: 900;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .timelineEditorHeader h2 {
-  margin: 5px 0 6px;
+  margin: 0 0 6px;
   color: #0f172a;
   font-size: 25px;
 }
