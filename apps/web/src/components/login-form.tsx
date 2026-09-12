@@ -4,22 +4,69 @@ import { sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from "fir
 import { useState } from "react";
 import { firebaseAuth, firebaseAuthReady } from "@/lib/firebase-client";
 
+type Feedback = {
+  text: string;
+  tone: "error" | "success";
+};
+
+type ErrorPayload = {
+  code?: string;
+  message?: string;
+};
+
+const firebaseErrorMessages: Record<string, string> = {
+  "auth/invalid-email": "メールアドレスの形式が正しくありません。",
+  "auth/missing-password": "パスワードを入力してください。",
+  "auth/invalid-credential": "メールアドレスまたはパスワードが正しくありません。",
+  "auth/user-not-found": "メールアドレスまたはパスワードが正しくありません。",
+  "auth/wrong-password": "メールアドレスまたはパスワードが正しくありません。",
+  "auth/user-disabled": "このアカウントは無効になっています。管理者にお問い合わせください。",
+  "auth/too-many-requests": "試行回数が多すぎます。しばらく待ってから再度お試しください。",
+  "auth/network-request-failed": "通信に失敗しました。ネットワーク接続を確認してください。",
+  "auth/operation-not-allowed": "メールアドレスとパスワードによるログインは現在利用できません。",
+  "auth/weak-password": "パスワードの強度が不足しています。"
+};
+
+function firebaseErrorCode(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : "";
+}
+
+function localizedFirebaseError(error: unknown) {
+  const code = firebaseErrorCode(error);
+  return firebaseErrorMessages[code] ?? "ログインに失敗しました。入力内容を確認して、もう一度お試しください。";
+}
+
+function localizedApiError(payload: ErrorPayload | null) {
+  switch (payload?.code) {
+    case "INVALID_ORIGIN":
+      return "アクセス元が正しくありません。現在のページからもう一度お試しください。";
+    case "INVALID_CSRF_TOKEN":
+      return "セキュリティ確認に失敗しました。ページを再読み込みしてからお試しください。";
+    case "EMAIL_NOT_VERIFIED":
+      return "メールアドレスの確認が完了していません。管理者にお問い合わせください。";
+    case "USER_DISABLED":
+      return "このアカウントは無効になっています。管理者にお問い合わせください。";
+    default:
+      return payload?.message ?? "ログインセッションを作成できませんでした。";
+  }
+}
+
 export function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [message, setMessage] = useState("");
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
-    setMessage("");
+    setFeedback(null);
     try {
       await firebaseAuthReady;
       const credential = await signInWithEmailAndPassword(firebaseAuth, email, password);
       if (!credential.user.emailVerified) {
         await signOut(firebaseAuth);
-        setMessage("アカウントが利用可能になっていません。管理者へお問い合わせください。");
+        setFeedback({ tone: "error", text: "メールアドレスの確認が完了していません。管理者にお問い合わせください。" });
         return;
       }
 
@@ -34,31 +81,37 @@ export function LoginForm() {
       });
       await signOut(firebaseAuth);
       if (!response.ok) {
-        const result = (await response.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(result?.message ?? "ログインセッションを作成できませんでした。");
+        const result = (await response.json().catch(() => null)) as ErrorPayload | null;
+        throw new Error(localizedApiError(result));
       }
       window.location.assign("/select-tenant");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "認証に失敗しました。");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function requestPasswordSetup() {
-    if (!email) {
-      setMessage("管理者から案内されたメールアドレスを入力してください。");
-      return;
-    }
-
-    setSubmitting(true);
-    setMessage("");
-    try {
-      await firebaseAuthReady;
-      await sendPasswordResetEmail(firebaseAuth, email);
-      setMessage("パスワード設定メールを送信しました。メールが届かない場合は管理者へお問い合わせください。");
-    } catch {
-      setMessage("パスワード設定メールを送信できませんでした。管理者へお問い合わせください。");
+      const code = firebaseErrorCode(error);
+      if (["auth/invalid-credential", "auth/wrong-password", "auth/missing-password"].includes(code)) {
+        try {
+          const statusResponse = await fetch("/api/auth/password-status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email })
+          });
+          const status = (await statusResponse.json().catch(() => null)) as { needsPasswordSetup?: boolean } | null;
+          if (statusResponse.ok && status?.needsPasswordSetup) {
+            await firebaseAuthReady;
+            await sendPasswordResetEmail(firebaseAuth, email);
+            setFeedback({
+              tone: "success",
+              text: "パスワード設定メールを送信しました。メールをご確認ください。"
+            });
+            return;
+          }
+        } catch {
+          // Fall through to the regular localized login error when status lookup fails.
+        }
+      }
+      setFeedback({
+        tone: "error",
+        text: error instanceof Error && !firebaseErrorCode(error) ? error.message : localizedFirebaseError(error)
+      });
     } finally {
       setSubmitting(false);
     }
@@ -72,13 +125,12 @@ export function LoginForm() {
       </label>
       <label>
         <span>パスワード</span>
-        <input type="password" autoComplete="current-password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} required />
+        <input type="password" autoComplete="current-password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} />
       </label>
-      {message ? <p className="authMessage">{message}</p> : null}
+      {feedback ? <p className={`authMessage ${feedback.tone}`} role={feedback.tone === "error" ? "alert" : "status"}>{feedback.text}</p> : null}
       <button className="authSubmit" type="submit" disabled={submitting}>
         {submitting ? "処理中…" : "ログイン"}
       </button>
-      <button className="authSecondary" type="button" disabled={submitting} onClick={requestPasswordSetup}>初回ログイン・パスワード再設定</button>
     </form>
   );
 }

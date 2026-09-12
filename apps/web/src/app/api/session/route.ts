@@ -40,10 +40,18 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  if (!sameOrigin(request)) return NextResponse.json({ message: "Invalid origin" }, { status: 403 });
+  if (!sameOrigin(request)) {
+    return NextResponse.json(
+      { code: "INVALID_ORIGIN", message: "アクセス元が正しくありません。" },
+      { status: 403 }
+    );
+  }
   const input = sessionSchema.parse(await request.json());
   if (request.cookies.get(CSRF_COOKIE)?.value !== input.csrfToken) {
-    return NextResponse.json({ message: "Invalid CSRF token" }, { status: 403 });
+    return NextResponse.json(
+      { code: "INVALID_CSRF_TOKEN", message: "セキュリティ確認に失敗しました。ページを再読み込みしてからお試しください。" },
+      { status: 403 }
+    );
   }
 
   const claims = await firebaseAdminAuth.verifyIdToken(input.idToken, true);
