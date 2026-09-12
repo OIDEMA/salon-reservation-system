@@ -1079,29 +1079,21 @@ a {
 
 .adminTopbar {
   display: flex;
-  min-height: 92px;
+  min-height: 68px;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.96);
-  padding: 18px 28px;
+  padding: 12px 28px;
 }
 
 .adminTopbar h1 {
-  margin: 4px 0 2px;
+  margin: 0;
   font-size: 24px;
   line-height: 1.2;
 }
 
-.adminTopbar p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.adminBreadcrumb,
 .adminActions,
 .adminPanelTitle,
 .adminNotice,
@@ -1110,20 +1102,6 @@ a {
 .miniTimeline div {
   display: flex;
   align-items: center;
-}
-
-.adminBreadcrumb {
-  gap: 7px;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.adminBreadcrumb strong {
-  border-radius: 6px;
-  background: #ecfeff;
-  color: #0e7490;
-  padding: 3px 7px;
 }
 
 .adminActions {

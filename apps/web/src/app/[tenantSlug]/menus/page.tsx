@@ -16,5 +16,5 @@ const columns: MasterColumn[] = [
 
 export default async function TenantMenusPage() {
   const menus = await fetchAdminMenus();
-  return <AdminShell active="/menus" title="メニュー管理" subtitle="予約メニュー、所要時間、価格、受付状態を管理します。" badge={`${menus.length}件`}><div className="adminContent"><MasterDataManager resource="menus" initialItems={menus} fields={fields} columns={columns} itemLabel="メニュー" defaults={{ name: "", category: "通常", description: "", durationMinutes: 60, price: 0, color: "#18c7bd", menuType: "通常メニュー", lineVisible: false, unlimitedBooking: true, active: true, sortOrder: menus.length }} /></div></AdminShell>;
+  return <AdminShell active="/menus" title="メニュー管理"><div className="adminContent"><MasterDataManager resource="menus" initialItems={menus} fields={fields} columns={columns} itemLabel="メニュー" defaults={{ name: "", category: "通常", description: "", durationMinutes: 60, price: 0, color: "#18c7bd", menuType: "通常メニュー", lineVisible: false, unlimitedBooking: true, active: true, sortOrder: menus.length }} /></div></AdminShell>;
 }

@@ -42,8 +42,6 @@ export default async function TenantConfirmationPage({ searchParams }: Confirmat
     <AdminShell
       active="/confirmation"
       title="予約確認センター"
-      subtitle="未確認、来店、完了、キャンセル、無断キャンセルをまとめて処理します。"
-      badge={`${dashboard.summary.pendingCount}件未確認`}
       actions={<TenantLink className="secondaryButton" href="/"><CalendarCheck size={17} />予約表へ</TenantLink>}
     >
       <div className="confirmationContent">

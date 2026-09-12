@@ -23,5 +23,5 @@ const columns: MasterColumn[] = [
 
 export default async function TenantStaffPage() {
   const staff = await fetchAdminStaff();
-  return <AdminShell active="/staff" title="スタッフ管理" subtitle="担当者、指名料、自動割当順、同時対応数を管理します。" badge={`${staff.length}名`}><div className="adminContent"><MasterDataManager resource="staff" initialItems={staff} fields={fields} columns={columns} itemLabel="スタッフ" defaults={{ name: "", kana: "", role: "STYLIST", color: "#18c7bd", nominationFee: 0, comment: "", allocationOrder: 1, parallelCapacity: 1, active: true, sortOrder: staff.length }} /></div></AdminShell>;
+  return <AdminShell active="/staff" title="スタッフ管理"><div className="adminContent"><MasterDataManager resource="staff" initialItems={staff} fields={fields} columns={columns} itemLabel="スタッフ" defaults={{ name: "", kana: "", role: "STYLIST", color: "#18c7bd", nominationFee: 0, comment: "", allocationOrder: 1, parallelCapacity: 1, active: true, sortOrder: staff.length }} /></div></AdminShell>;
 }

@@ -18,8 +18,6 @@ export default async function TenantCalendarPage() {
     <AdminShell
       active="/calendar"
       title="店舗カレンダー"
-      subtitle="月間の営業日、予約密度、未確認リスクを俯瞰します。"
-      badge={`${year}年${monthNumber}月`}
       actions={
         <>
           <button className="secondaryButton" type="button">

@@ -21,8 +21,6 @@ export default async function TenantReservationSearchPage() {
     <AdminShell
       active="/reservations"
       title="予約者検索"
-      subtitle="顧客名、来店状況、予約経路、担当者をまとめて検索・更新します。"
-      badge={`${reservations.length}件`}
       actions={
         <TenantLink className="primaryButton" href="/reservations/new">
           <CalendarCheck size={17} />

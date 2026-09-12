@@ -13,5 +13,5 @@ export default async function TenantShiftsPage() {
     backendJson<AdminShift[]>(`/api/admin/shifts?dateFrom=${today}&dateTo=${dateTo}`),
     fetchAdminStaff()
   ]);
-  return <AdminShell active="/shifts" title="シフト・受付枠" subtitle="出勤、休み、休憩、受付停止を登録し、重複予約を防止します。" badge={`${shifts.length}件`}><div className="adminContent"><ShiftManagement initialShifts={shifts} staff={staff} defaultDate={today} /></div></AdminShell>;
+  return <AdminShell active="/shifts" title="シフト・受付枠"><div className="adminContent"><ShiftManagement initialShifts={shifts} staff={staff} defaultDate={today} /></div></AdminShell>;
 }

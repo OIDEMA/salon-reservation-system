@@ -11,5 +11,5 @@ const columns: MasterColumn[] = [{ key: "name", label: "カテゴリー名" }, {
 
 export default async function TenantCategoriesPage() {
   const categories = await fetchAdminCategories();
-  return <AdminShell active="/categories" title="カテゴリー管理" subtitle="メニューとオプションの分類を管理します。" badge={`${categories.length}件`}><div className="adminContent"><MasterDataManager resource="categories" initialItems={categories} fields={fields} columns={columns} itemLabel="カテゴリー" defaults={{ name: "", type: "MENU", description: "", enabled: true, sortOrder: categories.length }} /></div></AdminShell>;
+  return <AdminShell active="/categories" title="カテゴリー管理"><div className="adminContent"><MasterDataManager resource="categories" initialItems={categories} fields={fields} columns={columns} itemLabel="カテゴリー" defaults={{ name: "", type: "MENU", description: "", enabled: true, sortOrder: categories.length }} /></div></AdminShell>;
 }

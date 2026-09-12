@@ -6,7 +6,6 @@ import {
   CalendarClock,
   CalendarDays,
   LayoutDashboard,
-  ListChecks,
   Scissors,
   Search,
   Settings,
@@ -39,13 +38,11 @@ const navItems = [
 type AdminShellProps = {
   active: string;
   title: string;
-  subtitle: string;
-  badge?: string;
   actions?: ReactNode;
   children: ReactNode;
 };
 
-export function AdminShell({ active, title, subtitle, badge, actions, children }: AdminShellProps) {
+export function AdminShell({ active, title, actions, children }: AdminShellProps) {
   const tenantSlug = useTenantSlug();
 
   return (
@@ -75,15 +72,7 @@ export function AdminShell({ active, title, subtitle, badge, actions, children }
 
       <section className="adminWorkspace">
         <header className="adminTopbar">
-          <div>
-            <div className="adminBreadcrumb">
-              <ListChecks size={15} />
-              <span>管理画面</span>
-              {badge ? <strong>{badge}</strong> : null}
-            </div>
-            <h1>{title}</h1>
-            <p>{subtitle}</p>
-          </div>
+          <h1>{title}</h1>
           <div className="adminTopbarControls">
             <TenantSwitcher />
             {actions ? <div className="adminActions">{actions}</div> : null}

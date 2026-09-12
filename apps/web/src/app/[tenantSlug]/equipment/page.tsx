@@ -11,5 +11,5 @@ const columns: MasterColumn[] = [{ key: "name", label: "設備名" }, { key: "ca
 
 export default async function TenantEquipmentPage() {
   const equipment = await fetchAdminEquipment();
-  return <AdminShell active="/equipment" title="設備管理" subtitle="ベッド、個室、機器などの予約資源を管理します。" badge={`${equipment.length}件`}><div className="adminContent"><MasterDataManager resource="equipment" initialItems={equipment} fields={fields} columns={columns} itemLabel="設備" defaults={{ name: "", capacity: 1, allocationOrder: 1, color: "#18c7bd", memo: "", active: true, sortOrder: equipment.length }} /></div></AdminShell>;
+  return <AdminShell active="/equipment" title="設備管理"><div className="adminContent"><MasterDataManager resource="equipment" initialItems={equipment} fields={fields} columns={columns} itemLabel="設備" defaults={{ name: "", capacity: 1, allocationOrder: 1, color: "#18c7bd", memo: "", active: true, sortOrder: equipment.length }} /></div></AdminShell>;
 }

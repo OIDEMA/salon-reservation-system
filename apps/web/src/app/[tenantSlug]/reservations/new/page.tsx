@@ -12,8 +12,6 @@ export default async function TenantReservationCreatePage() {
     <AdminShell
       active="/reservations"
       title="予約を作成"
-      subtitle="顧客、メニュー、担当、通知状態をまとめて登録します。"
-      badge="即時登録"
       actions={
         <>
           <TenantLink className="secondaryButton" href="/">
