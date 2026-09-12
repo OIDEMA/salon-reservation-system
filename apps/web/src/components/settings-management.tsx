@@ -28,7 +28,7 @@ export function SettingsManagement({ initialData }: { initialData: AdminSettings
       const response = await fetch(tenantApiPath(tenantSlug, "/admin/settings"), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ salonName: salon.name, timezone: salon.timezone, ...settings })
+        body: JSON.stringify({ salonName: salon.name, timezone: salon.timezone, ...settings, storeId: undefined })
       });
       const body = (await response.json().catch(() => null)) as AdminSettingsPayload & { message?: string };
       if (!response.ok) throw new Error(body?.message ?? "設定を保存できませんでした。");
@@ -47,7 +47,7 @@ export function SettingsManagement({ initialData }: { initialData: AdminSettings
       <section className="adminPanel">
         <div className="adminPanelTitle"><Store size={19} /><h2>店舗情報</h2></div>
         <div className="settingsGrid">
-          <label className="settingField"><span>店舗ID</span><input value={settings.storeId} onChange={(event) => setSetting("storeId", event.target.value)} /></label>
+          <label className="settingField"><span>店舗ID</span><input value={settings.storeId} disabled title="店舗IDは作成後に変更できません" /></label>
           <label className="settingField"><span>店舗名</span><input value={salon.name} onChange={(event) => setData({ ...data, salon: { ...salon, name: event.target.value } })} /></label>
           <label className="settingField"><span>営業時間 開始</span><input type="time" value={settings.openTime} onChange={(event) => setSetting("openTime", event.target.value)} /></label>
           <label className="settingField"><span>営業時間 終了</span><input type="time" value={settings.closeTime} onChange={(event) => setSetting("closeTime", event.target.value)} /></label>

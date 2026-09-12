@@ -2,7 +2,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, Clock3, Plus } from "lucide-re
 import { AdminShell } from "@/components/admin-shell";
 import { fetchDashboardServer } from "@/lib/server-dashboard";
 
-const weekDays = ["日", "月", "火", "水", "木", "金", "土"];
+const weekDays = ["月", "火", "水", "木", "金", "土", "日"];
 
 export default async function TenantCalendarPage() {
   const now = new Date();
@@ -104,7 +104,8 @@ export default async function TenantCalendarPage() {
 
 function buildMonth(year: number, monthIndex: number) {
   const first = new Date(year, monthIndex, 1);
-  const start = new Date(year, monthIndex, 1 - first.getDay());
+  const mondayBasedOffset = (first.getDay() + 6) % 7;
+  const start = new Date(year, monthIndex, 1 - mondayBasedOffset);
   return Array.from({ length: 42 }, (_, index) => {
     const date = new Date(start);
     date.setDate(start.getDate() + index);

@@ -691,7 +691,13 @@ server.patch("/api/admin/settings", async (request, reply) => {
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
   const input = settingsInputSchema.parse(request.body);
-  const { salonName, timezone, ...settings } = input;
+  const currentSettings = await prisma.salonSettings.findUnique({
+    where: { tenantId_salonId: { tenantId: context.tenant.id, salonId: salon.id } }
+  });
+  if (currentSettings && input.storeId !== undefined && input.storeId !== currentSettings.storeId) {
+    return reply.code(409).send({ code: "STORE_ID_IMMUTABLE", message: "店舗IDは作成後に変更できません。" });
+  }
+  const { salonName, timezone, storeId, ...settings } = input;
 
   const result = await prisma.$transaction(async (transaction) => {
     const updatedSalon = await transaction.salon.update({
@@ -704,7 +710,7 @@ server.patch("/api/admin/settings", async (request, reply) => {
       create: {
         tenantId: context.tenant.id,
         salonId: salon.id,
-        storeId: settings.storeId ?? salon.id,
+        storeId: storeId ?? salon.id,
         cancellationMessage: settings.cancellationMessage ?? "キャンセルを受け付けました。",
         friendMessage: settings.friendMessage ?? "ご登録ありがとうございます。",
         ...settings

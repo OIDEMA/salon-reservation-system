@@ -1190,6 +1190,14 @@ a {
   padding: 0 10px;
 }
 
+.settingField input:disabled {
+  border-color: #d1d5db;
+  background: #e5e7eb;
+  color: #64748b;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
 .messageField textarea {
   min-height: 132px;
   resize: vertical;
