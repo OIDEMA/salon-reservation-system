@@ -5,7 +5,6 @@ import {
   Bell,
   BookUser,
   Building2,
-  CalendarCheck,
   CalendarDays,
   CalendarRange,
   CheckCircle2,
@@ -30,6 +29,7 @@ import {
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { ja } from "date-fns/locale";
+import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { fetchDashboard } from "@/lib/api";
 import { LogoutButton } from "@/components/logout-button";
@@ -165,8 +165,8 @@ export function ReservationDashboard() {
   return (
     <main className="appShell">
       <aside className="adminSidebar">
-        <a className="adminBrand" href={tenantPath(tenantSlug)} title="SalonOps">
-          <CalendarCheck size={25} />
+        <a className="adminBrand" href={tenantPath(tenantSlug)} title="株式会社Beauty Gum">
+          <Image src="/brand/beauty-gum-logo.webp" alt="株式会社Beauty Gum" width={400} height={100} />
         </a>
         <nav className="adminNav" aria-label="admin navigation">
           {navItems.map((item) => {

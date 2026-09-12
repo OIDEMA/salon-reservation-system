@@ -3,7 +3,6 @@
 import {
   BookUser,
   CircleAlert,
-  CalendarCheck,
   CalendarClock,
   CalendarDays,
   LayoutDashboard,
@@ -15,6 +14,7 @@ import {
   Users,
   Wrench
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { LogoutButton } from "@/components/logout-button";
@@ -51,8 +51,8 @@ export function AdminShell({ active, title, subtitle, badge, actions, children }
   return (
     <main className="adminShell">
       <aside className="adminSidebar">
-        <Link className="adminBrand" href={tenantPath(tenantSlug)} title="SalonOps">
-          <CalendarCheck size={25} />
+        <Link className="adminBrand" href={tenantPath(tenantSlug)} title="株式会社Beauty Gum">
+          <Image src="/brand/beauty-gum-logo.webp" alt="株式会社Beauty Gum" width={400} height={100} />
         </Link>
         <nav className="adminNav" aria-label="admin navigation">
           {navItems.map((item) => {
