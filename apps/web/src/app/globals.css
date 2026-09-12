@@ -2000,6 +2000,19 @@ a {
   width: min(520px, 100%);
 }
 
+.authResetCard {
+  width: min(520px, 100%);
+}
+
+.authResetCard > p {
+  margin-top: 0;
+  line-height: 1.7;
+}
+
+.authResetForm {
+  margin-top: 22px;
+}
+
 .authActionCard h1 {
   margin-bottom: 6px;
 }
