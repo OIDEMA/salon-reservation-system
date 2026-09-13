@@ -1,56 +1,24 @@
 "use client";
 
 import { Building2, ChevronDown } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { useTenantSlug } from "@/components/tenant-provider";
-
-type Salon = {
-  id: string;
-  name: string;
-};
-
-type Membership = {
-  role: string;
-  tenant: {
-    id: string;
-    slug: string;
-    name: string;
-    salons: Salon[];
-  };
-};
+import { useState } from "react";
+import { useTenant, type TenantMembership } from "@/components/tenant-provider";
 
 export function TenantSwitcher() {
-  const tenantSlug = useTenantSlug();
-  const [memberships, setMemberships] = useState<Membership[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { tenantSlug, memberships: allMemberships, activeSalonId } = useTenant();
+  const memberships = allMemberships.filter((membership) => membership.tenant.salons.length > 0);
   const [switching, setSwitching] = useState(false);
   const [message, setMessage] = useState("");
 
-  useEffect(() => {
-    let ignore = false;
+  function displayName({ tenant }: TenantMembership) {
+    const salon = tenant.slug === tenantSlug
+      ? tenant.salons.find((item) => item.id === activeSalonId) ?? tenant.salons[0]
+      : tenant.salons[0];
+    return salon?.name || tenant.name;
+  }
 
-    fetch("/api/backend/me/tenants", { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error();
-        const result = (await response.json()) as Membership[];
-        if (!ignore) setMemberships(result.filter((membership) => membership.tenant.salons.length > 0));
-      })
-      .catch(() => {
-        if (!ignore) setMessage("テナント情報を取得できませんでした。");
-      })
-      .finally(() => {
-        if (!ignore) setLoading(false);
-      });
-
-    return () => {
-      ignore = true;
-    };
-  }, []);
-
-  const currentTenantName = useMemo(
-    () => memberships.find((membership) => membership.tenant.slug === tenantSlug)?.tenant.name ?? tenantSlug,
-    [memberships, tenantSlug]
-  );
+  const currentMembership = allMemberships.find((membership) => membership.tenant.slug === tenantSlug);
+  const currentSalonName = currentMembership ? displayName(currentMembership) : tenantSlug;
 
   async function switchTenant(nextTenantSlug: string) {
     if (nextTenantSlug === tenantSlug || switching) return;
@@ -86,25 +54,21 @@ export function TenantSwitcher() {
       <div className="tenantSwitcherControl">
         <Building2 aria-hidden="true" size={18} />
         <div>
-          {loading ? (
-            <strong>読み込み中…</strong>
-          ) : (
-            <select
-              aria-label="利用するテナント"
-              disabled={switching || memberships.length === 0}
-              onChange={(event) => void switchTenant(event.target.value)}
-              value={tenantSlug}
-            >
-              {!memberships.some((membership) => membership.tenant.slug === tenantSlug) ? (
-                <option value={tenantSlug}>{currentTenantName}</option>
-              ) : null}
-              {memberships.map((membership) => (
-                <option key={membership.tenant.id} value={membership.tenant.slug}>
-                  {membership.tenant.name}
-                </option>
-              ))}
-            </select>
-          )}
+          <select
+            aria-label="利用する店舗"
+            disabled={switching || memberships.length === 0}
+            onChange={(event) => void switchTenant(event.target.value)}
+            value={tenantSlug}
+          >
+            {!memberships.some((membership) => membership.tenant.slug === tenantSlug) ? (
+              <option value={tenantSlug}>{currentSalonName}</option>
+            ) : null}
+            {memberships.map((membership) => (
+              <option key={membership.tenant.id} value={membership.tenant.slug}>
+                {displayName(membership)}
+              </option>
+            ))}
+          </select>
         </div>
         <ChevronDown aria-hidden="true" className="tenantSwitcherChevron" size={16} />
       </div>

@@ -2,22 +2,44 @@
 
 import { CheckCircle2, Clock3, Save, Store, ToggleLeft } from "lucide-react";
 import { useState } from "react";
-import { useTenantSlug } from "@/components/tenant-provider";
+import { useTenant } from "@/components/tenant-provider";
 import type { AdminSettingsPayload } from "@/lib/admin-types";
 import { tenantApiPath } from "@/lib/tenant-routing";
 
 const days = ["月", "火", "水", "木", "金", "土", "日", "祝"];
+const settingsTabs = [
+  { id: "store", label: "店舗情報", icon: Store },
+  { id: "reservations", label: "予約受付", icon: Clock3 },
+  { id: "messages", label: "運用メッセージ", icon: CheckCircle2 }
+] as const;
+
+type SettingsTabId = (typeof settingsTabs)[number]["id"];
 
 export function SettingsManagement({ initialData }: { initialData: AdminSettingsPayload }) {
-  const tenantSlug = useTenantSlug();
+  const { tenantSlug, updateSalonName } = useTenant();
   const [data, setData] = useState(initialData);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [activeTab, setActiveTab] = useState<SettingsTabId>("store");
   if (!data.salon || !data.settings) return <section className="adminNotice">店舗情報が未登録です。</section>;
   const { salon, settings } = data;
 
   function setSetting<K extends keyof typeof settings>(key: K, value: (typeof settings)[K]) {
     setData({ ...data, settings: { ...settings, [key]: value } });
+  }
+
+  function moveTabFocus(event: React.KeyboardEvent<HTMLButtonElement>, currentIndex: number) {
+    let nextIndex: number | undefined;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % settingsTabs.length;
+    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + settingsTabs.length) % settingsTabs.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = settingsTabs.length - 1;
+    if (nextIndex === undefined) return;
+
+    event.preventDefault();
+    const nextTab = settingsTabs[nextIndex];
+    setActiveTab(nextTab.id);
+    document.getElementById(`settings-tab-${nextTab.id}`)?.focus();
   }
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
@@ -33,6 +55,7 @@ export function SettingsManagement({ initialData }: { initialData: AdminSettings
       const body = (await response.json().catch(() => null)) as AdminSettingsPayload & { message?: string };
       if (!response.ok) throw new Error(body?.message ?? "設定を保存できませんでした。");
       setData(body);
+      if (body.salon) updateSalonName(body.salon.id, body.salon.name);
       setMessage("基本設定を保存しました。");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "設定を保存できませんでした。");
@@ -44,7 +67,39 @@ export function SettingsManagement({ initialData }: { initialData: AdminSettings
   return (
     <form className="settingsForm" onSubmit={save}>
       {message ? <p className="formMessage">{message}</p> : null}
-      <section className="adminPanel">
+
+      <div className="settingsTabs" role="tablist" aria-label="基本設定の項目">
+        {settingsTabs.map((tab, index) => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              aria-controls={`settings-panel-${tab.id}`}
+              aria-selected={isActive}
+              className={isActive ? "isActive" : undefined}
+              id={`settings-tab-${tab.id}`}
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              onKeyDown={(event) => moveTabFocus(event, index)}
+              role="tab"
+              tabIndex={isActive ? 0 : -1}
+              type="button"
+            >
+              <Icon aria-hidden="true" size={18} />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <section
+        aria-labelledby="settings-tab-store"
+        className="adminPanel settingsTabPanel"
+        hidden={activeTab !== "store"}
+        id="settings-panel-store"
+        role="tabpanel"
+        tabIndex={0}
+      >
         <div className="adminPanelTitle"><Store size={19} /><h2>店舗情報</h2></div>
         <div className="settingsGrid">
           <label className="settingField"><span>店舗ID</span><input value={settings.storeId} disabled title="店舗IDは作成後に変更できません" /></label>
@@ -55,7 +110,14 @@ export function SettingsManagement({ initialData }: { initialData: AdminSettings
         <div className="settingsLine"><span className="settingsLabel">定休日</span><div className="daySelector">{days.map((day) => <button className={settings.closedDays.includes(day) ? "dayButton isSelected" : "dayButton"} key={day} type="button" onClick={() => setSetting("closedDays", settings.closedDays.includes(day) ? settings.closedDays.filter((item) => item !== day) : [...settings.closedDays, day])}>{day}</button>)}</div></div>
       </section>
 
-      <section className="adminPanel">
+      <section
+        aria-labelledby="settings-tab-reservations"
+        className="adminPanel settingsTabPanel"
+        hidden={activeTab !== "reservations"}
+        id="settings-panel-reservations"
+        role="tabpanel"
+        tabIndex={0}
+      >
         <div className="adminPanelTitle"><Clock3 size={19} /><h2>予約受付</h2></div>
         <div className="settingsGrid three">
           <label className="settingField"><span>最大同時受付数</span><input type="number" min="1" value={settings.maxConcurrentReservations} onChange={(event) => setSetting("maxConcurrentReservations", Number(event.target.value))} /></label>
@@ -73,7 +135,14 @@ export function SettingsManagement({ initialData }: { initialData: AdminSettings
         </div>
       </section>
 
-      <section className="adminPanel">
+      <section
+        aria-labelledby="settings-tab-messages"
+        className="adminPanel settingsTabPanel"
+        hidden={activeTab !== "messages"}
+        id="settings-panel-messages"
+        role="tabpanel"
+        tabIndex={0}
+      >
         <div className="adminPanelTitle"><CheckCircle2 size={19} /><h2>運用メッセージ</h2></div>
         <div className="messageGrid">
           <label className="messageField"><span>キャンセル受付時の案内</span><textarea rows={6} value={settings.cancellationMessage} onChange={(event) => setSetting("cancellationMessage", event.target.value)} /></label>

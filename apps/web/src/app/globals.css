@@ -2683,6 +2683,55 @@ a {
   gap: 18px;
 }
 
+.settingsTabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 6px;
+  background: var(--surface);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.05);
+}
+
+.settingsTabs button {
+  display: inline-flex;
+  min-width: 148px;
+  min-height: 44px;
+  flex: 1 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #64748b;
+  padding: 0 18px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.settingsTabs button:hover {
+  background: #f1f5f9;
+  color: var(--ink);
+}
+
+.settingsTabs button.isActive {
+  border-color: #99f6e4;
+  background: #ecfdf5;
+  color: #0f766e;
+}
+
+.settingsTabs button:focus-visible,
+.settingsTabPanel:focus-visible {
+  outline: 3px solid rgba(20, 184, 166, 0.25);
+  outline-offset: 2px;
+}
+
+.settingsTabPanel {
+  min-height: 236px;
+}
+
 .toggleGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
