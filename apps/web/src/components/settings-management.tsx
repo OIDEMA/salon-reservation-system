@@ -2,6 +2,7 @@
 
 import { CheckCircle2, Clock3, Save, Store, ToggleLeft } from "lucide-react";
 import { useState } from "react";
+import { DismissibleMessage } from "@/components/dismissible-message";
 import { useTenant } from "@/components/tenant-provider";
 import type { AdminSettingsPayload } from "@/lib/admin-types";
 import { tenantApiPath } from "@/lib/tenant-routing";
@@ -66,7 +67,7 @@ export function SettingsManagement({ initialData }: { initialData: AdminSettings
 
   return (
     <form className="settingsForm" onSubmit={save}>
-      {message ? <p className="formMessage">{message}</p> : null}
+      {message ? <DismissibleMessage message={message} onDismiss={() => setMessage("")} /> : null}
 
       <div className="settingsTabs" role="tablist" aria-label="基本設定の項目">
         {settingsTabs.map((tab, index) => {
@@ -150,7 +151,7 @@ export function SettingsManagement({ initialData }: { initialData: AdminSettings
         </div>
       </section>
 
-      <div className="stickySaveBar"><span>変更内容はこのシステム内の予約受付に反映されます。</span><button className="primaryButton" disabled={busy} type="submit"><Save size={17} />{busy ? "保存中..." : "設定を保存"}</button></div>
+      <div className="stickySaveBar"><button className="primaryButton" disabled={busy} type="submit"><Save size={17} />{busy ? "保存中..." : "設定を保存"}</button></div>
     </form>
   );
 }

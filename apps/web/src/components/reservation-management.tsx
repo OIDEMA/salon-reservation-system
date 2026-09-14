@@ -2,6 +2,7 @@
 
 import { CalendarClock, CheckCircle2, Edit3, RotateCcw, Save, Search, UserCheck, UserX, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
+import { DismissibleMessage } from "@/components/dismissible-message";
 import { useTenantSlug } from "@/components/tenant-provider";
 import type { AdminMenu, AdminReservation, AdminStaff } from "@/lib/admin-types";
 import { tenantApiPath } from "@/lib/tenant-routing";
@@ -136,7 +137,7 @@ export function ReservationManagement({
         <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
         <button className="primaryButton" disabled={busy} type="button" onClick={() => void searchReservations()}><Search size={17} />検索</button>
       </section>
-      {message ? <p className="formMessage">{message}</p> : null}
+      {message ? <DismissibleMessage message={message} onDismiss={() => setMessage("")} /> : null}
 
       <section className="metricStrip compactMetrics">
         <div className="metricCard blue"><div><CalendarClock size={19} /></div><span>予約</span><strong>{totals.count}件</strong></div>

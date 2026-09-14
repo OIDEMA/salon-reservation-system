@@ -2,6 +2,7 @@
 
 import { CalendarClock, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { DismissibleMessage } from "@/components/dismissible-message";
 import { useTenantSlug } from "@/components/tenant-provider";
 import type { AdminShift, AdminStaff } from "@/lib/admin-types";
 import { tenantApiPath } from "@/lib/tenant-routing";
@@ -66,7 +67,7 @@ export function ShiftManagement({ initialShifts, staff, defaultDate }: { initial
 
   return (
     <div className="shiftManager">
-      {message ? <p className="formMessage">{message}</p> : null}
+      {message ? <DismissibleMessage message={message} onDismiss={() => setMessage("")} /> : null}
       <form className="adminPanel shiftCreateForm" onSubmit={createShift}>
         <div className="adminPanelTitle"><CalendarClock size={19} /><h2>シフト・受付停止を登録</h2></div>
         <div className="createFieldGrid four">

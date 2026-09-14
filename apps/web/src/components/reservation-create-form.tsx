@@ -2,6 +2,7 @@
 
 import { AlertCircle, CalendarCheck, CheckCircle2, Clock3, MessageCircle, Phone, UserRound } from "lucide-react";
 import { useMemo, useState } from "react";
+import { DismissibleMessage } from "@/components/dismissible-message";
 import { useTenantSlug } from "@/components/tenant-provider";
 import type { AdminMenu, AdminStaff } from "@/lib/admin-types";
 import { tenantApiPath, tenantPath } from "@/lib/tenant-routing";
@@ -280,10 +281,13 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
             <span>状態<strong>{statusOptions.find((option) => option.value === status)?.label}</strong></span>
           </div>
           {message ? (
-            <div className={message.type === "success" ? "formResult isSuccess" : "formResult isError"} role="status" aria-live="polite">
-              {message.type === "success" ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-              <span>{message.text}</span>
-            </div>
+            <DismissibleMessage
+              className={message.type === "success" ? "formResult isSuccess" : "formResult isError"}
+              icon={message.type === "success" ? <CheckCircle2 aria-hidden="true" size={18} /> : <AlertCircle aria-hidden="true" size={18} />}
+              message={message.text}
+              onDismiss={() => setMessage(null)}
+              role={message.type === "error" ? "alert" : "status"}
+            />
           ) : null}
           {createdReservationId ? <small className="createdId">ID: {createdReservationId}</small> : null}
           <button className="createSubmitButton" type="submit" disabled={isSubmitting}>

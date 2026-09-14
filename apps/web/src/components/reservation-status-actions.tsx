@@ -3,6 +3,7 @@
 import { CheckCircle2, UserCheck, UserX, XCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { DismissibleMessage } from "@/components/dismissible-message";
 import { useTenantSlug } from "@/components/tenant-provider";
 import { tenantApiPath } from "@/lib/tenant-routing";
 
@@ -40,7 +41,7 @@ export function ReservationStatusActions({ reservationId }: { reservationId: str
         <button disabled={busy} type="button" onClick={() => void update("CANCELLED")}><XCircle size={17} /><span>取消</span></button>
         <button disabled={busy} type="button" onClick={() => void update("NO_SHOW")}><UserX size={17} /><span>無断</span></button>
       </div>
-      {message ? <p className="formMessage error">{message}</p> : null}
+      {message ? <DismissibleMessage className="formMessage error" message={message} onDismiss={() => setMessage("")} role="alert" /> : null}
     </>
   );
 }

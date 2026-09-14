@@ -2,6 +2,7 @@
 
 import { Edit3, Plus, Save, Trash2, X } from "lucide-react";
 import { useState } from "react";
+import { DismissibleMessage } from "@/components/dismissible-message";
 import { useTenantSlug } from "@/components/tenant-provider";
 import { tenantApiPath } from "@/lib/tenant-routing";
 
@@ -120,7 +121,7 @@ export function MasterDataManager({
         <p>{items.length}件登録されています。</p>
         <button className="primaryButton" type="button" onClick={startNew}><Plus size={17} />{itemLabel}を新規登録</button>
       </div>
-      {message ? <p className="formMessage">{message}</p> : null}
+      {message ? <DismissibleMessage message={message} onDismiss={() => setMessage("")} /> : null}
       <section className="tablePanel">
         <table className="adminTable">
           <thead><tr>{columns.map((column) => <th key={column.key}>{column.label}</th>)}<th>操作</th></tr></thead>

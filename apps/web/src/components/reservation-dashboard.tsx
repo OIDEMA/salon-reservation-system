@@ -32,6 +32,7 @@ import { ja } from "date-fns/locale";
 import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { DismissibleMessage } from "@/components/dismissible-message";
 import { fetchDashboard } from "@/lib/api";
 import { LogoutButton } from "@/components/logout-button";
 import { useTenantSlug } from "@/components/tenant-provider";
@@ -536,9 +537,12 @@ export function ReservationDashboard() {
               </div>
             ) : null}
             {scheduleMessage ? (
-              <div className={`timelineMessage ${scheduleMessage.type === "error" ? "isError" : "isSuccess"}`} role="status">
-                {scheduleMessage.text}
-              </div>
+              <DismissibleMessage
+                className={`timelineMessage ${scheduleMessage.type === "error" ? "isError" : "isSuccess"}`}
+                message={scheduleMessage.text}
+                onDismiss={() => setScheduleMessage(null)}
+                role={scheduleMessage.type === "error" ? "alert" : "status"}
+              />
             ) : null}
 
             {viewMode === "timeline" ? (

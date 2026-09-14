@@ -2,6 +2,7 @@
 
 import { BookOpenText, Plus, Save, Search, Trash2, UserRoundPen, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { DismissibleMessage } from "@/components/dismissible-message";
 import { useTenantSlug } from "@/components/tenant-provider";
 import type { AdminCustomer, AdminCustomerDetail } from "@/lib/admin-types";
 import { tenantApiPath } from "@/lib/tenant-routing";
@@ -164,7 +165,7 @@ export function CustomerManagement({ initialCustomers }: { initialCustomers: Adm
       </section>
 
       <section className="customerDetailPanel">
-        {message ? <p className="formMessage">{message}</p> : null}
+        {message ? <DismissibleMessage message={message} onDismiss={() => setMessage("")} /> : null}
         {editingId ? (
           <form className="customerForm" onSubmit={saveCustomer}>
             <div className="detailPanelHeader">
