@@ -40,7 +40,7 @@ Clinical photos use a dedicated Google Cloud Storage bucket, separate from App H
 | API principal | `reservation-api-runtime@salon-reserve-bg.iam.gserviceaccount.com` |
 | Runtime bucket-scoped role | `roles/storage.objectUser` |
 | Deployment principal | `github-deploy@salon-reserve-bg.iam.gserviceaccount.com` |
-| Required deployment bucket-scoped role | `roles/storage.bucketViewer` (approval pending) |
+| Required deployment bucket-scoped role | `roles/storage.bucketViewer` (approved and applied) |
 
 The bucket has no public website, client Firebase upload access, download tokens, or signed URLs. Clients upload through the authenticated tenant API. The server validates and re-encodes JPEG/PNG/WebP images, removes EXIF/GPS, and reads them through the same authorization boundary. Never put `CHART_PHOTOS_BUCKET` credentials in a `NEXT_PUBLIC_*` variable. Cloud Run uses Application Default Credentials; no service-account key file is needed.
 
@@ -60,9 +60,9 @@ gcloud storage buckets add-iam-policy-binding gs://salon-reserve-bg-chart-photos
   --role=roles/storage.objectUser
 ```
 
-The deployment workflow verifies public access prevention and uniform access before applying the schema, then supplies `CHART_PHOTOS_BUCKET` to the API. The deployment principal needs `storage.buckets.get` on this bucket. Deployment run `38353085184` stopped at this check before any schema/API changes because its existing project roles did not provide that permission. The minimal predefined `roles/storage.bucketViewer` role contains only `storage.buckets.get` and `storage.buckets.list`; it does not allow reading photos, modifying objects, or editing IAM. Adding this role to the deployment principal on this bucket requires explicit approval and has not been applied. Do not grant public IAM bindings, enable browser CORS, create download tokens, or remove these checks to work around an upload failure.
+The deployment workflow verifies public access prevention and uniform access before applying the schema, then supplies `CHART_PHOTOS_BUCKET` to the API. The deployment principal needs `storage.buckets.get` on this bucket. The first attempt of deployment run `38353085184` stopped at this check before any schema/API changes because its existing project roles did not provide that permission. The minimal predefined `roles/storage.bucketViewer` role contains only `storage.buckets.get` and `storage.buckets.list`; it does not allow reading photos, modifying objects, or editing IAM. On 2026-10-13, the user explicitly approved this binding for the deployment principal on this bucket. It was applied and verified; public access prevention remained enforced and uniform bucket-level access remained enabled. Do not grant public IAM bindings, enable browser CORS, create download tokens, or remove these checks to work around an upload failure.
 
-After explicit approval, grant the deployment metadata-read role and rerun the failed workflow:
+The approved deployment metadata-read binding was applied with the following command:
 
 ```bash
 gcloud storage buckets add-iam-policy-binding gs://salon-reserve-bg-chart-photos \
