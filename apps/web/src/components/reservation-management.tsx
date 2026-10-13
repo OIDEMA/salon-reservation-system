@@ -1,10 +1,11 @@
 "use client";
 
-import { CalendarClock, CheckCircle2, Edit3, RotateCcw, Save, Search, UserCheck, UserX, XCircle } from "lucide-react";
+import { CalendarClock, CheckCircle2, Edit3, RotateCcw, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { DismissibleMessage } from "@/components/dismissible-message";
+import { TenantLink } from "@/components/tenant-link";
 import { useTenantSlug } from "@/components/tenant-provider";
-import type { AdminMenu, AdminReservation, AdminStaff } from "@/lib/admin-types";
+import type { AdminReservation } from "@/lib/admin-types";
 import { tenantApiPath } from "@/lib/tenant-routing";
 
 const statusOptions = [
@@ -16,8 +17,6 @@ const statusOptions = [
   { value: "NO_SHOW", label: "無断" },
   { value: "WAITLIST", label: "待ち" }
 ];
-const sourceOptions = ["PHONE", "WEB", "WALK_IN"];
-const paymentOptions = ["UNPAID", "AUTHORIZED", "PAID", "REFUNDED"];
 const yen = new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 });
 
 async function responseError(response: Response) {
@@ -27,14 +26,10 @@ async function responseError(response: Response) {
 
 export function ReservationManagement({
   initialReservations,
-  menus,
-  staff,
   initialDateFrom,
   initialDateTo
 }: {
   initialReservations: AdminReservation[];
-  menus: AdminMenu[];
-  staff: AdminStaff[];
   initialDateFrom: string;
   initialDateTo: string;
 }) {
@@ -44,7 +39,6 @@ export function ReservationManagement({
   const [status, setStatus] = useState("");
   const [dateFrom, setDateFrom] = useState(initialDateFrom);
   const [dateTo, setDateTo] = useState(initialDateTo);
-  const [selected, setSelected] = useState<AdminReservation | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -65,63 +59,8 @@ export function ReservationManagement({
       const response = await fetch(`${tenantApiPath(tenantSlug, "/reservations")}?${params}`, { cache: "no-store" });
       if (!response.ok) throw new Error(await responseError(response));
       setReservations((await response.json()) as AdminReservation[]);
-      setSelected(null);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "予約検索に失敗しました。");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function updateStatus(reservation: AdminReservation, nextStatus: string) {
-    setBusy(true);
-    setMessage("");
-    try {
-      const response = await fetch(tenantApiPath(tenantSlug, `/reservations/${reservation.id}/status`), {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: nextStatus })
-      });
-      if (!response.ok) throw new Error(await responseError(response));
-      const updated = (await response.json()) as AdminReservation;
-      setReservations((current) => current.map((item) => item.id === updated.id ? updated : item));
-      setSelected(updated);
-      setMessage("予約状態を更新しました。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "予約状態の更新に失敗しました。");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function saveReservation(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selected) return;
-    const data = new FormData(event.currentTarget);
-    setBusy(true);
-    setMessage("");
-    try {
-      const response = await fetch(tenantApiPath(tenantSlug, `/reservations/${selected.id}`), {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          date: String(data.get("date")),
-          startTime: String(data.get("startTime")),
-          durationMinutes: Number(data.get("durationMinutes")),
-          serviceId: String(data.get("serviceId")),
-          staffId: String(data.get("staffId")) || null,
-          source: String(data.get("source")),
-          paymentStatus: String(data.get("paymentStatus")),
-          memo: String(data.get("memo")).trim() || null
-        })
-      });
-      if (!response.ok) throw new Error(await responseError(response));
-      const updated = (await response.json()) as AdminReservation;
-      setReservations((current) => current.map((item) => item.id === updated.id ? updated : item));
-      setSelected(updated);
-      setMessage("予約内容を保存しました。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "予約内容の保存に失敗しました。");
     } finally {
       setBusy(false);
     }
@@ -159,45 +98,13 @@ export function ReservationManagement({
                 <td>{yen.format(reservation.service.price)}</td>
                 <td><span className={`reservationStatus status-${reservation.status.toLowerCase()}`}>{statusOptions.find((option) => option.value === reservation.status)?.label ?? reservation.status}</span></td>
                 <td>{reservation.source}</td>
-                <td><button className="miniButton" type="button" onClick={() => setSelected(reservation)}><Edit3 size={15} />編集</button></td>
+                <td><TenantLink className="miniButton" href={`/reservations/${encodeURIComponent(reservation.id)}/edit`}><Edit3 size={15} />編集</TenantLink></td>
               </tr>
             ))}
           </tbody>
         </table>
       </section>
 
-      {selected ? (
-        <div className="drawerBackdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setSelected(null); }}>
-          <aside className="editDrawer">
-            <div className="detailPanelHeader">
-              <div><span>Reservation</span><h2>{selected.customer.name}</h2><p>{selected.service.name}</p></div>
-              <button className="iconOnlyButton" type="button" onClick={() => setSelected(null)}><XCircle size={19} /></button>
-            </div>
-            <div className="statusActionGrid">
-              <button type="button" onClick={() => void updateStatus(selected, "CONFIRMED")}><CheckCircle2 size={17} />確定</button>
-              <button type="button" onClick={() => void updateStatus(selected, "ARRIVED")}><UserCheck size={17} />来店</button>
-              <button type="button" onClick={() => void updateStatus(selected, "COMPLETED")}><CheckCircle2 size={17} />完了</button>
-              <button className="danger" type="button" onClick={() => void updateStatus(selected, "CANCELLED")}><XCircle size={17} />取消</button>
-              <button className="danger" type="button" onClick={() => void updateStatus(selected, "NO_SHOW")}><UserX size={17} />無断</button>
-            </div>
-            <form className="reservationEditForm" key={selected.id + selected.updatedAt} onSubmit={saveReservation}>
-              <div className="createFieldGrid two">
-                <label className="createField"><span>日付</span><input name="date" type="date" defaultValue={selected.date} /></label>
-                <label className="createField"><span>開始</span><input name="startTime" type="time" defaultValue={selected.startTime} /></label>
-                <label className="createField"><span>所要時間（分）</span><input name="durationMinutes" type="number" min="5" step="5" defaultValue={selected.service.durationMinutes} /></label>
-                <label className="createField"><span>担当</span><select name="staffId" defaultValue={selected.staff?.id ?? ""}><option value="">指名なし</option>{staff.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
-              </div>
-              <label className="createField"><span>メニュー</span><select name="serviceId" defaultValue={selected.service.id}>{menus.filter((menu) => menu.active).map((menu) => <option key={menu.id} value={menu.id}>{menu.name}（{menu.durationMinutes}分 / {yen.format(menu.price)}）</option>)}</select></label>
-              <div className="createFieldGrid two">
-                <label className="createField"><span>予約経路</span><select name="source" defaultValue={selected.source}>{sourceOptions.map((value) => <option key={value}>{value}</option>)}</select></label>
-                <label className="createField"><span>決済状態（手動管理）</span><select name="paymentStatus" defaultValue={selected.paymentStatus}>{paymentOptions.map((value) => <option key={value}>{value}</option>)}</select></label>
-              </div>
-              <label className="createField"><span>予約メモ</span><textarea name="memo" rows={7} defaultValue={selected.memo} /></label>
-              <button className="primaryButton" disabled={busy} type="submit"><Save size={17} />{busy ? "保存中..." : "予約を保存"}</button>
-            </form>
-          </aside>
-        </div>
-      ) : null}
     </div>
   );
 }

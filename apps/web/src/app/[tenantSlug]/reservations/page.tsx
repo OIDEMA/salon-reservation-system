@@ -2,7 +2,6 @@ import { CalendarCheck } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
 import { ReservationManagement } from "@/components/reservation-management";
 import { TenantLink } from "@/components/tenant-link";
-import { fetchAdminMenus, fetchAdminStaff } from "@/lib/admin-api";
 import type { AdminReservation } from "@/lib/admin-types";
 import { backendJson } from "@/lib/backend";
 
@@ -11,11 +10,7 @@ export default async function TenantReservationSearchPage() {
   const fromDate = new Date(`${today}T00:00:00+09:00`);
   fromDate.setDate(fromDate.getDate() - 30);
   const dateFrom = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(fromDate);
-  const [reservations, menus, staff] = await Promise.all([
-    backendJson<AdminReservation[]>(`/api/reservations?dateFrom=${dateFrom}&dateTo=${today}`),
-    fetchAdminMenus(),
-    fetchAdminStaff()
-  ]);
+  const reservations = await backendJson<AdminReservation[]>(`/api/reservations?dateFrom=${dateFrom}&dateTo=${today}`);
 
   return (
     <AdminShell
@@ -28,7 +23,7 @@ export default async function TenantReservationSearchPage() {
         </TenantLink>
       }
     >
-      <div className="adminContent"><ReservationManagement initialReservations={reservations} menus={menus} staff={staff} initialDateFrom={dateFrom} initialDateTo={today} /></div>
+      <div className="adminContent"><ReservationManagement initialReservations={reservations} initialDateFrom={dateFrom} initialDateTo={today} /></div>
     </AdminShell>
   );
 }

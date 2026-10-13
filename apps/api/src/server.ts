@@ -1077,6 +1077,23 @@ server.get("/api/reservations", async (request, reply) => {
   return reservations.map(reservationResponse);
 });
 
+server.get("/api/reservations/:id", async (request, reply) => {
+  const context = await requireTenantContext(request, reply);
+  if (!context) return;
+  const salon = await findScopedSalon(context, request);
+  if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
+  const { id } = idParamsSchema.parse(request.params);
+  const reservation = await prisma.reservation.findFirst({
+    where: { id, tenantId: context.tenant.id, salonId: salon.id },
+    include: { customer: true, service: true, staff: true }
+  });
+  if (!reservation) return reply.code(404).send({ code: "RESERVATION_NOT_FOUND", message: "予約が見つかりません。" });
+  return {
+    ...reservationResponse(reservation),
+    durationMinutes: Math.round((reservation.endsAt.getTime() - reservation.startsAt.getTime()) / 60_000)
+  };
+});
+
 server.post("/api/reservations", async (request, reply) => {
   const context = await requireTenantContext(request, reply, writeRoles);
   if (!context) return;
