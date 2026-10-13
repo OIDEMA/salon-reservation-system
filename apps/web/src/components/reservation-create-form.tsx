@@ -267,7 +267,6 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
 
       <aside className="createSummaryRail">
         <section className="panelSection createSummaryCard">
-          <span className="eyebrow">Reservation Preview</span>
           <h2>{customerName || "顧客名未入力"}</h2>
           <div className="summarySlot">
             <CalendarCheck size={18} />
