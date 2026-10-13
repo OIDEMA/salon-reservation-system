@@ -4,6 +4,7 @@ const tenantSlugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 const reservedTenantSlugs = new Set([
   "admin",
+  "accept-invitation",
   "api",
   "brand",
   "calendar",

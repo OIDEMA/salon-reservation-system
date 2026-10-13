@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:operations": "node --import tsx --test tests/admin-permissions.test.tsx src/components/chart-types.test.tsx src/components/chart-permissions.test.tsx"
   },
   "dependencies": {
     "date-fns": "^4.1.0",

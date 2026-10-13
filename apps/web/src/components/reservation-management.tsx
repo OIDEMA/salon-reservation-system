@@ -1,10 +1,10 @@
 "use client";
 
-import { CalendarClock, CheckCircle2, Edit3, RotateCcw, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Edit3, Search } from "lucide-react";
+import { useState } from "react";
 import { DismissibleMessage } from "@/components/dismissible-message";
 import { TenantLink } from "@/components/tenant-link";
-import { useTenantSlug } from "@/components/tenant-provider";
+import { useTenantSlug, usePermissions } from "@/components/tenant-provider";
 import type { AdminReservation } from "@/lib/admin-types";
 import { tenantApiPath } from "@/lib/tenant-routing";
 
@@ -34,6 +34,7 @@ export function ReservationManagement({
   initialDateTo: string;
 }) {
   const tenantSlug = useTenantSlug();
+  const { can } = usePermissions();
   const [reservations, setReservations] = useState(initialReservations);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
@@ -41,13 +42,6 @@ export function ReservationManagement({
   const [dateTo, setDateTo] = useState(initialDateTo);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-
-  const totals = useMemo(() => ({
-    count: reservations.length,
-    pending: reservations.filter((reservation) => reservation.status === "PENDING").length,
-    completed: reservations.filter((reservation) => reservation.status === "COMPLETED").length,
-    revenue: reservations.filter((reservation) => reservation.status === "COMPLETED").reduce((sum, reservation) => sum + reservation.service.price, 0)
-  }), [reservations]);
 
   async function searchReservations() {
     setBusy(true);
@@ -78,13 +72,6 @@ export function ReservationManagement({
       </section>
       {message ? <DismissibleMessage message={message} onDismiss={() => setMessage("")} /> : null}
 
-      <section className="metricStrip compactMetrics">
-        <div className="metricCard blue"><div><CalendarClock size={19} /></div><span>予約</span><strong>{totals.count}件</strong></div>
-        <div className="metricCard red"><div><RotateCcw size={19} /></div><span>未確認</span><strong>{totals.pending}件</strong></div>
-        <div className="metricCard green"><div><CheckCircle2 size={19} /></div><span>完了</span><strong>{totals.completed}件</strong></div>
-        <div className="metricCard amber"><div><CheckCircle2 size={19} /></div><span>実績売上</span><strong>{yen.format(totals.revenue)}</strong></div>
-      </section>
-
       <section className="tablePanel">
         <table className="adminTable reservationTable">
           <thead><tr><th>日時</th><th>顧客</th><th>メニュー</th><th>担当</th><th>価格</th><th>状態</th><th>経路</th><th>操作</th></tr></thead>
@@ -98,7 +85,11 @@ export function ReservationManagement({
                 <td>{yen.format(reservation.service.price)}</td>
                 <td><span className={`reservationStatus status-${reservation.status.toLowerCase()}`}>{statusOptions.find((option) => option.value === reservation.status)?.label ?? reservation.status}</span></td>
                 <td>{reservation.source}</td>
-                <td><TenantLink className="miniButton" href={`/reservations/${encodeURIComponent(reservation.id)}/edit`}><Edit3 size={15} />編集</TenantLink></td>
+                <td><div className="operationRowActions">
+                  {can("reservation.write") && <TenantLink className="miniButton" href={`/reservations/${encodeURIComponent(reservation.id)}/edit`}><Edit3 size={15} />編集</TenantLink>}
+                  {can("checkout.write") && <TenantLink className="miniButton" href={`/checkout/new?reservationId=${encodeURIComponent(reservation.id)}`}>会計</TenantLink>}
+                  {can("chart.write") && <TenantLink className="miniButton" href={`/charts/new?reservationId=${encodeURIComponent(reservation.id)}`}>カルテ</TenantLink>}
+                </div></td>
               </tr>
             ))}
           </tbody>

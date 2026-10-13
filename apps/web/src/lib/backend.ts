@@ -36,6 +36,10 @@ export async function backendFetch(path: string, init?: RequestInit, tenantSlugO
 
 export async function backendJson<T>(path: string, init?: RequestInit, tenantSlugOverride?: string): Promise<T> {
   const response = await backendFetch(path, init, tenantSlugOverride);
+  if (response.status === 403 && path !== "/api/me/tenants") {
+    const tenantSlug = tenantSlugOverride ?? (await headers()).get(TENANT_SLUG_HEADER);
+    if (tenantSlug) redirect(`/${encodeURIComponent(tenantSlug)}/access-denied`);
+  }
   if (!response.ok) throw new Error(`${path} request failed: ${response.status}`);
   return (await response.json()) as T;
 }

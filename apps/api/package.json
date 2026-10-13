@@ -11,13 +11,17 @@
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "prisma:deploy": "node dist/src/scripts/deploy-schema.js",
-    "tenant:provision": "node dist/src/scripts/provision-tenant.js"
+    "tenant:provision": "node dist/src/scripts/provision-tenant.js",
+    "test:operations": "node --import tsx --test tests/cash-domain.test.ts tests/access.test.ts src/chart-domain.test.ts src/chart-photo-storage.test.ts src/scripts/audit-chart-photo-storage.test.ts",
+    "test:operations:db": "node --import tsx --test src/chart-routes.integration.test.ts tests/*.integration.test.ts",
+    "chart:photos:audit": "node dist/src/scripts/audit-chart-photo-storage.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
     "@prisma/client": "^6.1.0",
     "fastify": "^5.2.0",
     "firebase-admin": "^14.3.0",
+    "sharp": "^0.35.5",
     "zod": "^3.24.1"
   },
   "devDependencies": {

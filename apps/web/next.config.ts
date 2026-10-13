@@ -1,9 +1,13 @@
+import path from "node:path";
 import type { NextConfig } from "next";
+
+const workspaceRoot = path.resolve(__dirname, "../..");
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   output: "standalone",
-  outputFileTracingRoot: process.cwd()
+  outputFileTracingRoot: workspaceRoot,
+  turbopack: { root: workspaceRoot }
 };
 
 export default nextConfig;

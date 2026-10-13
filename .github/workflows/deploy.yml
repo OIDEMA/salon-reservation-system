@@ -27,6 +27,7 @@ env:
   PROJECT_NUMBER: "42401528382"
   REGION: asia-east1
   API_SERVICE: reservation-api
+  CHART_PHOTOS_BUCKET: salon-reserve-bg-chart-photos
   API_RUNTIME_SERVICE_ACCOUNT: reservation-api-runtime@salon-reserve-bg.iam.gserviceaccount.com
   DB_INSTANCE: salon-reserve-db
   VPC_NETWORK: salon-reserve-vpc
@@ -63,6 +64,7 @@ jobs:
         run: |
           npm run db:generate
           npm run typecheck
+          npm run test:operations
           npm run build
 
       - name: Authenticate to Google Cloud for image build
@@ -99,6 +101,12 @@ jobs:
             --format=json \
             | jq -e --arg network "projects/$PROJECT_ID/global/networks/$VPC_NETWORK" \
               '.settings.ipConfiguration.ipv4Enabled == false and .settings.ipConfiguration.privateNetwork == $network'
+
+      - name: Verify private chart photo storage
+        run: |
+          gcloud storage buckets describe "gs://$CHART_PHOTOS_BUCKET" \
+            --project="$PROJECT_ID" --format=json \
+            | jq -e '.uniform_bucket_level_access == true and .public_access_prevention == "enforced"'
 
       - name: Apply database schema
         env:
@@ -142,7 +150,7 @@ jobs:
             --subnet="$VPC_SUBNET" \
             --vpc-egress=private-ranges-only \
             --set-secrets=DATABASE_URL=reservation-database-url:latest \
-            --set-env-vars=NODE_ENV=production,DB_CONNECTIVITY=private-ip,CORS_ORIGINS=https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app \
+            --set-env-vars=NODE_ENV=production,DB_CONNECTIVITY=private-ip,CHART_PHOTOS_BUCKET=${CHART_PHOTOS_BUCKET},CORS_ORIGINS=https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app \
             --cpu=1 \
             --memory=512Mi \
             --min-instances=0 \

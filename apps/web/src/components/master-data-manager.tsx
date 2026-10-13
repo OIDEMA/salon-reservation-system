@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DismissibleMessage } from "@/components/dismissible-message";
 import { TenantLink } from "@/components/tenant-link";
-import { useTenantSlug } from "@/components/tenant-provider";
+import { useTenantSlug, usePermissions } from "@/components/tenant-provider";
 import { tenantApiPath, tenantPath } from "@/lib/tenant-routing";
 
 export type MasterField = {
@@ -73,6 +73,8 @@ type MasterDataFormProps = {
 
 function MasterDataForm({ resource, fields, initialValues, itemId, itemLabel, returnHref }: MasterDataFormProps) {
   const tenantSlug = useTenantSlug();
+  const { can } = usePermissions();
+  const canWrite = can("master.write");
   const router = useRouter();
   const [form, setForm] = useState<ItemRecord>(initialValues);
   const [message, setMessage] = useState("");
@@ -80,7 +82,7 @@ function MasterDataForm({ resource, fields, initialValues, itemId, itemLabel, re
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy) return;
+    if (!canWrite || busy) return;
     setBusy(true);
     setMessage("");
     try {
@@ -105,12 +107,12 @@ function MasterDataForm({ resource, fields, initialValues, itemId, itemLabel, re
   return (
     <form className="masterCreateForm" onSubmit={save}>
       {message ? <DismissibleMessage message={message} onDismiss={() => setMessage("")} role="alert" /> : null}
-      <fieldset className="masterCreateFields" disabled={busy}>
+      <fieldset className="masterCreateFields" disabled={!canWrite || busy}>
         <MasterFields fields={fields} form={form} onChange={(key, value) => setForm((current) => ({ ...current, [key]: value }))} />
       </fieldset>
       <div className="masterCreateActions">
-        <TenantLink className="secondaryButton" href={returnHref} aria-disabled={busy} onClick={(event) => { if (busy) event.preventDefault(); }}>キャンセル</TenantLink>
-        <button className="primaryButton" disabled={busy} type="submit"><Save size={17} />{busy ? "保存中..." : "保存"}</button>
+        <TenantLink className="secondaryButton" href={returnHref} aria-disabled={busy} onClick={(event) => { if (busy) event.preventDefault(); }}>{canWrite ? "キャンセル" : "一覧に戻る"}</TenantLink>
+        {canWrite ? <button className="primaryButton" disabled={busy} type="submit"><Save size={17} />{busy ? "保存中..." : "保存"}</button> : null}
       </div>
     </form>
   );
@@ -148,6 +150,8 @@ export function MasterDataManager({
   searchPlaceholder?: string;
 }) {
   const tenantSlug = useTenantSlug();
+  const { can } = usePermissions();
+  const canWrite = can("master.write");
   const [items, setItems] = useState(initialItems);
   const [editing, setEditing] = useState<MasterItem | "new" | null>(null);
   const [form, setForm] = useState<ItemRecord>(defaults);
@@ -164,12 +168,14 @@ export function MasterDataManager({
     : items;
 
   function startNew() {
+    if (!canWrite || busy) return;
     setForm(defaults);
     setEditing("new");
     setMessage("");
   }
 
   function startEdit(item: MasterItem) {
+    if (!canWrite || busy) return;
     setForm({ ...record(item) });
     setEditing(item);
     setMessage("");
@@ -177,7 +183,7 @@ export function MasterDataManager({
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!editing) return;
+    if (!canWrite || busy || !editing) return;
     const isNew = editing === "new";
     setBusy(true);
     setMessage("");
@@ -200,6 +206,7 @@ export function MasterDataManager({
   }
 
   async function remove(item: MasterItem) {
+    if (!canWrite || busy) return;
     const name = String(record(item).name ?? itemLabel);
     if (!window.confirm(`${name}を削除しますか？ 予約履歴がある項目は無効化されます。`)) return;
     setBusy(true);
@@ -228,31 +235,31 @@ export function MasterDataManager({
               <input type="search" aria-label={`${itemLabel}を検索`} placeholder={searchPlaceholder} value={query} onChange={(event) => setQuery(event.target.value)} />
               {query ? <button className="masterSearchClear" type="button" aria-label="検索をクリア" onClick={() => setQuery("")}><X size={16} aria-hidden="true" /></button> : null}
             </div>
-            <p role="status">{searchTerms.length > 0 ? `${filteredItems.length}件 / 全${items.length}件` : `${items.length}件登録されています。`}</p>
+            {searchTerms.length > 0 || resource !== "menus" ? <p role="status">{searchTerms.length > 0 ? `${filteredItems.length}件 / 全${items.length}件` : `${items.length}件登録されています。`}</p> : null}
           </div>
         ) : <p>{items.length}件登録されています。</p>}
-        {createHref ? <TenantLink className="primaryButton" href={createHref}><Plus size={17} />{itemLabel}を新規登録</TenantLink> : <button className="primaryButton" type="button" onClick={startNew}><Plus size={17} />{itemLabel}を新規登録</button>}
+        {canWrite ? createHref ? <TenantLink className="primaryButton" href={createHref}><Plus size={17} />{itemLabel}を新規登録</TenantLink> : <button className="primaryButton" type="button" onClick={startNew}><Plus size={17} />{itemLabel}を新規登録</button> : null}
       </div>
       {message ? <DismissibleMessage message={message} onDismiss={() => setMessage("")} /> : null}
       <section className="tablePanel">
         <table className="adminTable">
-          <thead><tr>{columns.map((column) => <th key={column.key}>{column.label}</th>)}<th>操作</th></tr></thead>
+          <thead><tr>{columns.map((column) => <th key={column.key}>{column.label}</th>)}{canWrite ? <th>操作</th> : null}</tr></thead>
           <tbody>
-            {filteredItems.length === 0 ? <tr><td colSpan={columns.length + 1}><div className="emptyState">{searchTerms.length > 0 ? `検索に一致する${itemLabel}がありません。キーワードを変更してください。` : `${itemLabel}はまだ登録されていません。`}</div></td></tr> : null}
+            {filteredItems.length === 0 ? <tr><td colSpan={columns.length + (canWrite ? 1 : 0)}><div className="emptyState">{searchTerms.length > 0 ? `検索に一致する${itemLabel}がありません。キーワードを変更してください。` : `${itemLabel}はまだ登録されていません。`}</div></td></tr> : null}
             {filteredItems.map((item) => (
               <tr key={item.id}>
                 {columns.map((column) => {
                   const value = record(item)[column.key];
                   return <td key={column.key}>{column.format === "color" ? <><span className="menuColor" style={{ background: String(value) }} /> {String(value)}</> : formatted(value, column.format)}</td>;
                 })}
-                <td><div className="tableActions">{editBaseHref ? <TenantLink className="miniButton" href={`${editBaseHref}/${encodeURIComponent(item.id)}/edit`}><Edit3 size={15} />編集</TenantLink> : <button className="miniButton" type="button" onClick={() => startEdit(item)}><Edit3 size={15} />編集</button>}<button className="dangerButton" disabled={busy} type="button" onClick={() => void remove(item)}><Trash2 size={15} /></button></div></td>
+                {canWrite ? <td><div className="tableActions">{editBaseHref ? <TenantLink className="miniButton" href={`${editBaseHref}/${encodeURIComponent(item.id)}/edit`}><Edit3 size={15} />編集</TenantLink> : <button className="miniButton" type="button" onClick={() => startEdit(item)}><Edit3 size={15} />編集</button>}<button className="dangerButton" disabled={busy} type="button" onClick={() => void remove(item)}><Trash2 size={15} /></button></div></td> : null}
               </tr>
             ))}
           </tbody>
         </table>
       </section>
 
-      {editing ? (
+      {canWrite && editing ? (
         <div className="drawerBackdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setEditing(null); }}>
           <aside className="editDrawer masterDrawer">
             <div className="detailPanelHeader"><div><span>Master data</span><h2>{editing === "new" ? `${itemLabel}を登録` : `${itemLabel}を編集`}</h2></div><button className="iconOnlyButton" type="button" onClick={() => setEditing(null)}><X size={18} /></button></div>

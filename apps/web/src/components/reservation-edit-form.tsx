@@ -12,7 +12,7 @@ import { tenantApiPath, tenantPath } from "@/lib/tenant-routing";
 type EditableReservation = AdminReservation & { durationMinutes: number };
 
 const sourceOptions = ["PHONE", "WEB", "WALK_IN"];
-const paymentOptions = ["UNPAID", "AUTHORIZED", "PAID", "REFUNDED"];
+const paymentLabels: Record<string, string> = { UNPAID: "未精算", AUTHORIZED: "事前承認", PAID: "精算済み", REFUNDED: "取消・返金済み" };
 const statusLabels: Record<string, string> = {
   PENDING: "未確認", CONFIRMED: "確定", ARRIVED: "来店", COMPLETED: "完了",
   CANCELLED: "取消", NO_SHOW: "無断", WAITLIST: "待ち"
@@ -75,7 +75,7 @@ export function ReservationEditForm({ initialReservation, menus, staff }: {
           durationMinutes: Number(data.get("durationMinutes")),
           ...(serviceId !== reservation.service.id ? { serviceId } : {}),
           ...(staffId !== (reservation.staff?.id ?? null) ? { staffId } : {}),
-          source: String(data.get("source")), paymentStatus: String(data.get("paymentStatus")),
+          source: String(data.get("source")),
           memo: String(data.get("memo")).trim() || null
         })
       });
@@ -119,7 +119,7 @@ export function ReservationEditForm({ initialReservation, menus, staff }: {
         </select></label>
         <div className="createFieldGrid two">
           <label className="createField"><span>予約経路</span><select disabled={busy} name="source" defaultValue={reservation.source}>{sources.map((value) => <option key={value}>{value}</option>)}</select></label>
-          <label className="createField"><span>決済状態（手動管理）</span><select disabled={busy} name="paymentStatus" defaultValue={reservation.paymentStatus}>{paymentOptions.map((value) => <option key={value}>{value}</option>)}</select></label>
+          <div className="createField"><span>会計状態</span><strong>{paymentLabels[reservation.paymentStatus] ?? reservation.paymentStatus}</strong></div>
         </div>
         <label className="createField"><span>予約メモ</span><textarea disabled={busy} name="memo" rows={7} defaultValue={reservation.memo} /></label>
         <div className="masterCreateActions">

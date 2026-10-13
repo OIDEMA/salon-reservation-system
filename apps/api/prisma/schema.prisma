@@ -95,6 +95,8 @@ model Tenant {
 }
 
 model AppUser {
+  chartRevisionsCreated TreatmentChartRevision[] @relation("ChartRevisionCreator")
+  chartRevisionsFinalized TreatmentChartRevision[] @relation("ChartRevisionFinalizer")
   id              String             @id @default(cuid())
   firebaseUid     String             @unique
   email           String?            @unique
@@ -109,6 +111,9 @@ model AppUser {
 }
 
 model TenantMembership {
+  useCustomPermissions Boolean @default(false)
+  permissions String[] @default([])
+  salonIds String[] @default([])
   tenantId  String
   userId    String
   role      TenantRole       @default(STAFF)
@@ -123,6 +128,10 @@ model TenantMembership {
 }
 
 model TenantInvitation {
+  useCustomPermissions Boolean @default(false)
+  permissions String[] @default([])
+  salonIds String[] @default([])
+  revokedAt DateTime?
   id              String     @id @default(cuid())
   tenantId        String
   email           String
@@ -158,6 +167,9 @@ model AuditLog {
 }
 
 model Salon {
+  treatmentCharts TreatmentChart[]
+  cashCheckouts CashCheckout[]
+  cashRegisterSessions CashRegisterSession[]
   id            String         @id @default(cuid())
   tenantId      String
   name          String
@@ -180,6 +192,7 @@ model Salon {
 }
 
 model Staff {
+  treatmentCharts TreatmentChart[]
   id               String        @id @default(cuid())
   tenantId         String
   salonId          String
@@ -309,6 +322,7 @@ model SalonSettings {
 }
 
 model Customer {
+  treatmentCharts TreatmentChart[]
   id              String        @id @default(cuid())
   tenantId        String
   salonId         String
@@ -331,6 +345,9 @@ model Customer {
 }
 
 model Reservation {
+  treatmentCharts TreatmentChart[]
+  cashCheckouts CashCheckout[]
+  @@unique([tenantId, salonId, id])
   id                String            @id @default(cuid())
   tenantId          String
   salonId           String
@@ -389,4 +406,292 @@ model Notification {
   salon     Salon     @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
 
   @@index([tenantId, salonId, readAt])
+}
+
+enum CashCheckoutStatus {
+  DRAFT
+  FINALIZED
+  REVERSED
+}
+
+enum CashPaymentMethod {
+  CASH
+  CARD
+  BANK
+  EXTERNAL_PREPAYMENT
+  OTHER
+}
+
+enum CashRegisterStatus {
+  OPEN
+  CLOSED
+}
+
+enum CashMovementKind {
+  IN
+  OUT
+  SALE
+  REFUND
+}
+
+model CashCheckout {
+  id                       String             @id @default(uuid())
+  tenantId                 String
+  salonId                  String
+  reservationId            String
+  supersedesCheckoutId     String?
+  finalizedSessionId       String?
+  reversedSessionId        String?
+  status                   CashCheckoutStatus @default(DRAFT)
+  version                  Int                @default(1)
+  reservationSnapshot      Json
+  legacyPaymentStatus      String
+  legacyPaidAcknowledged   Boolean            @default(false)
+  subtotalYen              Int                @default(0)
+  discountYen              Int                @default(0)
+  taxYen                   Int                @default(0)
+  taxBreakdown             Json
+  totalYen                 Int                @default(0)
+  cashYen                  Int                @default(0)
+  notes                    String             @default("")
+  createRequestId          String
+  finalizeRequestId        String?
+  finalizeRequestHash      String?
+  reverseRequestId         String?
+  reverseRequestHash       String?
+  finalizedAt              DateTime?
+  reversedAt               DateTime?
+  reversalReason           String?
+  createdByUserId          String
+  finalizedByUserId        String?
+  reversedByUserId         String?
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+  salon                    Salon              @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Restrict)
+  reservation              Reservation        @relation(fields: [tenantId, salonId, reservationId], references: [tenantId, salonId, id], onDelete: Restrict)
+  items                    CashCheckoutItem[]
+  payments                 CashPaymentAllocation[]
+  movements                CashRegisterMovement[]
+  supersedesCheckout       CashCheckout? @relation("CashCorrections", fields: [tenantId, salonId, supersedesCheckoutId], references: [tenantId, salonId, id], onDelete: Restrict)
+  corrections              CashCheckout[] @relation("CashCorrections")
+  finalizedSession         CashRegisterSession? @relation("CashFinalizations", fields: [tenantId, salonId, finalizedSessionId], references: [tenantId, salonId, id], onDelete: Restrict)
+  reversedSession          CashRegisterSession? @relation("CashReversals", fields: [tenantId, salonId, reversedSessionId], references: [tenantId, salonId, id], onDelete: Restrict)
+
+  @@unique([tenantId, salonId, id])
+  @@index([tenantId, salonId, reservationId])
+  @@unique([tenantId, salonId, createRequestId])
+  @@unique([tenantId, salonId, finalizeRequestId])
+  @@unique([tenantId, salonId, reverseRequestId])
+  @@index([tenantId, salonId, createdAt])
+}
+
+model CashCheckoutItem {
+  id           String       @id @default(uuid())
+  tenantId     String
+  salonId      String
+  checkoutId   String
+  lineNumber   Int
+  label        String
+  quantity     Int
+  unitPriceYen Int
+  discountYen  Int
+  taxRate      Int
+  taxYen       Int
+  totalYen     Int
+  checkout     CashCheckout @relation(fields: [tenantId, salonId, checkoutId], references: [tenantId, salonId, id], onDelete: Restrict)
+
+  @@unique([tenantId, salonId, checkoutId, lineNumber])
+  @@index([tenantId, salonId, checkoutId])
+}
+
+model CashPaymentAllocation {
+  id         String            @id @default(uuid())
+  tenantId   String
+  salonId    String
+  checkoutId String
+  method     CashPaymentMethod
+  amountYen  Int
+  reference  String            @default("")
+  checkout   CashCheckout      @relation(fields: [tenantId, salonId, checkoutId], references: [tenantId, salonId, id], onDelete: Restrict)
+
+  @@index([tenantId, salonId, checkoutId])
+}
+
+model CashRegisterSession {
+  id                  String             @id @default(uuid())
+  tenantId            String
+  salonId             String
+  businessDate        String
+  status              CashRegisterStatus @default(OPEN)
+  version             Int                @default(1)
+  openingCashYen      Int
+  expectedCashYen     Int?
+  countedCashYen      Int?
+  differenceYen       Int?
+  note                String             @default("")
+  closeSnapshot       Json?
+  createRequestId     String
+  closeRequestId      String?
+  closeRequestHash    String?
+  openedByUserId      String
+  closedByUserId      String?
+  openedAt           DateTime           @default(now())
+  closedAt           DateTime?
+  salon               Salon              @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Restrict)
+  movements           CashRegisterMovement[]
+  finalizedCheckouts  CashCheckout[] @relation("CashFinalizations")
+  reversedCheckouts   CashCheckout[] @relation("CashReversals")
+
+  @@unique([tenantId, salonId, id])
+  @@unique([tenantId, salonId, businessDate])
+  @@unique([tenantId, salonId, createRequestId])
+  @@unique([tenantId, salonId, closeRequestId])
+  @@index([tenantId, salonId, status])
+}
+
+model CashRegisterMovement {
+  id               String              @id @default(uuid())
+  tenantId         String
+  salonId          String
+  sessionId        String
+  checkoutId       String?
+  kind             CashMovementKind
+  amountYen        Int
+  reason           String
+  requestId        String
+  requestHash      String
+  createdByUserId  String
+  createdAt        DateTime            @default(now())
+  session          CashRegisterSession @relation(fields: [tenantId, salonId, sessionId], references: [tenantId, salonId, id], onDelete: Restrict)
+  checkout         CashCheckout?       @relation(fields: [tenantId, salonId, checkoutId], references: [tenantId, salonId, id], onDelete: Restrict)
+
+  @@unique([tenantId, salonId, requestId])
+  @@index([tenantId, salonId, sessionId, createdAt])
+}
+
+// Add the following inverse fields to existing models:
+// Salon: treatmentCharts TreatmentChart[]
+// Reservation: treatmentCharts TreatmentChart[]
+// Reservation: @@unique([tenantId, salonId, id])
+// Customer: treatmentCharts TreatmentChart[]
+// Staff: treatmentCharts TreatmentChart[]
+// AppUser:
+//   chartRevisionsCreated TreatmentChartRevision[] @relation("ChartRevisionCreator")
+//   chartRevisionsFinalized TreatmentChartRevision[] @relation("ChartRevisionFinalizer")
+// Clinical records restrict deletion of linked reservations/customers/staff.
+// Author user deletion sets author id null; the display-name snapshot is retained.
+
+enum TreatmentChartStatus {
+  DRAFT
+  FINALIZED
+}
+
+enum TreatmentChartPhotoPhase {
+  BEFORE
+  AFTER
+}
+
+model TreatmentChart {
+  id                    String   @id @default(cuid())
+  tenantId              String
+  salonId               String
+  reservationId         String
+  customerId            String
+  staffId               String?
+  customerName          String
+  staffName             String?
+  serviceId             String
+  serviceName           String
+  startsAt              DateTime
+  endsAt                DateTime
+  version               Int      @default(1)
+  currentRevisionNumber Int      @default(1)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  salon                 Salon       @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Restrict)
+  reservation           Reservation @relation(fields: [tenantId, salonId, reservationId], references: [tenantId, salonId, id], onDelete: Restrict)
+  customer              Customer    @relation(fields: [tenantId, salonId, customerId], references: [tenantId, salonId, id], onDelete: Restrict)
+  staff                 Staff?      @relation(fields: [tenantId, salonId, staffId], references: [tenantId, salonId, id], onDelete: Restrict)
+  revisions             TreatmentChartRevision[]
+  photos                TreatmentChartPhoto[]
+
+  @@unique([tenantId, salonId, id])
+  @@unique([tenantId, salonId, reservationId])
+  @@index([tenantId, salonId, customerId, startsAt])
+  @@index([tenantId, salonId, updatedAt])
+}
+
+model TreatmentChartRevision {
+  id                     String               @id @default(cuid())
+  tenantId               String
+  salonId                String
+  chartId                String
+  revisionNumber         Int
+  status                 TreatmentChartStatus @default(DRAFT)
+  treatmentAt            DateTime
+  bodyParts              String[]             @default([])
+  performedServiceDetail String               @default("")
+  machine                String               @default("")
+  outputJ                String               @default("")
+  pulseWidth             String               @default("")
+  skinObservations       String               @default("")
+  productsMaterials      String               @default("")
+  aftercareNotes         String               @default("")
+  nextVisitPlan          String               @default("")
+  amendmentReason        String?
+  createdByUserId        String?
+  createdByName          String?
+  finalizedByUserId      String?
+  finalizedByName        String?
+  finalizedAt            DateTime?
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  chart                  TreatmentChart       @relation(fields: [tenantId, salonId, chartId], references: [tenantId, salonId, id], onDelete: Restrict)
+  createdBy              AppUser?             @relation("ChartRevisionCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  finalizedBy            AppUser?             @relation("ChartRevisionFinalizer", fields: [finalizedByUserId], references: [id], onDelete: SetNull)
+  photoLinks             TreatmentChartRevisionPhoto[]
+
+  @@unique([tenantId, salonId, chartId, id])
+  @@unique([tenantId, salonId, chartId, revisionNumber])
+}
+
+model TreatmentChartPhoto {
+  id        String                   @id @default(cuid())
+  tenantId  String
+  salonId   String
+  chartId   String
+  phase     TreatmentChartPhotoPhase
+  mimeType  String
+  width     Int
+  height    Int
+  byteSize  Int
+  // Existing database-backed photos remain readable until explicitly migrated.
+  data                   Bytes?                   @db.ByteA
+  storageBucket          String?
+  storagePath            String?
+  storageGeneration      String?
+  storageDeletePendingAt DateTime?
+  bodyPart               String?
+  note                   String?
+  capturedAt             DateTime?
+  createdAt DateTime                 @default(now())
+  chart     TreatmentChart           @relation(fields: [tenantId, salonId, chartId], references: [tenantId, salonId, id], onDelete: Restrict)
+  revisionLinks TreatmentChartRevisionPhoto[]
+
+  @@unique([tenantId, salonId, chartId, id])
+  @@index([tenantId, salonId, chartId])
+  @@index([storageDeletePendingAt])
+}
+
+model TreatmentChartRevisionPhoto {
+  tenantId   String
+  salonId    String
+  chartId    String
+  revisionId String
+  photoId    String
+  revision   TreatmentChartRevision @relation(fields: [tenantId, salonId, chartId, revisionId], references: [tenantId, salonId, chartId, id], onDelete: Restrict)
+  photo      TreatmentChartPhoto    @relation(fields: [tenantId, salonId, chartId, photoId], references: [tenantId, salonId, chartId, id], onDelete: Restrict)
+
+  @@id([tenantId, salonId, chartId, revisionId, photoId])
+  @@index([tenantId, salonId, chartId, photoId])
 }

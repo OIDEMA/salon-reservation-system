@@ -12,7 +12,9 @@
     "build": "npm run build -w @reservation-system/api && npm run build -w @reservation-system/web",
     "typecheck": "npm run typecheck -w @reservation-system/api && npm run typecheck -w @reservation-system/web",
     "db:generate": "npm run prisma:generate -w @reservation-system/api",
-    "db:push": "npm run prisma:push -w @reservation-system/api"
+    "db:push": "npm run prisma:push -w @reservation-system/api",
+    "test:operations": "npm run test:operations -w @reservation-system/api && npm run test:operations -w @reservation-system/web",
+    "test:operations:db": "npm run test:operations:db -w @reservation-system/api"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

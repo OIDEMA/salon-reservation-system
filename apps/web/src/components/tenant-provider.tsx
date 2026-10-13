@@ -3,11 +3,13 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 
 export type TenantMembership = {
+  role?: "OWNER" | "ADMIN" | "MANAGER" | "STAFF" | "VIEWER";
+  permissions?: string[];
   tenant: {
     id: string;
     slug: string;
     name: string;
-    salons: Array<{ id: string; name: string }>;
+    salons: Array<{ id: string; name: string; timezone?: string }>;
   };
 };
 
@@ -16,6 +18,9 @@ type TenantContextValue = {
   memberships: TenantMembership[];
   activeSalonId?: string;
   updateSalonName: (salonId: string, name: string) => void;
+  role?: TenantMembership["role"];
+  permissions: string[];
+  can: (permission: string) => boolean;
 };
 
 const TenantContext = createContext<TenantContextValue | null>(null);
@@ -27,9 +32,15 @@ export function TenantProvider({ tenantSlug, memberships, activeSalonId, childre
   children: ReactNode;
 }) {
   const [savedSalonNames, setSavedSalonNames] = useState<Record<string, string>>({});
+  const activeMembership = memberships.find((membership) => membership.tenant.slug === tenantSlug);
+  const permissions = activeMembership?.permissions ?? [];
+  const salonIds = activeMembership?.tenant.salons.map((salon) => salon.id) ?? [];
   const value: TenantContextValue = {
     tenantSlug,
-    activeSalonId,
+    activeSalonId: activeSalonId && salonIds.includes(activeSalonId) ? activeSalonId : salonIds[0],
+    role: activeMembership?.role,
+    permissions,
+    can: (permission) => activeMembership?.role === "OWNER" || permissions.includes(permission),
     memberships: memberships.map((membership) => ({
       ...membership,
       tenant: {
@@ -53,4 +64,9 @@ export function useTenant() {
 
 export function useTenantSlug() {
   return useTenant().tenantSlug;
+}
+
+export function usePermissions() {
+  const { can, role, permissions } = useTenant();
+  return { can, role, permissions };
 }

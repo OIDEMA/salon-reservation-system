@@ -9,12 +9,19 @@ import {
   StaffRole,
   type TenantRole
 } from "@prisma/client";
-import Fastify from "fastify";
+import Fastify, { type FastifyRequest } from "fastify";
+import { requirePermission, effectivePermissions, hasPermission } from "./permissions.js";
+import { runSerializable, lockOperation, operationAudit, operationError } from "./operations-support.js";
+import { legacyPermission } from "./legacy-permissions.js";
+import { registerCashRoutes } from "./cash-routes.js";
+import { registerChartRoutes } from "./chart-routes.js";
+import { registerAccessRoutes } from "./access-routes.js";
 import { z } from "zod";
 import { prisma } from "./database.js";
+import { customerAccountingTotals } from "./accounting-stats.js";
 import { requestedSalonId, requireAuthenticatedUser, requireTenantContext, type TenantContext } from "./tenant-context.js";
 
-const server = Fastify({
+export const server = Fastify({
   logger: {
     transport:
       process.env.NODE_ENV === "production"
@@ -96,7 +103,7 @@ const settingsInputSchema = z.object({
   storeId: z.string().trim().min(1).max(80).optional(),
   openTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
   closeTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
-  closedDays: z.array(z.string().max(4)).max(8).optional(),
+  closedDays: z.array(z.string().max(4)).max(9).optional(),
   maxConcurrentReservations: z.number().int().min(1).max(100).optional(),
   bookingWindowValue: z.string().max(40).optional(),
   reservationCutoffDays: z.number().int().min(0).max(365).optional(),
@@ -388,7 +395,8 @@ async function writeAuditLog(request: Parameters<typeof requestedSalonId>[0], co
       resource,
       resourceId,
       ipAddress: request.ip,
-      userAgent: request.headers["user-agent"]
+      userAgent: request.headers["user-agent"],
+      metadata: { salonId: requestedSalonId(request) ?? null }
     }
   });
 }
@@ -488,18 +496,17 @@ async function ensureReservationSlot(
 }
 
 async function recalculateCustomerStats(tenantId: string, salonId: string, customerId: string) {
-  const completed = await prisma.reservation.findMany({
-    where: { tenantId, salonId, customerId, status: "COMPLETED" },
-    select: { startsAt: true, service: { select: { price: true } } },
-    orderBy: { startsAt: "desc" }
-  });
-  await prisma.customer.updateMany({
-    where: { id: customerId, tenantId, salonId },
-    data: {
-      visitCount: completed.length,
-      totalSpent: completed.reduce((sum, reservation) => sum + reservation.service.price, 0),
+  await runSerializable(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Salon" WHERE id=${salonId} AND "tenantId"=${tenantId} FOR UPDATE`;
+    const completed = await tx.reservation.findMany({
+      where: { tenantId, salonId, customerId, status: "COMPLETED" },
+      select: { startsAt: true }, orderBy: { startsAt: "desc" }
+    });
+    const totals = await customerAccountingTotals(tx, tenantId, salonId, [customerId]);
+    await tx.customer.updateMany({ where: { id: customerId, tenantId, salonId }, data: {
+      visitCount: completed.length, totalSpent: totals.get(customerId) ?? 0,
       lastVisitAt: completed[0]?.startsAt ?? null
-    }
+    } });
   });
 }
 
@@ -532,7 +539,7 @@ function reservationResponse(reservation: {
     paymentStatus: reservation.paymentStatus,
     lineMessageStatus: reservation.lineMessageStatus,
     updatedAt: reservation.updatedAt.toISOString(),
-    customer: reservation.customer,
+    customer: { id: reservation.customer.id, name: reservation.customer.name, kana: reservation.customer.kana, phone: reservation.customer.phone, visitCount: reservation.customer.visitCount, tags: reservation.customer.tags },
     service: reservation.service,
     staff: reservation.staff
   };
@@ -548,6 +555,28 @@ await server.register(cors, {
   credentials: true
 });
 
+const legacyAccess = new WeakMap<FastifyRequest, TenantContext>();
+server.addHook("preHandler", async (request, reply) => {
+  const route = request.routeOptions.url ?? "";
+  const permission = legacyPermission(request.method, route);
+  if (!permission) return;
+  const context = await requirePermission(request, reply, permission);
+  if (!context) return;
+  legacyAccess.set(request, context);
+  if (route.startsWith("/api/admin/customers") && request.body && typeof request.body === "object" && "memo" in request.body && !hasPermission(context, "chart.write")) {
+    return reply.code(403).send({ message: "顧客メモを変更するにはカルテの編集権限が必要です。" });
+  }
+});
+server.addHook("preSerialization", async (request, _reply, payload) => {
+  const context = legacyAccess.get(request);
+  if (!context || !(request.routeOptions.url ?? "").startsWith("/api/admin/customers") || !payload || typeof payload !== "object") return payload;
+  const sanitize = (customer: Record<string, unknown>) => ({ ...customer,
+    ...(!hasPermission(context, "chart.read") ? { memo: null } : {}),
+    ...(!hasPermission(context, "checkout.read") ? { totalSpent: null } : {})
+  });
+  return Array.isArray(payload) ? payload.map(sanitize) : sanitize(payload as Record<string, unknown>);
+});
+
 server.setErrorHandler((error, request, reply) => {
   if (error instanceof z.ZodError) {
     return reply.code(400).send({
@@ -556,7 +585,7 @@ server.setErrorHandler((error, request, reply) => {
       issues: error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }))
     });
   }
-  request.log.error({ error }, "request failed");
+  request.log.error({ errorName: error instanceof Error ? error.name : "UnknownError", code: typeof error === "object" && error !== null && "code" in error ? String(error.code) : undefined }, "request failed");
   const statusCode = typeof error === "object" && error !== null && "statusCode" in error ? Number(error.statusCode) : 500;
   const safeStatusCode = Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500 ? statusCode : 500;
   return reply.code(safeStatusCode).send({
@@ -585,24 +614,23 @@ server.get("/api/me/tenants", async (request, reply) => {
   const user = await requireAuthenticatedUser(request, reply);
   if (!user) return;
 
-  return prisma.tenantMembership.findMany({
+  const memberships = await prisma.tenantMembership.findMany({
     where: { userId: user.id, status: "ACTIVE", tenant: { status: "ACTIVE" } },
     select: {
-      role: true,
-      tenant: {
-        select: {
-          id: true,
-          slug: true,
-          name: true,
-          salons: {
-            select: { id: true, name: true, timezone: true },
-            orderBy: { createdAt: "asc" }
-          }
-        }
-      }
+      role: true, useCustomPermissions: true, permissions: true, salonIds: true,
+      tenant: { select: { id: true, slug: true, name: true,
+        salons: { select: { id: true, name: true, timezone: true }, orderBy: { createdAt: "asc" } }
+      } }
     },
     orderBy: { createdAt: "asc" }
   });
+  return memberships.map((membership) => ({
+    role: membership.role,
+    permissions: effectivePermissions(membership),
+    tenant: { ...membership.tenant,
+      salons: membership.tenant.salons.filter((salon) => membership.role === "OWNER" || !membership.salonIds.length || membership.salonIds.includes(salon.id))
+    }
+  }));
 });
 
 server.get("/api/dashboard", async (request, reply) => {
@@ -686,7 +714,7 @@ server.get("/api/admin/equipment", async (request, reply) => {
 });
 
 server.patch("/api/admin/settings", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -723,7 +751,7 @@ server.patch("/api/admin/settings", async (request, reply) => {
 });
 
 server.post("/api/admin/staff", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -734,7 +762,7 @@ server.post("/api/admin/staff", async (request, reply) => {
 });
 
 server.patch("/api/admin/staff/:id", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -747,7 +775,7 @@ server.patch("/api/admin/staff/:id", async (request, reply) => {
 });
 
 server.delete("/api/admin/staff/:id", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -770,7 +798,7 @@ server.delete("/api/admin/staff/:id", async (request, reply) => {
 });
 
 server.post("/api/admin/menus", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -781,7 +809,7 @@ server.post("/api/admin/menus", async (request, reply) => {
 });
 
 server.patch("/api/admin/menus/:id", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -794,7 +822,7 @@ server.patch("/api/admin/menus/:id", async (request, reply) => {
 });
 
 server.delete("/api/admin/menus/:id", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -813,7 +841,7 @@ server.delete("/api/admin/menus/:id", async (request, reply) => {
 });
 
 server.post("/api/admin/categories", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -824,7 +852,7 @@ server.post("/api/admin/categories", async (request, reply) => {
 });
 
 server.patch("/api/admin/categories/:id", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -837,7 +865,7 @@ server.patch("/api/admin/categories/:id", async (request, reply) => {
 });
 
 server.delete("/api/admin/categories/:id", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -849,7 +877,7 @@ server.delete("/api/admin/categories/:id", async (request, reply) => {
 });
 
 server.post("/api/admin/equipment", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -860,7 +888,7 @@ server.post("/api/admin/equipment", async (request, reply) => {
 });
 
 server.patch("/api/admin/equipment/:id", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -873,7 +901,7 @@ server.patch("/api/admin/equipment/:id", async (request, reply) => {
 });
 
 server.delete("/api/admin/equipment/:id", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -890,7 +918,7 @@ server.get("/api/admin/customers", async (request, reply) => {
   const salon = await findScopedSalon(context, request);
   if (!salon) return [];
   const query = customerSearchSchema.parse(request.query);
-  return prisma.customer.findMany({
+  const customers = await prisma.customer.findMany({
     where: {
       tenantId: context.tenant.id,
       salonId: salon.id,
@@ -902,7 +930,7 @@ server.get("/api/admin/customers", async (request, reply) => {
               { kana: { contains: query.q, mode: "insensitive" } },
               { phone: { contains: query.q, mode: "insensitive" } },
               { lineDisplayName: { contains: query.q, mode: "insensitive" } },
-              { memo: { contains: query.q, mode: "insensitive" } },
+              ...(hasPermission(context, "chart.read") ? [{ memo: { contains: query.q, mode: "insensitive" as const } }] : []),
               { tags: { has: query.q } }
             ]
           }
@@ -912,6 +940,8 @@ server.get("/api/admin/customers", async (request, reply) => {
     orderBy: [{ lastVisitAt: "desc" }, { kana: "asc" }],
     take: 500
   });
+  const totals = await customerAccountingTotals(prisma, context.tenant.id, salon.id, customers.map((customer) => customer.id));
+  return customers.map((customer) => ({ ...customer, totalSpent: totals.get(customer.id) ?? 0 }));
 });
 
 server.get("/api/admin/customers/:id", async (request, reply) => {
@@ -931,54 +961,58 @@ server.get("/api/admin/customers/:id", async (request, reply) => {
     }
   });
   if (!customer) return reply.code(404).send({ code: "CUSTOMER_NOT_FOUND", message: "顧客が見つかりません。" });
-  return customer;
+  const totals = await customerAccountingTotals(prisma, context.tenant.id, salon.id, [customer.id]);
+  return { ...customer, totalSpent: totals.get(customer.id) ?? 0 };
 });
 
 server.post("/api/admin/customers", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
   const input = customerInputSchema.parse(request.body);
-  const customer = await prisma.customer.create({
-    data: {
-      tenantId: context.tenant.id,
-      salonId: salon.id,
-      ...input,
-      kana: input.kana || input.name
-    }
+  const customer = await runSerializable(async (tx) => {
+    await lockOperation(tx, context, "customer.write", salon.id);
+    if (input.memo !== undefined && !hasPermission(context, "chart.write")) throw operationError(403, "顧客メモを変更する権限がありません。");
+    const created = await tx.customer.create({ data: { tenantId: context.tenant.id, salonId: salon.id, ...input, kana: input.kana || input.name } });
+    await operationAudit(tx, context, request, { action: "customer.create", resource: "customer", resourceId: created.id, metadata: { salonId: salon.id } });
+    return created;
   });
-  await writeAuditLog(request, context, "customer.create", "customer", customer.id);
   return reply.code(201).send(customer);
 });
 
 server.patch("/api/admin/customers/:id", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
   const { id } = idParamsSchema.parse(request.params);
   const input = customerInputSchema.partial().parse(request.body);
-  const updated = await prisma.customer.updateMany({ where: { id, tenantId: context.tenant.id, salonId: salon.id }, data: input });
-  if (!updated.count) return reply.code(404).send({ code: "CUSTOMER_NOT_FOUND", message: "顧客が見つかりません。" });
-  await writeAuditLog(request, context, "customer.update", "customer", id);
-  return prisma.customer.findFirst({ where: { id, tenantId: context.tenant.id, salonId: salon.id } });
+  return runSerializable(async (tx) => {
+    await lockOperation(tx, context, "customer.write", salon.id);
+    if (input.memo !== undefined && !hasPermission(context, "chart.write")) throw operationError(403, "顧客メモを変更する権限がありません。");
+    const updated = await tx.customer.updateMany({ where: { id, tenantId: context.tenant.id, salonId: salon.id }, data: input });
+    if (!updated.count) throw operationError(404, "顧客が見つかりません。");
+    await operationAudit(tx, context, request, { action: "customer.update", resource: "customer", resourceId: id, metadata: { salonId: salon.id } });
+    return tx.customer.findFirst({ where: { id, tenantId: context.tenant.id, salonId: salon.id } });
+  });
 });
 
 server.delete("/api/admin/customers/:id", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
   const { id } = idParamsSchema.parse(request.params);
-  const reservationCount = await prisma.reservation.count({ where: { tenantId: context.tenant.id, salonId: salon.id, customerId: id } });
-  if (reservationCount) {
-    return reply.code(409).send({ code: "CUSTOMER_HAS_HISTORY", message: "予約履歴がある顧客は削除できません。顧客情報を編集してください。" });
-  }
-  const deleted = await prisma.customer.deleteMany({ where: { id, tenantId: context.tenant.id, salonId: salon.id } });
-  if (!deleted.count) return reply.code(404).send({ code: "CUSTOMER_NOT_FOUND", message: "顧客が見つかりません。" });
-  await writeAuditLog(request, context, "customer.delete", "customer", id);
-  return { deleted: true };
+  return runSerializable(async (tx) => {
+    await lockOperation(tx, context, "customer.write", salon.id);
+    const reservationCount = await tx.reservation.count({ where: { tenantId: context.tenant.id, salonId: salon.id, customerId: id } });
+    if (reservationCount) throw operationError(409, "予約履歴がある顧客は削除できません。顧客情報を編集してください。");
+    const deleted = await tx.customer.deleteMany({ where: { id, tenantId: context.tenant.id, salonId: salon.id } });
+    if (!deleted.count) throw operationError(404, "顧客が見つかりません。");
+    await operationAudit(tx, context, request, { action: "customer.delete", resource: "customer", resourceId: id, metadata: { salonId: salon.id } });
+    return { deleted: true };
+  });
 });
 
 server.get("/api/admin/shifts", async (request, reply) => {
@@ -1000,7 +1034,7 @@ server.get("/api/admin/shifts", async (request, reply) => {
 });
 
 server.post("/api/admin/shifts", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -1015,7 +1049,7 @@ server.post("/api/admin/shifts", async (request, reply) => {
 });
 
 server.patch("/api/admin/shifts/:id", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -1033,7 +1067,7 @@ server.patch("/api/admin/shifts/:id", async (request, reply) => {
 });
 
 server.delete("/api/admin/shifts/:id", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -1095,9 +1129,10 @@ server.get("/api/reservations/:id", async (request, reply) => {
 });
 
 server.post("/api/reservations", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const input = createReservationSchema.parse(request.body);
+  if (input.paymentStatus !== "UNPAID") return reply.code(409).send({ code: "CHECKOUT_REQUIRED", message: "支払状況は会計画面から記録してください。" });
   const salon = await getTenantSalon(context.tenant.id, requestedSalonId(request));
   if (!salon) return reply.code(409).send({ message: "店舗情報を先に登録してください。" });
 
@@ -1107,49 +1142,33 @@ server.post("/api/reservations", async (request, reply) => {
     const slotAvailable = await ensureReservationSlot(reply, context.tenant.id, salon.id, startsAt, endsAt, input.staffId);
     if (!slotAvailable) return;
   }
-  const reservation = await prisma.$transaction(async (transaction) => {
-    const customer =
-      (input.customerId
-        ? await transaction.customer.findFirst({
-            where: { id: input.customerId, tenantId: context.tenant.id, salonId: salon.id }
-          })
-        : null) ??
-      (input.customerPhone
-        ? await transaction.customer.findFirst({
-            where: { tenantId: context.tenant.id, salonId: salon.id, phone: input.customerPhone }
-          })
-        : null) ??
-      (await transaction.customer.create({
-        data: {
-          tenantId: context.tenant.id,
-          salonId: salon.id,
-          name: input.customerName,
-          kana: input.customerKana || input.customerName,
-          phone: input.customerPhone,
-          tags: ["新規"],
-          memo: input.memo
-        }
-      }));
-    const service =
-      (input.serviceId
-        ? await transaction.service.findFirst({
-            where: { id: input.serviceId, tenantId: context.tenant.id, salonId: salon.id, active: true }
-          })
-        : null) ??
-      (await transaction.service.findFirst({
-        where: { tenantId: context.tenant.id, salonId: salon.id, name: input.serviceName }
-      })) ??
-      (await transaction.service.create({
-        data: {
-          tenantId: context.tenant.id,
-          salonId: salon.id,
-          name: input.serviceName,
-          category: "Custom",
-          durationMinutes: input.durationMinutes,
-          price: 0,
-          color: "#0891b2"
-        }
-      }));
+  const reservation = await runSerializable(async (transaction) => {
+    await lockOperation(transaction, context, "reservation.write", salon.id);
+    let customer = input.customerId
+      ? await transaction.customer.findFirst({ where: { id: input.customerId, tenantId: context.tenant.id, salonId: salon.id } })
+      : input.customerPhone
+        ? await transaction.customer.findFirst({ where: { tenantId: context.tenant.id, salonId: salon.id, phone: input.customerPhone } })
+        : null;
+    if (input.customerId && !customer) throw operationError(400, "顧客が見つかりません。");
+    if (!customer) {
+      if (!hasPermission(context, "customer.write")) throw operationError(403, "新規顧客の登録には顧客の編集権限が必要です。登録済みのお客様を選択してください。");
+      customer = await transaction.customer.create({ data: {
+        tenantId: context.tenant.id, salonId: salon.id, name: input.customerName,
+        kana: input.customerKana || input.customerName, phone: input.customerPhone, tags: ["新規"]
+      } });
+    }
+    let service = await transaction.service.findFirst({ where: {
+      tenantId: context.tenant.id, salonId: salon.id, active: true,
+      ...(input.serviceId ? { id: input.serviceId } : { name: input.serviceName })
+    } });
+    if (input.serviceId && !service) throw operationError(400, "メニューが見つかりません。");
+    if (!service) {
+      if (!hasPermission(context, "master.write")) throw operationError(403, "新規メニューの登録にはマスタの編集権限が必要です。登録済みのメニューを選択してください。");
+      service = await transaction.service.create({ data: {
+        tenantId: context.tenant.id, salonId: salon.id, name: input.serviceName,
+        category: "Custom", durationMinutes: input.durationMinutes, price: 0, color: "#0891b2"
+      } });
+    }
 
     const created = await transaction.reservation.create({
       data: {
@@ -1176,6 +1195,7 @@ server.post("/api/reservations", async (request, reply) => {
         action: "reservation.create",
         resource: "reservation",
         resourceId: created.id,
+        metadata: { salonId: salon.id },
         ipAddress: request.ip,
         userAgent: request.headers["user-agent"]
       }
@@ -1183,11 +1203,11 @@ server.post("/api/reservations", async (request, reply) => {
     return created;
   });
 
-  return reply.code(201).send(reservation);
+  return reply.code(201).send(reservationResponse(reservation));
 });
 
 server.patch("/api/reservations/:id", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -1220,8 +1240,25 @@ server.patch("/api/reservations/:id", async (request, reply) => {
     if (!slotAvailable) return;
   }
 
-  const updated = await prisma.reservation.update({
-    where: { id },
+  if (input.paymentStatus !== undefined && input.paymentStatus !== existing.paymentStatus) {
+    return reply.code(409).send({ code: "CHECKOUT_REQUIRED", message: "支払状況は会計画面から記録してください。" });
+  }
+  const updated = await runSerializable(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "Salon" WHERE "id" = ${salon.id} AND "tenantId" = ${context.tenant.id} FOR UPDATE`;
+    const current = await tx.reservation.findFirst({ where: { id, tenantId: context.tenant.id, salonId: salon.id } });
+    if (!current) throw operationError(404, "予約が見つかりません。");
+    if (current.updatedAt.getTime() !== existing.updatedAt.getTime()) throw operationError(409, "予約が更新されています。読み込み直して確認してください。");
+    const changesContext = startsAt.getTime() !== current.startsAt.getTime() || endsAt.getTime() !== current.endsAt.getTime() || staffId !== current.staffId ||
+      (input.customerId !== undefined && input.customerId !== current.customerId) || (input.serviceId !== undefined && input.serviceId !== current.serviceId);
+    if (changesContext) {
+      const [hasCheckout, hasChart] = await Promise.all([
+        tx.cashCheckout.count({ where: { tenantId: context.tenant.id, salonId: salon.id, reservationId: id, status: "FINALIZED" } }),
+        tx.treatmentChart.count({ where: { tenantId: context.tenant.id, salonId: salon.id, reservationId: id } })
+      ]);
+      if (hasCheckout || hasChart) throw operationError(409, "会計またはカルテが記録された予約の日時・顧客・メニュー・担当者は変更できません。会計の訂正・カルテの追記から対応してください。");
+    }
+    const result = await tx.reservation.update({
+      where: { tenantId_salonId_id: { tenantId: context.tenant.id, salonId: salon.id, id } },
     data: {
       startsAt,
       endsAt,
@@ -1230,22 +1267,21 @@ server.patch("/api/reservations/:id", async (request, reply) => {
       ...(input.staffId !== undefined ? { staffId: input.staffId } : {}),
       ...(input.status ? { status: input.status } : {}),
       ...(input.source ? { source: input.source } : {}),
-      ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
       ...(input.memo !== undefined ? { memo: input.memo } : {}),
       ...(input.isRequest !== undefined ? { isRequest: input.isRequest } : {})
     },
-    include: { customer: true, service: true, staff: true }
+      include: { customer: true, service: true, staff: true }
+    });
+    await operationAudit(tx, context, request, { action: "reservation.update", resource: "reservation", resourceId: id });
+    return result;
   });
-  await Promise.all([
-    recalculateCustomerStats(context.tenant.id, salon.id, existing.customerId),
-    ...(updated.customerId !== existing.customerId ? [recalculateCustomerStats(context.tenant.id, salon.id, updated.customerId)] : []),
-    writeAuditLog(request, context, "reservation.update", "reservation", id)
-  ]);
+  await recalculateCustomerStats(context.tenant.id, salon.id, existing.customerId);
+  if (updated.customerId !== existing.customerId) await recalculateCustomerStats(context.tenant.id, salon.id, updated.customerId);
   return reservationResponse(updated);
 });
 
 server.patch("/api/reservations/:id/status", async (request, reply) => {
-  const context = await requireTenantContext(request, reply, writeRoles);
+  const context = await requireTenantContext(request, reply);
   if (!context) return;
   const salon = await getTenantSalon(context.tenant.id, requestedSalonId(request));
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
@@ -1265,15 +1301,25 @@ server.patch("/api/reservations/:id/status", async (request, reply) => {
     );
     if (!slotAvailable) return;
   }
-  const result = await prisma.reservation.update({
-    where: { id: params.id },
-    data: { status: input.status },
-    include: { customer: true, service: true, staff: true }
+  const result = await runSerializable(async (tx) => {
+    await lockOperation(tx, context, "reservation.write", salon.id);
+    const current = await tx.reservation.findFirst({ where: { id: params.id, tenantId: context.tenant.id, salonId: salon.id } });
+    if (!current) throw operationError(404, "予約が見つかりません。");
+    if (current.updatedAt.getTime() !== existing.updatedAt.getTime()) throw operationError(409, "予約が更新されています。再読み込みしてから変更してください。");
+    const updated = await tx.reservation.update({
+      where: { tenantId_salonId_id: { tenantId: context.tenant.id, salonId: salon.id, id: params.id } },
+      data: { status: input.status }, include: { customer: true, service: true, staff: true }
+    });
+    await operationAudit(tx, context, request, { action: "reservation.status.update", resource: "reservation", resourceId: params.id });
+    return updated;
   });
   await recalculateCustomerStats(context.tenant.id, salon.id, existing.customerId);
-  await writeAuditLog(request, context, "reservation.status.update", "reservation", params.id);
   return reservationResponse(result);
 });
+
+await registerCashRoutes(server);
+await registerChartRoutes(server);
+await registerAccessRoutes(server);
 
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4001);
 const host = process.env.API_HOST ?? "0.0.0.0";
@@ -1288,9 +1334,11 @@ async function shutdown(signal: string) {
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
 
-try {
-  await server.listen({ port, host });
-} catch (error) {
-  server.log.error(error);
-  process.exit(1);
+if (process.env.API_DISABLE_LISTEN !== "1") {
+  try {
+    await server.listen({ port, host });
+  } catch (error) {
+    server.log.error(error);
+    process.exit(1);
+  }
 }

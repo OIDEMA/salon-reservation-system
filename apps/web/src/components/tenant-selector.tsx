@@ -56,7 +56,7 @@ export function TenantSelector() {
                 <button key={`${membership.tenant.id}-${salon.id}`} type="button" onClick={() => select(membership.tenant.id, salon.id)}>
                   <strong>{membership.tenant.name}</strong>
                   <span>{salon.name}</span>
-                  <small>{membership.role} / {salon.timezone}</small>
+                  <small>{membership.role}</small>
                 </button>
               ))
             )}

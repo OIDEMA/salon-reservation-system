@@ -1,0 +1,117 @@
+import { createHash } from "node:crypto";
+import { z } from "zod";
+
+export const CASH_MAX_YEN = 100_000_000;
+const yen = z.number().int().min(0).max(CASH_MAX_YEN);
+export const cashPaymentMethods = ["CASH", "CARD", "BANK", "EXTERNAL_PREPAYMENT", "OTHER"] as const;
+export const cashDraftSchema = z.object({
+  version: z.number().int().positive(),
+  items: z.array(z.object({
+    label: z.string().trim().min(1).max(160),
+    quantity: z.number().int().min(1).max(999),
+    unitPriceYen: yen,
+    discountYen: yen,
+    taxRate: z.union([z.literal(0), z.literal(8), z.literal(10)])
+  }).strict()).min(1).max(100),
+  payments: z.array(z.object({
+    method: z.enum(cashPaymentMethods), amountYen: yen.refine((amount) => amount > 0),
+    reference: z.string().trim().max(160).default("")
+  }).strict()).max(20),
+  legacyPaidAcknowledged: z.boolean(),
+  notes: z.string().trim().max(2000).default("")
+}).strict();
+
+export type CashDraft = z.infer<typeof cashDraftSchema>;
+export type CashItem = CashDraft["items"][number] & { lineNumber: number; taxYen: number; totalYen: number };
+export type CashTotals = {
+  items: CashItem[];
+  subtotalYen: number;
+  discountYen: number;
+  taxYen: number;
+  totalYen: number;
+  cashYen: number;
+  allocatedYen: number;
+  taxBreakdown: { taxRate: number; taxableTotalYen: number; taxYen: number }[];
+};
+
+export class CashError extends Error {
+  constructor(public code: string, message: string, public statusCode = 400) { super(message); }
+}
+
+export function cashAssert(condition: unknown, code: string, message: string, statusCode = 400): asserts condition {
+  if (!condition) throw new CashError(code, message, statusCode);
+}
+
+function sumBounded(values: number[]) {
+  const result = values.reduce((sum, value) => sum + value, 0);
+  cashAssert(Number.isSafeInteger(result) && result >= 0 && result <= CASH_MAX_YEN,
+    "CASH_AMOUNT_LIMIT", "金額が取扱上限を超えています。");
+  return result;
+}
+
+/** All entered prices are tax-inclusive. Round once per tax rate per receipt. */
+export function calculateCashDraft(input: Pick<CashDraft, "items" | "payments">): CashTotals {
+  const items: CashItem[] = input.items.map((item, lineNumber) => {
+    const gross = item.quantity * item.unitPriceYen;
+    cashAssert(Number.isSafeInteger(gross) && gross <= CASH_MAX_YEN,
+      "CASH_AMOUNT_LIMIT", "明細金額が取扱上限を超えています。");
+    cashAssert(item.discountYen <= gross, "CASH_DISCOUNT_LIMIT", "値引き額が明細金額を超えています。");
+    const totalYen = gross - item.discountYen;
+    return { ...item, lineNumber, totalYen, taxYen: Math.floor(totalYen * item.taxRate / (100 + item.taxRate)) };
+  });
+  const subtotalYen = sumBounded(items.map((item) => item.quantity * item.unitPriceYen));
+  const discountYen = sumBounded(items.map((item) => item.discountYen));
+  const totalYen = subtotalYen - discountYen;
+  const taxBreakdown = [0, 8, 10].filter((rate) => items.some((item) => item.taxRate === rate)).map((taxRate) => {
+    const rows = items.filter((item) => item.taxRate === taxRate);
+    const taxableTotalYen = sumBounded(rows.map((item) => item.totalYen));
+    const taxYen = Math.floor(taxableTotalYen * taxRate / (100 + taxRate));
+    // Allocate the group-rounding remainder deterministically to line snapshots.
+    let remainder = taxYen - rows.reduce((sum, item) => sum + item.taxYen, 0);
+    for (const item of rows) if (remainder > 0) { item.taxYen++; remainder--; }
+    return { taxRate, taxableTotalYen, taxYen };
+  });
+  return { items, subtotalYen, discountYen, totalYen, taxBreakdown,
+    taxYen: taxBreakdown.reduce((sum, group) => sum + group.taxYen, 0),
+    allocatedYen: sumBounded(input.payments.map((payment) => payment.amountYen)),
+    cashYen: sumBounded(input.payments.filter((payment) => payment.method === "CASH").map((payment) => payment.amountYen)) };
+}
+
+export function assertCashSettlement(draft: Pick<CashDraft, "payments" | "legacyPaidAcknowledged">, totals: CashTotals, reservationPaymentStatus: string, allowRecheckout = false) {
+  cashAssert(totals.allocatedYen === totals.totalYen, "CASH_PAYMENT_MISMATCH", "支払内訳の合計を会計金額と一致させてください。");
+  const external = draft.payments.filter((payment) => payment.method === "EXTERNAL_PREPAYMENT");
+  if (external.length || reservationPaymentStatus === "PAID") {
+    cashAssert(draft.legacyPaidAcknowledged, "CASH_PREPAYMENT_ACK_REQUIRED", "既存の入金を確認したうえで、事前入金の記録として登録してください。");
+    cashAssert(external.every((payment) => payment.reference.length > 0), "CASH_PREPAYMENT_REFERENCE_REQUIRED", "事前入金の確認番号または確認内容を入力してください。");
+  }
+  if (reservationPaymentStatus === "PAID") {
+    cashAssert(draft.payments.every((payment) => payment.method === "EXTERNAL_PREPAYMENT"),
+      "CASH_ALREADY_PAID", "入金済み予約は事前入金の記録のみ登録できます。追加の回収は行えません。", 409);
+  }
+  cashAssert(reservationPaymentStatus !== "REFUNDED" || allowRecheckout, "CASH_RESERVATION_REFUNDED", "返金済み予約には訂正元の会計記録が必要です。", 409);
+}
+
+export function expectedCash(openingCashYen: number, movements: { kind: string; amountYen: number }[]) {
+  const result = movements.reduce((sum, movement) => sum + (["IN", "SALE"].includes(movement.kind) ? movement.amountYen : -movement.amountYen), openingCashYen);
+  cashAssert(Number.isSafeInteger(result) && Math.abs(result) <= CASH_MAX_YEN,
+    "REGISTER_AMOUNT_LIMIT", "レジの金額が取扱上限を超えています。");
+  return result;
+}
+
+export function businessDateAt(date: Date, timezone: string) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}
+
+export function cashRequestHash(value: unknown) {
+  function canonical(input: unknown): unknown {
+    if (Array.isArray(input)) return input.map(canonical);
+    if (input && typeof input === "object") return Object.fromEntries(Object.entries(input).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => [key, canonical(child)]));
+    return input;
+  }
+  return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
+}
+
+export function assertCashVersion(current: { status: string; version: number }, version: number, allowedStatus: string) {
+  cashAssert(current.status === allowedStatus, "CASH_RECORD_SETTLED", "確定・締め済みの記録は変更できません。", 409);
+  cashAssert(current.version === version, "CASH_VERSION_CONFLICT", "別の操作で更新されました。最新の画面を開き直してください。", 409);
+}

@@ -7,7 +7,7 @@ import { useTenant } from "@/components/tenant-provider";
 import type { AdminSettingsPayload } from "@/lib/admin-types";
 import { tenantApiPath } from "@/lib/tenant-routing";
 
-const days = ["月", "火", "水", "木", "金", "土", "日", "祝"];
+const days = ["月", "火", "水", "木", "金", "土", "日", "祝", "不定休"];
 const settingsTabs = [
   { id: "store", label: "店舗情報", icon: Store },
   { id: "reservations", label: "予約受付", icon: Clock3 },
@@ -17,7 +17,8 @@ const settingsTabs = [
 type SettingsTabId = (typeof settingsTabs)[number]["id"];
 
 export function SettingsManagement({ initialData }: { initialData: AdminSettingsPayload }) {
-  const { tenantSlug, updateSalonName } = useTenant();
+  const { tenantSlug, updateSalonName, can } = useTenant();
+  const canWrite = can("settings.write");
   const [data, setData] = useState(initialData);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -26,6 +27,7 @@ export function SettingsManagement({ initialData }: { initialData: AdminSettings
   const { salon, settings } = data;
 
   function setSetting<K extends keyof typeof settings>(key: K, value: (typeof settings)[K]) {
+    if (!canWrite || busy) return;
     setData({ ...data, settings: { ...settings, [key]: value } });
   }
 
@@ -45,6 +47,7 @@ export function SettingsManagement({ initialData }: { initialData: AdminSettings
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canWrite || busy) return;
     setBusy(true);
     setMessage("");
     try {
@@ -103,12 +106,12 @@ export function SettingsManagement({ initialData }: { initialData: AdminSettings
       >
         <div className="adminPanelTitle"><Store size={19} /><h2>店舗情報</h2></div>
         <div className="settingsGrid">
-          <label className="settingField"><span>店舗ID</span><input value={settings.storeId} disabled title="店舗IDは作成後に変更できません" /></label>
-          <label className="settingField"><span>店舗名</span><input value={salon.name} onChange={(event) => setData({ ...data, salon: { ...salon, name: event.target.value } })} /></label>
-          <label className="settingField"><span>営業時間 開始</span><input type="time" value={settings.openTime} onChange={(event) => setSetting("openTime", event.target.value)} /></label>
-          <label className="settingField"><span>営業時間 終了</span><input type="time" value={settings.closeTime} onChange={(event) => setSetting("closeTime", event.target.value)} /></label>
+          <label className="settingField"><span>店舗ID</span><input readOnly={!canWrite} value={settings.storeId} disabled title="店舗IDは作成後に変更できません" /></label>
+          <label className="settingField"><span>店舗名</span><input readOnly={!canWrite} value={salon.name} onChange={(event) => setData({ ...data, salon: { ...salon, name: event.target.value } })} /></label>
+          <label className="settingField"><span>営業時間 開始</span><input readOnly={!canWrite} type="time" value={settings.openTime} onChange={(event) => setSetting("openTime", event.target.value)} /></label>
+          <label className="settingField"><span>営業時間 終了</span><input readOnly={!canWrite} type="time" value={settings.closeTime} onChange={(event) => setSetting("closeTime", event.target.value)} /></label>
         </div>
-        <div className="settingsLine"><span className="settingsLabel">定休日</span><div className="daySelector">{days.map((day) => <button className={settings.closedDays.includes(day) ? "dayButton isSelected" : "dayButton"} key={day} type="button" onClick={() => setSetting("closedDays", settings.closedDays.includes(day) ? settings.closedDays.filter((item) => item !== day) : [...settings.closedDays, day])}>{day}</button>)}</div></div>
+        <div className="settingsLine"><span className="settingsLabel">定休日</span><div className="daySelector">{days.map((day) => <button disabled={!canWrite || busy} aria-pressed={settings.closedDays.includes(day)} className={settings.closedDays.includes(day) ? "dayButton isSelected" : "dayButton"} key={day} type="button" onClick={() => setSetting("closedDays", settings.closedDays.includes(day) ? settings.closedDays.filter((item) => item !== day) : [...settings.closedDays, day])}>{day}</button>)}</div></div>
       </section>
 
       <section
@@ -121,18 +124,18 @@ export function SettingsManagement({ initialData }: { initialData: AdminSettings
       >
         <div className="adminPanelTitle"><Clock3 size={19} /><h2>予約受付</h2></div>
         <div className="settingsGrid three">
-          <label className="settingField"><span>最大同時受付数</span><input type="number" min="1" value={settings.maxConcurrentReservations} onChange={(event) => setSetting("maxConcurrentReservations", Number(event.target.value))} /></label>
-          <label className="settingField"><span>受付可能期間</span><input value={settings.bookingWindowValue} onChange={(event) => setSetting("bookingWindowValue", event.target.value)} /></label>
-          <label className="settingField"><span>予約締切（日数）</span><input type="number" min="0" value={settings.reservationCutoffDays} onChange={(event) => setSetting("reservationCutoffDays", Number(event.target.value))} /></label>
-          <label className="settingField"><span>予約締切（時刻）</span><input type="time" value={settings.reservationCutoffTime} onChange={(event) => setSetting("reservationCutoffTime", event.target.value)} /></label>
-          <label className="settingField"><span>キャンセル締切（日数）</span><input type="number" min="0" value={settings.cancellationCutoffDays} onChange={(event) => setSetting("cancellationCutoffDays", Number(event.target.value))} /></label>
-          <label className="settingField"><span>キャンセル締切（時刻）</span><input type="time" value={settings.cancellationCutoffTime} onChange={(event) => setSetting("cancellationCutoffTime", event.target.value)} /></label>
+          <label className="settingField"><span>最大同時受付数</span><input readOnly={!canWrite} type="number" min="1" value={settings.maxConcurrentReservations} onChange={(event) => setSetting("maxConcurrentReservations", Number(event.target.value))} /></label>
+          <label className="settingField"><span>受付可能期間</span><input readOnly={!canWrite} value={settings.bookingWindowValue} onChange={(event) => setSetting("bookingWindowValue", event.target.value)} /></label>
+          <label className="settingField"><span>予約締切（日数）</span><input readOnly={!canWrite} type="number" min="0" value={settings.reservationCutoffDays} onChange={(event) => setSetting("reservationCutoffDays", Number(event.target.value))} /></label>
+          <label className="settingField"><span>予約締切（時刻）</span><input readOnly={!canWrite} type="time" value={settings.reservationCutoffTime} onChange={(event) => setSetting("reservationCutoffTime", event.target.value)} /></label>
+          <label className="settingField"><span>キャンセル締切（日数）</span><input readOnly={!canWrite} type="number" min="0" value={settings.cancellationCutoffDays} onChange={(event) => setSetting("cancellationCutoffDays", Number(event.target.value))} /></label>
+          <label className="settingField"><span>キャンセル締切（時刻）</span><input readOnly={!canWrite} type="time" value={settings.cancellationCutoffTime} onChange={(event) => setSetting("cancellationCutoffTime", event.target.value)} /></label>
         </div>
         <div className="toggleGrid">
-          <ToggleButton label="予約受付" enabled={settings.acceptingReservations} onClick={() => setSetting("acceptingReservations", !settings.acceptingReservations)} />
-          <ToggleButton label="複数メニュー予約" enabled={settings.multiMenuBooking} onClick={() => setSetting("multiMenuBooking", !settings.multiMenuBooking)} />
-          <ToggleButton label="指名なし自動割当" enabled={settings.autoAssignUnspecified} onClick={() => setSetting("autoAssignUnspecified", !settings.autoAssignUnspecified)} />
-          <ToggleButton label="事前質問" enabled={settings.questionsEnabled} onClick={() => setSetting("questionsEnabled", !settings.questionsEnabled)} />
+          <ToggleButton disabled={!canWrite || busy} label="予約受付" enabled={settings.acceptingReservations} onClick={() => setSetting("acceptingReservations", !settings.acceptingReservations)} />
+          <ToggleButton disabled={!canWrite || busy} label="複数メニュー予約" enabled={settings.multiMenuBooking} onClick={() => setSetting("multiMenuBooking", !settings.multiMenuBooking)} />
+          <ToggleButton disabled={!canWrite || busy} label="指名なし自動割当" enabled={settings.autoAssignUnspecified} onClick={() => setSetting("autoAssignUnspecified", !settings.autoAssignUnspecified)} />
+          <ToggleButton disabled={!canWrite || busy} label="事前質問" enabled={settings.questionsEnabled} onClick={() => setSetting("questionsEnabled", !settings.questionsEnabled)} />
         </div>
       </section>
 
@@ -146,16 +149,16 @@ export function SettingsManagement({ initialData }: { initialData: AdminSettings
       >
         <div className="adminPanelTitle"><CheckCircle2 size={19} /><h2>運用メッセージ</h2></div>
         <div className="messageGrid">
-          <label className="messageField"><span>キャンセル受付時の案内</span><textarea rows={6} value={settings.cancellationMessage} onChange={(event) => setSetting("cancellationMessage", event.target.value)} /></label>
-          <label className="messageField"><span>予約前の案内</span><textarea rows={6} value={settings.preReservationMessage} onChange={(event) => setSetting("preReservationMessage", event.target.value)} /></label>
+          <label className="messageField"><span>キャンセル受付時の案内</span><textarea readOnly={!canWrite} rows={6} value={settings.cancellationMessage} onChange={(event) => setSetting("cancellationMessage", event.target.value)} /></label>
+          <label className="messageField"><span>予約前の案内</span><textarea readOnly={!canWrite} rows={6} value={settings.preReservationMessage} onChange={(event) => setSetting("preReservationMessage", event.target.value)} /></label>
         </div>
       </section>
 
-      <div className="stickySaveBar"><button className="primaryButton" disabled={busy} type="submit"><Save size={17} />{busy ? "保存中..." : "設定を保存"}</button></div>
+      {canWrite ? <div className="stickySaveBar"><button className="primaryButton" disabled={busy} type="submit"><Save size={17} />{busy ? "保存中..." : "設定を保存"}</button></div> : null}
     </form>
   );
 }
 
-function ToggleButton({ label, enabled, onClick }: { label: string; enabled: boolean; onClick: () => void }) {
-  return <button className="toggleButton" type="button" onClick={onClick}><span>{label}</span><span className={enabled ? "toggleState isOn" : "toggleState"}><i />{enabled ? "ON" : "OFF"}</span><ToggleLeft size={18} /></button>;
+function ToggleButton({ label, enabled, disabled, onClick }: { label: string; enabled: boolean; disabled?: boolean; onClick: () => void }) {
+  return <button className="toggleButton" type="button" disabled={disabled} onClick={onClick}><span>{label}</span><span className={enabled ? "toggleState isOn" : "toggleState"}><i />{enabled ? "ON" : "OFF"}</span><ToggleLeft size={18} /></button>;
 }

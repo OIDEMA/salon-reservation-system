@@ -3,7 +3,7 @@
 import { CalendarClock, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { DismissibleMessage } from "@/components/dismissible-message";
-import { useTenantSlug } from "@/components/tenant-provider";
+import { useTenantSlug, usePermissions } from "@/components/tenant-provider";
 import type { AdminShift, AdminStaff } from "@/lib/admin-types";
 import { tenantApiPath } from "@/lib/tenant-routing";
 
@@ -14,12 +14,15 @@ const typeOptions = [
 
 export function ShiftManagement({ initialShifts, staff, defaultDate }: { initialShifts: AdminShift[]; staff: AdminStaff[]; defaultDate: string }) {
   const tenantSlug = useTenantSlug();
+  const { can } = usePermissions();
+  const canWrite = can("reservation.write");
   const [shifts, setShifts] = useState(initialShifts);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function createShift(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canWrite || busy) return;
     const form = new FormData(event.currentTarget);
     const date = String(form.get("date"));
     const startTime = String(form.get("startTime"));
@@ -51,6 +54,7 @@ export function ShiftManagement({ initialShifts, staff, defaultDate }: { initial
   }
 
   async function removeShift(shift: AdminShift) {
+    if (!canWrite || busy) return;
     if (!window.confirm("このシフトを削除しますか？")) return;
     setBusy(true);
     try {
@@ -68,7 +72,7 @@ export function ShiftManagement({ initialShifts, staff, defaultDate }: { initial
   return (
     <div className="shiftManager">
       {message ? <DismissibleMessage message={message} onDismiss={() => setMessage("")} /> : null}
-      <form className="adminPanel shiftCreateForm" onSubmit={createShift}>
+      {canWrite ? <form className="adminPanel shiftCreateForm" onSubmit={createShift}>
         <div className="adminPanelTitle"><CalendarClock size={19} /><h2>シフト・受付停止を登録</h2></div>
         <div className="createFieldGrid four">
           <label className="createField"><span>スタッフ</span><select name="staffId"><option value="">店舗全体</option>{staff.filter((member) => member.active).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
@@ -79,9 +83,9 @@ export function ShiftManagement({ initialShifts, staff, defaultDate }: { initial
           <label className="createField"><span>終了</span><input name="endTime" type="time" defaultValue="18:00" /></label>
         </div>
         <button className="primaryButton" disabled={busy} type="submit"><Plus size={17} />登録</button>
-      </form>
+      </form> : null}
       <section className="tablePanel">
-        <table className="adminTable"><thead><tr><th>日時</th><th>対象</th><th>種別</th><th>表示名</th><th>操作</th></tr></thead><tbody>{shifts.map((shift) => <tr key={shift.id}><td><strong>{new Date(shift.startsAt).toLocaleDateString("ja-JP")}</strong><small>{new Date(shift.startsAt).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}-{new Date(shift.endsAt).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}</small></td><td>{shift.staff?.name ?? "店舗全体"}</td><td>{typeOptions.find((option) => option.value === shift.type)?.label ?? shift.type}</td><td>{shift.label}</td><td><button className="dangerButton" disabled={busy} type="button" onClick={() => void removeShift(shift)}><Trash2 size={15} /></button></td></tr>)}</tbody></table>
+        <table className="adminTable"><thead><tr><th>日時</th><th>対象</th><th>種別</th><th>表示名</th>{canWrite ? <th>操作</th> : null}</tr></thead><tbody>{shifts.map((shift) => <tr key={shift.id}><td><strong>{new Date(shift.startsAt).toLocaleDateString("ja-JP")}</strong><small>{new Date(shift.startsAt).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}-{new Date(shift.endsAt).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}</small></td><td>{shift.staff?.name ?? "店舗全体"}</td><td>{typeOptions.find((option) => option.value === shift.type)?.label ?? shift.type}</td><td>{shift.label}</td>{canWrite ? <td><button className="dangerButton" disabled={busy} type="button" onClick={() => void removeShift(shift)}><Trash2 size={15} /></button></td> : null}</tr>)}</tbody></table>
       </section>
     </div>
   );

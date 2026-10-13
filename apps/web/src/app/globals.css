@@ -3064,3 +3064,5 @@ a {
     grid-template-columns: minmax(0, 1fr) 160px 160px auto;
   }
 }
+
+.operationRowActions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

@@ -3,39 +3,30 @@
 import {
   AlertCircle,
   Bell,
-  BookUser,
   Building2,
   CalendarDays,
   CalendarRange,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  CircleAlert,
   Clock3,
   Columns3,
   Filter,
-  LayoutDashboard,
   Plus,
   Printer,
   RefreshCw,
-  Scissors,
   Search,
-  Settings,
-  Tags,
   UserRound,
-  Users,
-  Wrench,
   XCircle
 } from "lucide-react";
 import { format, isValid, parseISO } from "date-fns";
 import { ja } from "date-fns/locale";
-import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DismissibleMessage } from "@/components/dismissible-message";
+import { AdminSidebar } from "@/components/admin-shell";
 import { fetchDashboard } from "@/lib/api";
-import { LogoutButton } from "@/components/logout-button";
-import { useTenantSlug } from "@/components/tenant-provider";
+import { useTenantSlug, usePermissions } from "@/components/tenant-provider";
 import { TenantSwitcher } from "@/components/tenant-switcher";
 import { TimelineReservationEditor, type TimelineEditorValue } from "@/components/timeline-reservation-editor";
 import type { AdminMenu } from "@/lib/admin-types";
@@ -88,19 +79,6 @@ const statusMeta: Record<ReservationStatus, { label: string; className: string; 
   WAITLIST: { label: "待ち", className: "statusWaitlist", icon: Clock3 }
 };
 
-const navItems = [
-  { href: "/", label: "予約表", icon: LayoutDashboard },
-  { href: "/confirmation", label: "予約確認", icon: CircleAlert },
-  { href: "/calendar", label: "店舗カレンダー", icon: CalendarDays },
-  { href: "/reservations", label: "予約者検索", icon: Search },
-  { href: "/settings", label: "基本設定", icon: Settings },
-  { href: "/staff", label: "スタッフ", icon: Users },
-  { href: "/menus", label: "メニュー", icon: Scissors },
-  { href: "/categories", label: "カテゴリー", icon: Tags },
-  { href: "/equipment", label: "設備", icon: Wrench },
-  { href: "/customers", label: "顧客", icon: BookUser }
-];
-
 function toMinutes(time: string) {
   const [hour, minute] = time.split(":").map(Number);
   return hour * 60 + minute;
@@ -146,6 +124,8 @@ function iconButtonLabel(label: string, icon: React.ReactNode) {
 
 export function ReservationDashboard() {
   const tenantSlug = useTenantSlug();
+  const { can } = usePermissions();
+  const canWrite = can("reservation.write");
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -202,6 +182,12 @@ export function ReservationDashboard() {
   }, [date, refreshKey, tenantSlug]);
 
   useEffect(() => {
+    if (!canWrite) {
+      setMenus([]);
+      setEditor(null);
+      setInteraction(null);
+      return;
+    }
     let ignore = false;
     fetch(tenantApiPath(tenantSlug, "/services"), { cache: "no-store" })
       .then(async (response) => {
@@ -211,7 +197,7 @@ export function ReservationDashboard() {
       .then((data) => { if (!ignore) setMenus(data); })
       .catch(() => { if (!ignore) setMenus([]); });
     return () => { ignore = true; };
-  }, [tenantSlug]);
+  }, [canWrite, tenantSlug]);
 
   const timeline = useMemo(() => {
     const start = toMinutes(dashboard.hours.start);
@@ -283,7 +269,7 @@ export function ReservationDashboard() {
   }
 
   function handleGridPointerDown(event: React.PointerEvent<HTMLDivElement>) {
-    if (event.button !== 0 || isSavingSchedule || (event.target as HTMLElement).closest("[data-reservation-card]")) return;
+    if (!canWrite || event.button !== 0 || isSavingSchedule || (event.target as HTMLElement).closest("[data-reservation-card]")) return;
     const slot = pointerSlot(event.clientX, event.clientY);
     if (!slot) return;
     event.preventDefault();
@@ -299,12 +285,12 @@ export function ReservationDashboard() {
   }
 
   function handleGridPointerMove(event: React.PointerEvent<HTMLDivElement>) {
-    if (!interaction || interaction.pointerId !== event.pointerId || interaction.mode !== "create") return;
+    if (!canWrite || !interaction || interaction.pointerId !== event.pointerId || interaction.mode !== "create") return;
     setInteraction(updateInteractionPosition(interaction, event.clientX, event.clientY));
   }
 
   function finishGridInteraction(event: React.PointerEvent<HTMLDivElement>) {
-    if (!interaction || interaction.pointerId !== event.pointerId || interaction.mode !== "create") return;
+    if (!canWrite || !interaction || interaction.pointerId !== event.pointerId || interaction.mode !== "create") return;
     const finalInteraction = updateInteractionPosition(interaction, event.clientX, event.clientY);
     if (finalInteraction.mode !== "create") return;
     const startMinutes = Math.min(finalInteraction.anchorMinutes, finalInteraction.currentMinutes);
@@ -323,12 +309,13 @@ export function ReservationDashboard() {
 
   function startReservationInteraction(event: React.PointerEvent<HTMLElement>, reservation: ScheduleReservation) {
     if (event.button !== 0 || isSavingSchedule) return;
+    setSelectedId(reservation.id);
+    if (!canWrite) return;
     const slot = pointerSlot(event.clientX, event.clientY);
     if (!slot) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    setSelectedId(reservation.id);
     setScheduleMessage(null);
     const startMinutes = toMinutes(reservation.startTime);
     const durationMinutes = toMinutes(reservation.endTime) - startMinutes;
@@ -362,12 +349,13 @@ export function ReservationDashboard() {
   }
 
   function moveReservationInteraction(event: React.PointerEvent<HTMLElement>) {
-    if (!interaction || interaction.pointerId !== event.pointerId || interaction.mode === "create") return;
+    if (!canWrite || !interaction || interaction.pointerId !== event.pointerId || interaction.mode === "create") return;
     event.preventDefault();
     setInteraction(updateInteractionPosition(interaction, event.clientX, event.clientY));
   }
 
   async function saveTimelineChange(current: Extract<TimelineInteraction, { mode: "move" | "resize" }>) {
+    if (!canWrite) return;
     const row = dashboard.rows[current.rowIndex];
     if (!row) return;
     const unchanged =
@@ -400,7 +388,7 @@ export function ReservationDashboard() {
   }
 
   function finishReservationInteraction(event: React.PointerEvent<HTMLElement>) {
-    if (!interaction || interaction.pointerId !== event.pointerId || interaction.mode === "create") return;
+    if (!canWrite || !interaction || interaction.pointerId !== event.pointerId || interaction.mode === "create") return;
     event.preventDefault();
     event.stopPropagation();
     const finalInteraction = updateInteractionPosition(interaction, event.clientX, event.clientY);
@@ -422,28 +410,7 @@ export function ReservationDashboard() {
 
   return (
     <main className="appShell">
-      <aside className="adminSidebar">
-        <a className="adminBrand" href={tenantPath(tenantSlug)} title="株式会社Beauty Gum">
-          <Image src="/brand/beauty-gum-logo.webp" alt="株式会社Beauty Gum" width={400} height={100} />
-        </a>
-        <nav className="adminNav" aria-label="admin navigation">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <a
-                className={item.href === "/" ? "adminNavItem isActive" : "adminNavItem"}
-                href={tenantPath(tenantSlug, item.href)}
-                key={item.href}
-                title={item.label}
-              >
-                <Icon size={21} />
-                <span>{item.label}</span>
-              </a>
-            );
-          })}
-        </nav>
-        <LogoutButton />
-      </aside>
+      <AdminSidebar active="/" />
 
       <section className="workspace">
         <header className="topbar">
@@ -522,14 +489,14 @@ export function ReservationDashboard() {
                   </button>
                 ))}
               </div>
-              <a className="createButton" href={tenantPath(tenantSlug, "/reservations/new")}>
+              {canWrite ? <a className="createButton" href={tenantPath(tenantSlug, "/reservations/new")}>
                 {iconButtonLabel("新規予約", <Plus size={18} />)}
-              </a>
+              </a> : null}
             </div>
 
             {loadError ? <div className="adminNotice">{loadError}</div> : null}
             {!loadError && !dashboard.salon ? <div className="adminNotice">店舗情報が未登録です。基本設定から店舗を登録してください。</div> : null}
-            {viewMode === "timeline" && dashboard.salon ? (
+            {canWrite && viewMode === "timeline" && dashboard.salon ? (
               <div className="timelineHelp">
                 <span>空き枠をクリック／ドラッグして予約登録</span>
                 <span>予約をドラッグして移動</span>
@@ -572,10 +539,10 @@ export function ReservationDashboard() {
                     <div
                       className="gridLayer"
                       ref={gridRef}
-                      style={{ top: HEADER_HEIGHT, height: boardHeight }}
-                      onPointerDown={handleGridPointerDown}
-                      onPointerMove={handleGridPointerMove}
-                      onPointerUp={finishGridInteraction}
+                      style={{ top: HEADER_HEIGHT, height: boardHeight, cursor: canWrite ? undefined : "default", touchAction: canWrite ? undefined : "auto" }}
+                      onPointerDown={canWrite ? handleGridPointerDown : undefined}
+                      onPointerMove={canWrite ? handleGridPointerMove : undefined}
+                      onPointerUp={canWrite ? finishGridInteraction : undefined}
                       onPointerCancel={() => setInteraction(null)}
                     >
                       {dashboard.rows.map((row, rowIndex) => (
@@ -634,6 +601,7 @@ export function ReservationDashboard() {
                           <ReservationCard
                             key={reservation.id}
                             reservation={reservation}
+                            editable={canWrite}
                             selected={reservation.id === selectedId}
                             dragging={Boolean(activeInteraction)}
                             style={{
@@ -650,6 +618,7 @@ export function ReservationDashboard() {
                             onPointerCancel={() => setInteraction(null)}
                             onKeyboardOpen={() => {
                               setSelectedId(reservation.id);
+                              if (!canWrite) return;
                               setEditor({
                                 kind: "edit",
                                 date,
@@ -677,7 +646,7 @@ export function ReservationDashboard() {
           </section>
         </div>
       </section>
-      {editor ? (
+      {canWrite && editor ? (
         <TimelineReservationEditor
           key={`${editor.kind}-${editor.reservation?.id ?? "new"}-${editor.startTime}-${editor.rowId}`}
           value={editor}
@@ -697,6 +666,7 @@ export function ReservationDashboard() {
 
 function ReservationCard({
   reservation,
+  editable,
   selected,
   dragging,
   style,
@@ -709,6 +679,7 @@ function ReservationCard({
   onKeyboardOpen
 }: {
   reservation: ScheduleReservation;
+  editable: boolean;
   selected: boolean;
   dragging: boolean;
   style: React.CSSProperties;
@@ -724,11 +695,11 @@ function ReservationCard({
   return (
     <div
       className={`reservationCard ${statusMeta[reservation.status].className} ${selected ? "isSelected" : ""} ${dragging ? "isDragging" : ""}`}
-      style={style}
+      style={{ ...style, cursor: editable ? undefined : "default", touchAction: editable ? undefined : "auto" }}
       role="button"
       tabIndex={0}
       data-reservation-card
-      aria-label={`${reservation.customerName} ${displayStartTime}から${displayEndTime}。クリックで編集、ドラッグで移動`}
+      aria-label={`${reservation.customerName} ${displayStartTime}から${displayEndTime}${editable ? "。クリックで編集、ドラッグで移動" : "。予約を選択"}`}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -742,7 +713,7 @@ function ReservationCard({
         {reservation.isRequest ? "指" : "フ"}
         <StatusIcon size={12} />
       </em>
-      <span className="reservationResizeHandle" data-resize-handle title="ドラッグして所要時間を変更" aria-hidden="true" />
+      {editable ? <span className="reservationResizeHandle" data-resize-handle title="ドラッグして所要時間を変更" aria-hidden="true" /> : null}
     </div>
   );
 }

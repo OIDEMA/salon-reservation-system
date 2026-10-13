@@ -15,8 +15,8 @@ export default async function TenantReservationEditPage({ params }: {
   if (!response.ok) throw new Error(`予約の取得に失敗しました (${response.status})`);
   const reservation = (await response.json()) as AdminReservation & { durationMinutes: number };
   const [menus, staff] = await Promise.all([
-    backendJson<AdminMenu[]>("/api/admin/menus", undefined, tenantSlug),
-    backendJson<AdminStaff[]>("/api/admin/staff", undefined, tenantSlug)
+    backendJson<AdminMenu[]>("/api/services", undefined, tenantSlug),
+    backendJson<AdminStaff[]>("/api/staff", undefined, tenantSlug)
   ]);
 
   return (

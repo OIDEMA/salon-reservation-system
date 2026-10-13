@@ -1,7 +1,6 @@
 import { AdminShell } from "@/components/admin-shell";
 import { ShiftManagement } from "@/components/shift-management";
-import { fetchAdminStaff } from "@/lib/admin-api";
-import type { AdminShift } from "@/lib/admin-types";
+import type { AdminShift, AdminStaff } from "@/lib/admin-types";
 import { backendJson } from "@/lib/backend";
 
 export default async function TenantShiftsPage() {
@@ -11,7 +10,7 @@ export default async function TenantShiftsPage() {
   const dateTo = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(end);
   const [shifts, staff] = await Promise.all([
     backendJson<AdminShift[]>(`/api/admin/shifts?dateFrom=${today}&dateTo=${dateTo}`),
-    fetchAdminStaff()
+    backendJson<AdminStaff[]>("/api/staff")
   ]);
   return <AdminShell active="/shifts" title="シフト・受付枠"><div className="adminContent"><ShiftManagement initialShifts={shifts} staff={staff} defaultDate={today} /></div></AdminShell>;
 }

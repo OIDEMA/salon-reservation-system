@@ -90,6 +90,24 @@ export async function requireTenantContext(
     return null;
   }
 
+  // Resolve the salon before legacy handlers apply their first-salon fallback.
+  const scope = membership.role === "OWNER" ? [] : membership.salonIds;
+  const selectedSalonId = requestedSalonId(request);
+  const salon = await prisma.salon.findFirst({
+    where: {
+      tenantId: membership.tenantId,
+      ...(selectedSalonId ? { id: selectedSalonId } : {}),
+      ...(scope.length ? { id: selectedSalonId && scope.includes(selectedSalonId) ? selectedSalonId : { in: scope } } : {})
+    },
+    orderBy: { createdAt: "asc" }
+  });
+  if ((selectedSalonId && (scope.length && !scope.includes(selectedSalonId) || salon?.id !== selectedSalonId)) ||
+    (scope.length && !salon)) {
+    reply.code(403).send({ code: "SALON_ACCESS_DENIED", message: "この店舗を利用する権限がありません。" });
+    return null;
+  }
+  if (salon) request.headers["x-salon-id"] = salon.id;
+
   return { tenant: membership.tenant, membership, user };
 }
 
