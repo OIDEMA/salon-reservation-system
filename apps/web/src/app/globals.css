@@ -1813,6 +1813,43 @@ a {
   margin-bottom: 2px;
 }
 
+.createCategoryTabs button {
+  height: auto;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  white-space: normal;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.reservationMenuSearch > div {
+  position: relative;
+}
+
+.reservationMenuSearch svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #64748b;
+  pointer-events: none;
+}
+
+.reservationMenuSearch input {
+  padding-left: 38px;
+}
+
+.reservationMenuNotice,
+.reservationMenuEmpty {
+  margin: 0;
+  padding: 14px;
+  border-radius: 8px;
+  color: #64748b;
+  background: #f8fafc;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
 .menuChoiceGrid,
 .staffChoiceGrid {
   display: grid;
@@ -1820,7 +1857,7 @@ a {
 }
 
 .menuChoiceGrid {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
 }
 
 .staffChoiceGrid {
@@ -1841,7 +1878,47 @@ a {
 }
 
 .menuChoice {
-  grid-template-columns: 34px 1fr;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-content: start;
+}
+
+.menuChoice .menuColor {
+  grid-row: 1 / span 3;
+  align-self: start;
+}
+
+.menuChoice:disabled {
+  opacity: 1;
+  cursor: not-allowed;
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.menuChoice .menuChoiceMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.menuChoiceInactive {
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: #fff;
+  color: #475569;
+}
+
+.createSummaryCard .summaryRows > span {
+  align-items: start;
+  gap: 12px;
+}
+
+.createSummaryCard .summaryRows strong {
+  min-width: 0;
+  max-width: 75%;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 
 .staffChoice {
@@ -1855,12 +1932,22 @@ a {
   box-shadow: inset 0 0 0 2px #0f766e;
 }
 
-.menuChoice strong,
+.menuChoice strong {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .staffChoice strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
+}
+
+.menuChoiceCategory {
+  overflow-wrap: anywhere;
 }
 
 .menuChoice small,

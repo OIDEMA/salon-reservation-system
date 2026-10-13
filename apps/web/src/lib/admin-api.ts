@@ -24,3 +24,7 @@ export function fetchAdminEquipment() {
 export function fetchAdminCustomers() {
   return backendJson<AdminCustomer[]>("/api/admin/customers");
 }
+
+export function fetchReservationCatalog() {
+  return backendJson<{ menus: AdminMenu[]; categories: AdminCategory[]; staff: AdminStaff[] }>("/api/reservation-catalog");
+}

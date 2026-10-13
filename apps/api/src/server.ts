@@ -662,6 +662,23 @@ server.get("/api/services", async (request, reply) => {
   });
 });
 
+// Booking screens need the full catalog (including stopped menus for display),
+// but they do not need permission to manage master data. Reservation mutations
+// still enforce service.active; this endpoint never makes a menu bookable.
+server.get("/api/reservation-catalog", async (request, reply) => {
+  const context = await requireTenantContext(request, reply);
+  if (!context) return;
+  const salon = await getTenantSalon(context.tenant.id, requestedSalonId(request));
+  if (!salon) return { menus: [], categories: [], staff: [] };
+  const scope = { tenantId: context.tenant.id, salonId: salon.id };
+  const [menus, categories, staff] = await Promise.all([
+    prisma.service.findMany({ where: scope, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }] }),
+    prisma.menuCategory.findMany({ where: { ...scope, type: "MENU" }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }] }),
+    prisma.staff.findMany({ where: { ...scope, active: true }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }] })
+  ]);
+  return reply.header("Cache-Control", "private, no-store").send({ menus, categories, staff });
+});
+
 server.get("/api/admin/settings", async (request, reply) => {
   const context = await requireTenantContext(request, reply);
   if (!context) return;

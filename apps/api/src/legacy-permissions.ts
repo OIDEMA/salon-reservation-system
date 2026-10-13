@@ -8,6 +8,6 @@ export function legacyPermission(method: string, route: string): Permission | nu
   if (route.startsWith("/api/admin/settings")) return write ? "settings.write" : "settings.read";
   if (route.startsWith("/api/admin/shifts")) return write ? "reservation.write" : "reservation.read";
   if (/^\/api\/admin\/(staff|menus|categories|equipment)(\/|$)/.test(route)) return write ? "master.write" : "master.read";
-  if (route === "/api/staff" || route === "/api/services") return "reservation.read";
+  if (route === "/api/staff" || route === "/api/services" || route === "/api/reservation-catalog") return "reservation.read";
   return null;
 }

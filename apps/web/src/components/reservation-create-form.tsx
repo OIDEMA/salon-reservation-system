@@ -1,11 +1,12 @@
 "use client";
 
-import { AlertCircle, CalendarCheck, CheckCircle2, Clock3, MessageCircle, Phone, UserRound } from "lucide-react";
+import { AlertCircle, CalendarCheck, CheckCircle2, Clock3, MessageCircle, Phone, Search, UserRound } from "lucide-react";
 import { useMemo, useState } from "react";
 import { DismissibleMessage } from "@/components/dismissible-message";
 import { useTenantSlug } from "@/components/tenant-provider";
-import type { AdminMenu, AdminStaff } from "@/lib/admin-types";
+import type { AdminCategory, AdminMenu, AdminStaff } from "@/lib/admin-types";
 import { tenantApiPath, tenantPath } from "@/lib/tenant-routing";
+import { ALL_RESERVATION_MENUS, filterReservationMenus, reservationMenuCatalog } from "@/lib/reservation-menu-catalog";
 
 const sourceOptions = [
   { value: "PHONE", label: "電話" },
@@ -27,6 +28,7 @@ const yen = new Intl.NumberFormat("ja-JP", {
 
 type ReservationCreateFormProps = {
   menus: AdminMenu[];
+  categories: AdminCategory[];
   staff: AdminStaff[];
   defaultDate: string;
 };
@@ -51,11 +53,11 @@ function addMinutes(time: string, minutes: number) {
   return `${String(Math.floor(totalMinutes / 60)).padStart(2, "0")}:${String(totalMinutes % 60).padStart(2, "0")}`;
 }
 
-export function ReservationCreateForm({ menus, staff, defaultDate }: ReservationCreateFormProps) {
+export function ReservationCreateForm({ menus, categories, staff, defaultDate }: ReservationCreateFormProps) {
   const tenantSlug = useTenantSlug();
-  const activeMenus = useMemo(() => menus.filter((menu) => menu.active), [menus]);
+  const catalog = useMemo(() => reservationMenuCatalog(menus, categories), [menus, categories]);
+  const activeMenus = useMemo(() => catalog.menus.filter((menu) => menu.active), [catalog]);
   const activeStaff = useMemo(() => staff.filter((member) => member.active), [staff]);
-  const categories = useMemo(() => ["すべて", ...Array.from(new Set(activeMenus.map((menu) => menu.category)))], [activeMenus]);
 
   const [customerName, setCustomerName] = useState("");
   const [customerKana, setCustomerKana] = useState("");
@@ -64,28 +66,31 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
   const [startTime, setStartTime] = useState("13:00");
   const [selectedMenuId, setSelectedMenuId] = useState(activeMenus[0]?.id ?? "");
   const [selectedStaffId, setSelectedStaffId] = useState("");
-  const [durationMinutes, setDurationMinutes] = useState(String(activeMenus[0]?.durationMinutes ?? 60));
+  const [durationMinutes, setDurationMinutes] = useState(String(activeMenus[0]?.durationMinutes ?? ""));
   const [source, setSource] = useState("PHONE");
   const [status, setStatus] = useState("CONFIRMED");
   const [memo, setMemo] = useState("");
-  const [category, setCategory] = useState("すべて");
+  const [category, setCategory] = useState(ALL_RESERVATION_MENUS);
+  const [menuSearch, setMenuSearch] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<FormMessage | null>(null);
   const [createdReservationId, setCreatedReservationId] = useState("");
 
-  const selectedMenu = activeMenus.find((menu) => menu.id === selectedMenuId) ?? activeMenus[0];
+  const selectedMenu = activeMenus.find((menu) => menu.id === selectedMenuId);
   const selectedStaff = activeStaff.find((member) => member.id === selectedStaffId);
-  const filteredMenus = category === "すべて" ? activeMenus : activeMenus.filter((menu) => menu.category === category);
-  const numericDuration = Math.max(1, Number(durationMinutes) || selectedMenu?.durationMinutes || 60);
-  const endTime = addMinutes(startTime, numericDuration);
+  const filteredMenus = useMemo(() => filterReservationMenus(catalog, category, menuSearch), [catalog, category, menuSearch]);
+  const numericDuration = selectedMenu ? Math.max(1, Number(durationMinutes) || selectedMenu.durationMinutes) : 0;
+  const endTime = selectedMenu ? addMinutes(startTime, numericDuration) : "—";
 
   function selectMenu(menu: AdminMenu) {
+    if (!menu.active || isSubmitting) return;
     setSelectedMenuId(menu.id);
     setDurationMinutes(String(menu.durationMinutes));
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isSubmitting) return;
     setMessage(null);
     setCreatedReservationId("");
 
@@ -182,7 +187,7 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
             </label>
             <label className="createField">
               <span>所要時間</span>
-              <input type="number" min="5" step="5" value={durationMinutes} onChange={(event) => setDurationMinutes(event.target.value)} />
+              <input type="number" min="5" step="5" value={selectedMenu ? durationMinutes : ""} disabled={!selectedMenu} onChange={(event) => setDurationMinutes(event.target.value)} />
             </label>
             <label className="createField">
               <span>終了</span>
@@ -196,22 +201,28 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
             <Clock3 size={18} />
             <h2>メニュー</h2>
           </div>
-          <div className="adminTabs createCategoryTabs">
-            {categories.map((item) => (
-              <button key={item} className={category === item ? "isActive" : ""} type="button" onClick={() => setCategory(item)}>
-                {item}
+          <label className="createField reservationMenuSearch">
+            <span>メニューを検索</span>
+            <div><Search size={18} aria-hidden="true" /><input type="search" value={menuSearch} onChange={(event) => setMenuSearch(event.target.value)} placeholder="メニュー名・カテゴリ名" /></div>
+          </label>
+          <div className="adminTabs createCategoryTabs" role="group" aria-label="メニューのカテゴリ">
+            {catalog.categories.map((item) => (
+              <button key={item.id} className={category === item.id ? "isActive" : ""} aria-pressed={category === item.id} type="button" onClick={() => setCategory(item.id)}>
+                {item.label}
               </button>
             ))}
           </div>
-          <div className="menuChoiceGrid">
+          {!activeMenus.length && menus.length > 0 ? <p className="reservationMenuNotice" role="status">予約できるメニューがありません。</p> : null}
+          {filteredMenus.length ? <div className="menuChoiceGrid">
             {filteredMenus.map((menu) => (
-              <button key={menu.id} className={selectedMenu?.id === menu.id ? "menuChoice isSelected" : "menuChoice"} type="button" onClick={() => selectMenu(menu)}>
-                <span className="menuColor" style={{ background: menu.color }} />
+              <button key={menu.id} className={selectedMenu?.id === menu.id ? "menuChoice isSelected" : "menuChoice"} type="button" disabled={!menu.active || isSubmitting} aria-pressed={selectedMenu?.id === menu.id} onClick={() => selectMenu(menu)}>
+                <span className="menuColor" style={{ background: menu.color }} aria-hidden="true" />
                 <strong>{menu.name}</strong>
-                <small>{menu.durationMinutes}分 / {yen.format(menu.price)}</small>
+                <small className="menuChoiceCategory">{menu.category || "未分類"}</small>
+                <small className="menuChoiceMeta">{menu.durationMinutes}分 / {yen.format(menu.price)}{!menu.active ? <span className="menuChoiceInactive">無効</span> : null}</small>
               </button>
             ))}
-          </div>
+          </div> : <p className="reservationMenuEmpty" role="status">{!menus.length ? "登録されているメニューはありません。" : menuSearch.trim() ? "検索条件に一致するメニューはありません。" : "このカテゴリにはメニューがありません。"}</p>}
         </article>
 
         <article className="adminPanel createFormPanel">
@@ -277,6 +288,7 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
             <span>メニュー<strong>{selectedMenu?.name ?? "未選択"}</strong></span>
             <span>担当<strong>{selectedStaff?.name ?? "指名なし"}</strong></span>
             <span>価格<strong>{selectedMenu ? yen.format(selectedMenu.price) : "-"}</strong></span>
+            <span>所要時間<strong>{selectedMenu ? `${numericDuration}分` : "-"}</strong></span>
             <span>状態<strong>{statusOptions.find((option) => option.value === status)?.label}</strong></span>
           </div>
           {message ? (
@@ -289,7 +301,7 @@ export function ReservationCreateForm({ menus, staff, defaultDate }: Reservation
             />
           ) : null}
           {createdReservationId ? <small className="createdId">ID: {createdReservationId}</small> : null}
-          <button className="createSubmitButton" type="submit" disabled={isSubmitting}>
+          <button className="createSubmitButton" type="submit" disabled={isSubmitting || !selectedMenu}>
             <CalendarCheck size={22} />
             <span>{isSubmitting ? "作成中" : "予約を作成"}</span>
           </button>

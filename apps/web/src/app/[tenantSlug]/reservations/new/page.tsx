@@ -2,10 +2,10 @@ import { ArrowLeft, CalendarCheck, Search } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
 import { ReservationCreateForm } from "@/components/reservation-create-form";
 import { TenantLink } from "@/components/tenant-link";
-import { fetchAdminMenus, fetchAdminStaff } from "@/lib/admin-api";
+import { fetchReservationCatalog } from "@/lib/admin-api";
 
 export default async function TenantReservationCreatePage() {
-  const [menus, staff] = await Promise.all([fetchAdminMenus(), fetchAdminStaff()]);
+  const { menus, categories, staff } = await fetchReservationCatalog();
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date());
 
   return (
@@ -33,7 +33,7 @@ export default async function TenantReservationCreatePage() {
           </div>
           <strong>{menus.length}メニュー / {staff.length}枠</strong>
         </section>
-        <ReservationCreateForm menus={menus} staff={staff} defaultDate={today} />
+        <ReservationCreateForm menus={menus} categories={categories} staff={staff} defaultDate={today} />
       </div>
     </AdminShell>
   );
