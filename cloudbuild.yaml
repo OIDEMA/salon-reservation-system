@@ -1,0 +1,71 @@
+steps:
+  - id: verify-deployment-target
+    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:stable
+    entrypoint: bash
+    args:
+      - scripts/deploy-native.sh
+      - --check
+  - id: validate
+    name: node:22-bookworm
+    entrypoint: bash
+    args:
+      - -euc
+      - |
+        npm ci
+        npm ci --workspaces=false --prefix apps/web
+        npm run db:generate
+        npm run typecheck
+        npm run test:operations
+        npm run build
+  - id: build-api
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag
+      - asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-api:${COMMIT_SHA}-${BUILD_ID}
+      - apps/api
+  - id: push-api
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-api:${COMMIT_SHA}-${BUILD_ID}
+  - id: deploy-production
+    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:stable
+    entrypoint: bash
+    args:
+      - -euc
+      - |
+        python3 tests/native-deploy.test.py
+        python3 tests/native-deploy-commands.test.py
+        python3 scripts/native-deploy.py
+substitutions:
+  _PROJECT_NUMBER: "42401528382"
+  _REGION: asia-east1
+  _API_SERVICE: reservation-api
+  _CHART_PHOTOS_BUCKET: salon-reserve-bg-chart-photos
+  _API_RUNTIME_SERVICE_ACCOUNT: reservation-api-runtime@salon-reserve-bg.iam.gserviceaccount.com
+  _DB_INSTANCE: salon-reserve-db
+  _VPC_NETWORK: salon-reserve-vpc
+  _VPC_SUBNET: salon-reserve-run-asia-east1
+  _APP_HOSTING_BACKEND: salon-reserve-web
+  # Configure the existing Firebase App Hosting GitHub repository link on the trigger.
+  _GIT_REPOSITORY_LINK: ""
+serviceAccount: projects/$PROJECT_ID/serviceAccounts/github-deploy@salon-reserve-bg.iam.gserviceaccount.com
+options:
+  logging: CLOUD_LOGGING_ONLY
+  env:
+    - PROJECT_ID=$PROJECT_ID
+    - PROJECT_NUMBER=$_PROJECT_NUMBER
+    - REGION=$_REGION
+    - API_SERVICE=$_API_SERVICE
+    - CHART_PHOTOS_BUCKET=$_CHART_PHOTOS_BUCKET
+    - API_RUNTIME_SERVICE_ACCOUNT=$_API_RUNTIME_SERVICE_ACCOUNT
+    - DB_INSTANCE=$_DB_INSTANCE
+    - VPC_NETWORK=$_VPC_NETWORK
+    - VPC_SUBNET=$_VPC_SUBNET
+    - APP_HOSTING_BACKEND=$_APP_HOSTING_BACKEND
+    - GIT_REPOSITORY_LINK=$_GIT_REPOSITORY_LINK
+    - COMMIT_SHA=$COMMIT_SHA
+    - BUILD_ID=$BUILD_ID
+    - API_IMAGE=asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-api:${COMMIT_SHA}-${BUILD_ID}
+timeout: 10800s
