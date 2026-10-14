@@ -1,4 +1,4 @@
-import { ArrowLeft, CalendarCheck, Search } from "lucide-react";
+import { ArrowLeft, Search } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
 import { ReservationCreateForm } from "@/components/reservation-create-form";
 import { TenantLink } from "@/components/tenant-link";
@@ -26,13 +26,6 @@ export default async function TenantReservationCreatePage() {
       }
     >
       <div className="createReservationContent">
-        <section className="createReservationHero">
-          <div>
-            <CalendarCheck size={28} />
-            <h2>新規予約</h2>
-          </div>
-          <strong>{menus.length}メニュー / スタッフ{staff.length}名</strong>
-        </section>
         <ReservationCreateForm menus={menus} categories={categories} staff={staff} defaultDate={today} />
       </div>
     </AdminShell>

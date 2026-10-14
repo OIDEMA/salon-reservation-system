@@ -1702,42 +1702,6 @@ a {
   padding: 22px 28px 34px;
 }
 
-.createReservationHero {
-  display: flex;
-  min-height: 82px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #ffffff;
-  padding: 18px 20px;
-  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.05);
-}
-
-.createReservationHero div {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.createReservationHero svg {
-  color: var(--teal-dark);
-}
-
-.createReservationHero h2 {
-  margin: 0;
-  font-size: 24px;
-}
-
-.createReservationHero strong {
-  border-radius: 8px;
-  background: #eefdfb;
-  color: #0f766e;
-  padding: 9px 12px;
-  font-size: 13px;
-}
-
 .reservationCreateLayout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
