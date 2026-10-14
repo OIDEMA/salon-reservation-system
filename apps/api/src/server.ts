@@ -16,6 +16,7 @@ import { legacyPermission } from "./legacy-permissions.js";
 import { registerCashRoutes } from "./cash-routes.js";
 import { registerChartRoutes } from "./chart-routes.js";
 import { registerStaffImportRoutes } from "./staff-import-routes.js";
+import { registerHistoryImportRoutes } from "./history-import-routes.js";
 import { registerAccessRoutes } from "./access-routes.js";
 import { registerCustomerImportRoutes } from "./customer-import-routes.js";
 import { customerExternalDetail } from "./customer-import.js";
@@ -1405,6 +1406,7 @@ server.patch("/api/reservations/:id/status", async (request, reply) => {
 await registerCashRoutes(server);
 await registerChartRoutes(server);
 await registerStaffImportRoutes(server);
+await registerHistoryImportRoutes(server);
 await registerAccessRoutes(server);
 await registerCustomerImportRoutes(server);
 await registerMasterPageRoutes(server);

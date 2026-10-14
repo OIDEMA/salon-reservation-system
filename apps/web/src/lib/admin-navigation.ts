@@ -3,6 +3,7 @@ export const adminNavigation = [
   { href: "/confirmation", label: "予約確認", icon: "CircleAlert", permission: "reservation.read" },
   { href: "/calendar", label: "店舗カレンダー", icon: "CalendarDays", permission: "reservation.read" },
   { href: "/reservations", label: "予約者検索", icon: "Search", permission: "reservation.read" },
+  { href: "/reservations/history", label: "予約履歴", icon: "CalendarClock", permission: "reservation.read" },
   { href: "/checkout", label: "会計", icon: "CreditCard", permission: "checkout.read" },
   { href: "/register", label: "レジ締め", icon: "Calculator", permission: "register.read" },
   { href: "/charts", label: "電子カルテ", icon: "ClipboardList", permission: "chart.read" },

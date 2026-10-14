@@ -207,3 +207,75 @@ export type ReservationOption = {
   customerName: string;
   serviceName: string;
 };
+
+export type ReservationHistorySummary = {
+  id: string;
+  externalReservationId: string;
+  startsAt: string;
+  endsAt: string | null;
+  durationMinutes: number | null;
+  customerName: string;
+  staffName: string | null;
+  menuText: string | null;
+  sourceStatus: string;
+  normalizedStatus: string | null;
+  reservationAmount: number | null;
+  sourceRoute: string | null;
+};
+
+export type ReservationHistoryPage = {
+  items: ReservationHistorySummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  statusOptions: string[];
+};
+
+export type ReservationHistoryDetail = ReservationHistorySummary & {
+  source: string;
+  sourceStoreId: string;
+  canReadOriginal: boolean;
+  customerKana: string | null;
+  customerNumber: string | null;
+  externalCustomerId: string | null;
+  externalStaffId: string | null;
+  nominated: boolean | null;
+  equipmentName: string | null;
+  capturedAt: string;
+  importedAt: string;
+  customerId: string | null;
+  staffId: string | null;
+  rawHeaders?: string[];
+  rawValues?: string[];
+};
+
+export type ReservationHistoryImportFile = {
+  version: 1;
+  source: "SALONBOARD";
+  sourceStoreId: "H000551123";
+  periodFrom: string;
+  periodTo: string;
+  capturedAt: string;
+  expectedCount: number;
+  records: unknown[];
+};
+
+export type ReservationHistoryImportProgress = {
+  id: string;
+  source: string;
+  sourceStoreId: string;
+  expectedCount: number;
+  chunkSize: number;
+  checksum: string;
+  processedCount: number;
+  createdCount: number;
+  skippedCount: number;
+  remainingCount: number;
+  completed: boolean;
+  processedOffsets: number[];
+  periodFrom: string;
+  periodTo: string;
+  monthCounts: Record<string, number>;
+  statusCounts: Record<string, number>;
+};

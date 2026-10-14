@@ -2796,6 +2796,101 @@ a {
   grid-template-columns: minmax(260px, 1fr) 150px 150px auto 150px auto;
 }
 
+.historyContext {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.historyMenuCell {
+  min-width: 180px;
+  max-width: 420px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.historyDetail {
+  display: grid;
+  gap: 20px;
+}
+
+.historyDetailFields {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.historyDetailFields > div,
+.historyImportCounts dl > div {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 16px;
+  border-bottom: 1px solid var(--line);
+  padding: 13px 0;
+}
+
+.historyDetailFields dt,
+.historyImportCounts dt {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.historyDetailFields dd,
+.historyImportCounts dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.historyRawScroll {
+  overflow-x: auto;
+}
+
+.historyRawTable th,
+.historyRawTable td {
+  vertical-align: top;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.historyRawTable tbody th {
+  position: static;
+  width: 220px;
+  padding: 9px 10px;
+  background: #f8fafc;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.historyRawTable tbody th small {
+  color: var(--muted);
+  margin-right: 8px;
+}
+
+.historyImportCounts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+  margin: 20px 0;
+}
+
+.historyImportCounts dl > div {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+@media (max-width: 680px) {
+  .historyDetailFields > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 5px;
+  }
+
+  .historyImportCounts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .compactMetrics {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }

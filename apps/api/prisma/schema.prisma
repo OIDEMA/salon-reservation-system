@@ -167,6 +167,8 @@ model AuditLog {
 }
 
 model Salon {
+  historicalReservations HistoricalReservation[]
+  historicalReservationImportRuns HistoricalReservationImportRun[]
   customerImportRuns CustomerImportRun[]
   treatmentCharts TreatmentChart[]
   cashCheckouts CashCheckout[]
@@ -402,6 +404,68 @@ model CustomerImportRun {
   salon            Salon    @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
 
   @@unique([tenantId, salonId, source, sourceStoreId, checksum])
+  @@index([tenantId, salonId, createdAt])
+}
+
+// Read-only source snapshots. These never drive capacity, visits, cash or charts.
+model HistoricalReservation {
+  id                    String             @id @default(cuid())
+  tenantId              String
+  salonId               String
+  source                String
+  sourceStoreId         String
+  externalReservationId String
+  externalCustomerId    String?
+  customerNumber        String?
+  externalStaffId       String?
+  customerName          String
+  customerKana          String?
+  staffName             String?
+  sourceStatus          String
+  normalizedStatus      ReservationStatus?
+  startsAt              DateTime
+  endsAt                DateTime?
+  durationMinutes       Int?
+  menuText              String?
+  reservationAmount     Int?
+  sourceRoute           String?
+  nominated             Boolean?
+  equipmentName         String?
+  rawHeaders            String[]
+  rawValues             String[]
+  capturedAt            DateTime
+  importedAt            DateTime           @default(now())
+  salon                 Salon              @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([tenantId, salonId, source, sourceStoreId, externalReservationId], map: "HistoricalReservation_source_identity_key")
+  @@index([tenantId, salonId, startsAt, id])
+  @@index([tenantId, salonId, sourceStatus, startsAt, id])
+}
+
+// Prepared manifests contain hashes and counts only, not original customer notes.
+model HistoricalReservationImportRun {
+  id               String   @id @default(cuid())
+  tenantId         String
+  salonId          String
+  source           String
+  sourceStoreId    String
+  periodFrom       String
+  periodTo         String
+  capturedAt       DateTime
+  expectedCount    Int
+  checksum         String
+  recordHashes     String[]
+  monthCounts      Json
+  statusCounts     Json
+  processedOffsets Int[]    @default([])
+  createdCount     Int      @default(0)
+  skippedCount     Int      @default(0)
+  createdByUserId   String
+  createdAt        DateTime @default(now())
+  completedAt      DateTime?
+  salon            Salon    @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([tenantId, salonId, source, sourceStoreId, checksum], map: "HistoricalReservationImportRun_manifest_key")
   @@index([tenantId, salonId, createdAt])
 }
 
