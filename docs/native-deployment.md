@@ -2,9 +2,9 @@
 
 ## Activation and verification
 
-The regional trigger `reservation-production` (`250509ed-9528-4a9f-8b32-2ef5cbfc58e3`) is enabled for pushes to `main`. The former production GitHub Actions workflow and its source-archive helper have been removed. Inspect the trigger's Cloud Build history by commit SHA to verify each automatic deployment.
+The regional trigger `reservation-production` (`250509ed-9528-4a9f-8b32-2ef5cbfc58e3`) is enabled for pushes to `main` and uses the completed Developer Connect GitHub event connection below. Inspect its Cloud Build history by commit SHA to verify each automatic deployment.
 
-Git-source acceptance for commit `54a88a04387aa7a4e85269850939ea267500f1d9` completed with frontend build and rollout `native-f44869fe4fb7a020fd6327f`, state `READY` / `SUCCEEDED`, 100% traffic, and a successful login-page check. Its App Hosting Cloud Build `d9a68763-af7b-4e90-8041-f4435e931763` succeeded. The database execution `reservation-db-migrate-xx2rb` and API revision `reservation-api-00046-qzp` also completed. The parent acceptance run `fd319b2a-497b-4d0e-946a-29ede5375a98` stopped because the optional source `repository` field was omitted; an operator verified the full SHA, exact GitHub commit URI, and current approved connection under the deployment lease before completing its rollout. The automatic pipeline now handles this response format with the same source checks below.
+The production GitHub Actions workflow and archive helper were removed in commit `cd64823`. Full native pipeline validation of that commit succeeded in Cloud Build `0c274cb5-50db-4c8c-a573-1599d01d8b3b`. App Hosting build/rollout `native-8b5a65699eb7aebd3b23d18` reached `READY` / `SUCCEEDED` with 100% traffic; API revision `reservation-api-00047-k89`, migration execution `reservation-db-migrate-7hh9z`, login HTTP 200, and lease removal were verified.
 
 The separate **Provision tenant** workflow remains manual and is never triggered by a push. See [provisioning.md](provisioning.md).
 
@@ -24,7 +24,24 @@ The separate **Provision tenant** workflow remains manual and is never triggered
 | Schema job | `reservation-db-migrate`, Direct VPC egress |
 | Lease | `gs://salon-reserve-bg-deployment-locks/deployment-locks/reservation-production.json` |
 
-App Hosting uses the Firebase App Hosting GitHub App connection. The Cloud Build trigger references that Developer Connect repository link and supplies it as `_GIT_REPOSITORY_LINK`. The empty default in the build configuration fails preflight rather than choosing a repository implicitly.
+### Separate source and event connections
+
+| Purpose | GitHub app and connection |
+| --- | --- |
+| App Hosting Git source | Firebase App Hosting GitHub App (`FIREBASE`), existing connection `apphosting-github-conn-2rjol6r` |
+| Cloud Build push events | Developer Connect GitHub App (`DEVELOPER_CONNECT`), completed connection `reservation-github-builds`, installation `171204810` |
+
+The Cloud Build event repository link is:
+
+```txt
+projects/salon-reserve-bg/locations/asia-east1/connections/reservation-github-builds/gitRepositoryLinks/OIDEMA-salon-reservation-system
+```
+
+The trigger's event configuration references this new event link. Its `_GIT_REPOSITORY_LINK` substitution continues to reference the **existing App Hosting source link** from the backend's `codebase.repository`, under `apphosting-github-conn-2rjol6r`. These values serve different purposes and must not be replaced with one another. Both links were verified against `OIDEMA/salon-reservation-system`; the Developer Connect installation is limited to that one repository.
+
+The Developer Connect GitHub installation can read code, issues, and pull requests and write checks and commit statuses for that repository.
+
+App Hosting uses its existing link when Cloud Build requests a frontend build from a specific SHA. The deployment script verifies that link against the backend and Developer Connect clone URI. An empty `_GIT_REPOSITORY_LINK` default fails preflight rather than choosing a repository implicitly.
 
 App Hosting's automatic rollout policy stays **disabled**. Cloud Build performs the database and API steps first, then requests an App Hosting build from the same Git SHA. This gives one deployment sequence and prevents a separate frontend rollout from overtaking the API/schema update. Preflight requires `traffic.rolloutPolicy.disabled === true`.
 
@@ -57,6 +74,8 @@ The whole Cloud Build timeout is `10800s` (three hours), including validation, i
 
 These native deployment grants are applied to the build identity above, in addition to its existing App Hosting, Cloud Run, Artifact Registry, runtime-service-account, and infrastructure metadata deployment access:
 
+The source permissions are project-scoped and cover both repository links in this project.
+
 | Grant | Scope/purpose |
 | --- | --- |
 | `projects/salon-reserve-bg/roles/nativeDeploymentObserver` | `cloudbuild.builds.create`, `cloudbuild.builds.get`, `developerconnect.gitRepositoryLinks.get`, `developerconnect.connections.get`, `developerconnect.gitRepositoryLinks.fetchReadToken` |
@@ -72,9 +91,23 @@ resource.name == 'projects/_/buckets/salon-reserve-bg-deployment-locks/objects/d
 
 The dedicated lock bucket has uniform bucket-level access and enforced public access prevention. It contains neither clinical photographs nor App Hosting source archives. No service-account key file is used.
 
+### Connection setup credentials
+
+Developer Connect owns the regional OAuth secret:
+
+```txt
+projects/42401528382/locations/asia-east1/secrets/reservation-github-builds-github-oauthtoken-26da7d
+```
+
+Its persistent secret-scoped `roles/secretmanager.secretAccessor` binding names only the Developer Connect service agent. This binding was verified through IAM metadata without reading stored secret values.
+
+The temporary metadata-only `nativeConnectionSecretCreator` grant and Secret Manager administration limited to `reservation-github-builds-github-oauthtoken-` names were limited to a one-hour setup window and removed immediately after setup completed. They are not runtime requirements. No existing database-secret values were accessed.
+
 ## Re-run and inspection
 
 An authorized operator can manually run the trigger for an exact committed SHA, including while its automatic push handling is disabled:
+
+A manual run verifies deployment execution, not GitHub push-event delivery. During connection activation, verify the latter separately through the build history of a new push.
 
 ```bash
 # Set DEPLOY_COMMIT_SHA to the full SHA on the production main branch.

@@ -52,8 +52,10 @@ External acquisition and publishing integrations are intentionally out of scope 
 
 ## Deploy Notes
 
-Production deployment uses the Firebase GitHub connection and regional Cloud Build pipeline in [docs/native-deployment.md](docs/native-deployment.md). Every push to `main` runs validation, builds a unique API image, applies the schema and API under a production lease, and releases the App Hosting frontend from the same Git SHA. Production GitHub Actions deployment has been removed.
+The native deployment pipeline in [docs/native-deployment.md](docs/native-deployment.md) validates the application, builds a unique API image, applies the schema and API under a production lease, and releases the App Hosting frontend from the same Git SHA. Production GitHub Actions deployment has been removed.
 
-App Hosting uses root directory `apps/web`; its independent automatic rollouts remain disabled to preserve database/API/frontend ordering. The deployment guide records current activation status and the acceptance build, required identities, manual re-runs, and lease recovery conditions.
+Every push to `main` invokes the enabled trigger through a Developer Connect GitHub event connection, separate from the existing Firebase App Hosting Git source connection. The deployment guide records the configuration and completed native pipeline validation.
+
+App Hosting uses root directory `apps/web`; its independent automatic rollouts remain disabled to preserve database/API/frontend ordering. The deployment guide also covers required identities, manual re-runs, and lease recovery conditions.
 
 Tenant provisioning remains a separate, manually invoked administrative workflow; see [docs/provisioning.md](docs/provisioning.md).
