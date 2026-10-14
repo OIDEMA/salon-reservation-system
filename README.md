@@ -52,21 +52,8 @@ External acquisition and publishing integrations are intentionally out of scope 
 
 ## Deploy Notes
 
-This repository is a monorepo. The frontend and API can be deployed as separate services from the same GitHub repository.
+Production deployment uses the Firebase GitHub connection and regional Cloud Build pipeline in [docs/native-deployment.md](docs/native-deployment.md). Every push to `main` runs validation, builds a unique API image, applies the schema and API under a production lease, and releases the App Hosting frontend from the same Git SHA. Production GitHub Actions deployment has been removed.
 
-Frontend:
+App Hosting uses root directory `apps/web`; its independent automatic rollouts remain disabled to preserve database/API/frontend ordering. The deployment guide records current activation status and the acceptance build, required identities, manual re-runs, and lease recovery conditions.
 
-```txt
-Root directory: apps/web
-Build command: npm run build
-Environment: NEXT_PUBLIC_API_BASE_URL=https://your-api.example.com
-```
-
-API:
-
-```txt
-Root directory: apps/api
-Build command: npm run build
-Start command: npm run start
-Environment: DATABASE_URL=postgresql://...
-```
+Tenant provisioning remains a separate, manually invoked administrative workflow; see [docs/provisioning.md](docs/provisioning.md).

@@ -42,6 +42,8 @@ class NativeDeploymentTests(unittest.TestCase):
         self.validation_attempts = 0
         self.real_rollout_created = False
         self.build_reads = 0
+        self.backend_reads = 0
+        self.link_reads = 0
         env = dict(ENV, **(changes or {}))
         active_app_id = 'native-' + hashlib.sha256(env['BUILD_ID'].encode('utf-8')).hexdigest()[:23]
         active_build_path = f'{BACKEND}/builds/{active_app_id}'
@@ -75,9 +77,19 @@ class NativeDeploymentTests(unittest.TestCase):
             self.requests.append((method, url, data))
             self.events.append(('request', method, url, data))
             if 'developerconnect.googleapis.com' in url:
-                return Response({'cloneUri': 'https://github.com/OIDEMA/other.git' if bad == 'wrong-repo' else 'https://github.com/OIDEMA/salon-reservation-system.git'})
+                self.link_reads += 1
+                wrong = bad == 'wrong-repo' or (bad == 'source-clone-changed' and self.link_reads > 1)
+                return Response({'cloneUri': 'https://github.com/OIDEMA/other.git' if wrong else 'https://github.com/OIDEMA/salon-reservation-system.git'})
             if url.endswith('/backends/salon-reserve-web'):
-                return Response({'codebase': {'repository': LINK, 'rootDirectory': 'apps/web'}})
+                self.backend_reads += 1
+                codebase = {'repository': LINK, 'rootDirectory': 'apps/web'}
+                if bad == 'source-backend-link-changed' and self.backend_reads > 1:
+                    codebase['repository'] = LINK.replace('/connections/firebase/', '/connections/other/')
+                if bad == 'source-backend-root-changed' and self.backend_reads > 1:
+                    codebase['rootDirectory'] = 'apps/other'
+                if bad == 'source-final-backend-changed' and self.backend_reads > 2:
+                    codebase['repository'] = LINK.replace('/connections/firebase/', '/connections/other/')
+                return Response({'codebase': codebase})
             if url.endswith('/traffic'):
                 policy = {} if bad == 'rollout-policy-missing' else {'disabled': False if bad == 'auto-rollout' else ('true' if bad == 'rollout-policy-string' else True)}
                 return Response({'rolloutPolicy': policy})
@@ -116,7 +128,32 @@ class NativeDeploymentTests(unittest.TestCase):
                 state = 'READY' if self.real_rollout_created else 'BUILT'
                 if bad == 'build-pending' and self.build_reads == 1:
                     state = 'BUILDING'
-                return Response({'state': state, 'source': {'codebase': {'hash': 'b' * 40 if bad == 'wrong-build' else SHA, 'repository': LINK}}})
+                source = {
+                    'hash': 'b' * 40 if bad == 'wrong-build' else SHA,
+                    'commit': SHA, 'repository': LINK,
+                    'uri': f'https://github.com/OIDEMA/salon-reservation-system/commit/{SHA}',
+                }
+                if bad and bad.startswith('source-') and not bad.startswith('source-explicit-'):
+                    source.pop('repository')
+                if bad == 'source-wrong-uri':
+                    source['uri'] = f'https://github.com/OIDEMA/other/commit/{SHA}'
+                if bad == 'source-missing-uri':
+                    source.pop('uri')
+                if bad == 'source-missing-hash':
+                    source.pop('hash')
+                if bad == 'source-wrong-commit':
+                    source['commit'] = 'b' * 40
+                if bad == 'source-no-repository-no-commit':
+                    source.pop('commit')
+                if bad == 'source-explicit-wrong-repository':
+                    source['repository'] = LINK.replace('/connections/firebase/', '/connections/other/')
+                if bad == 'source-explicit-empty-repository':
+                    source['repository'] = ''
+                if bad == 'source-explicit-null-repository':
+                    source['repository'] = None
+                if bad == 'source-explicit-wrong-commit':
+                    source['commit'] = 'b' * 40
+                return Response({'state': state, 'source': {'codebase': source}})
             if '/rollouts/' in url:
                 return Response({'state': 'SUCCEEDED', 'build': active_build_path})
             if url.endswith('/login'):
@@ -260,6 +297,53 @@ class NativeDeploymentTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.run_deploy(bad='wrong-build')
         self.assertFalse(any(method == 'POST' and '/rollouts?' in url for method, url, _ in self.requests))
+
+    def test_repository_output_can_be_omitted_only_with_uri_and_fresh_connection_checks(self):
+        for bad in ('source-no-repository', 'source-no-repository-no-commit'):
+            with self.subTest(source=bad):
+                self.run_deploy(bad=bad)
+                self.assertTrue(self.real_rollout_created)
+                self.assertEqual(self.backend_reads, 3)
+                self.assertEqual(self.link_reads, 3)
+                real_index = next(i for i, (method, url, _) in enumerate(self.requests) if method == 'POST' and '/rollouts?' in url and 'validateOnly=true' not in url)
+                self.assertEqual(sum(url.endswith('/backends/salon-reserve-web') for _, url, _ in self.requests[:real_index]), 2)
+                self.assertEqual(sum(url.endswith('/backends/salon-reserve-web') for _, url, _ in self.requests[real_index + 1:]), 1)
+
+    def test_omitted_repository_rejects_missing_or_wrong_source_evidence(self):
+        for bad in ('source-wrong-uri', 'source-missing-uri', 'source-missing-hash', 'source-wrong-commit'):
+            with self.subTest(source=bad):
+                with self.assertRaises(RuntimeError):
+                    self.run_deploy(bad=bad)
+                self.assertFalse(self.real_rollout_created)
+                self.assertEqual(self.backend_reads, 1)
+
+    def test_explicit_wrong_empty_or_null_repository_never_uses_the_uri_fallback(self):
+        for bad in ('source-explicit-wrong-repository', 'source-explicit-empty-repository', 'source-explicit-null-repository'):
+            with self.subTest(repository=bad):
+                with self.assertRaises(RuntimeError):
+                    self.run_deploy(bad=bad)
+                self.assertFalse(self.real_rollout_created)
+                self.assertEqual(self.backend_reads, 1)
+                self.assertEqual(self.link_reads, 1)
+
+    def test_changed_backend_or_repository_clone_blocks_the_fallback_before_rollout(self):
+        for bad in ('source-backend-link-changed', 'source-backend-root-changed', 'source-clone-changed'):
+            with self.subTest(connection=bad):
+                with self.assertRaises(RuntimeError):
+                    self.run_deploy(bad=bad)
+                self.assertFalse(self.real_rollout_created)
+                self.assertEqual(self.backend_reads, 2)
+
+    def test_repository_fallback_is_revalidated_at_ready_not_only_before_rollout(self):
+        with self.assertRaises(RuntimeError):
+            self.run_deploy(bad='source-final-backend-changed')
+        self.assertTrue(self.real_rollout_created)
+        self.assertEqual(self.backend_reads, 3)
+
+    def test_optional_commit_when_present_must_match_even_with_explicit_repository(self):
+        with self.assertRaises(RuntimeError):
+            self.run_deploy(bad='source-explicit-wrong-commit')
+        self.assertFalse(self.real_rollout_created)
 
     def test_app_hosting_ids_are_short_deterministic_and_shared_by_build_and_rollout(self):
         cases = (

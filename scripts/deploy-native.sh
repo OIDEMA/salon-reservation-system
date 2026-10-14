@@ -145,6 +145,32 @@ def resource_name(name):
     return "/".join(parts)
 
 
+def validate_source(resource):
+    container = resource.get("source")
+    source = container.get("codebase") if isinstance(container, dict) else None
+    if not isinstance(source, dict) or source.get("hash") != commit or ("commit" in source and source["commit"] != commit):
+        raise RuntimeError("App Hosting source must resolve to the triggering commit.")
+    if "repository" in source:
+        # An explicit field must match, including rejecting empty/null values.
+        if resource_name(source["repository"]) != resource_name(repository_link):
+            raise RuntimeError("App Hosting source must use the approved repository link.")
+        return
+    # Some Git builds omit this optional output field. Authenticate their source
+    # using the exact commit URI and a fresh check of both connection resources.
+    if source.get("uri") != f"https://github.com/OIDEMA/salon-reservation-system/commit/{commit}":
+        raise RuntimeError("App Hosting source without a repository field must have the exact approved commit URI.")
+    fresh_backend = api_request("GET", f"{app_hosting_api}/{backend_path}")
+    fresh_codebase = fresh_backend.get("codebase")
+    if not isinstance(fresh_codebase, dict) or resource_name(fresh_codebase.get("repository")) != resource_name(repository_link) or fresh_codebase.get("rootDirectory") != "apps/web":
+        raise RuntimeError("App Hosting source connection changed since deployment preflight.")
+    fresh_link = api_request("GET", f"https://developerconnect.googleapis.com/v1/{repository_link}")
+    if fresh_link.get("cloneUri") not in (
+        "https://github.com/OIDEMA/salon-reservation-system.git",
+        "https://github.com/OIDEMA/salon-reservation-system",
+    ):
+        raise RuntimeError("App Hosting source connection must still reference the approved GitHub repository.")
+
+
 backend = api_request("GET", f"{app_hosting_api}/{backend_path}")
 codebase = backend.get("codebase", {})
 if resource_name(codebase.get("repository")) != resource_name(repository_link) or codebase.get("rootDirectory") != "apps/web":
@@ -308,9 +334,7 @@ build_operation = api_request(
     {"source": {"codebase": {"commit": commit}}},
 )
 built = wait_state(build_path, {"BUILT", "READY"}, "App Hosting compiled source", attempts=150, delay=10)
-source = built.get("source", {}).get("codebase", {})
-if source.get("hash") != commit or resource_name(source.get("repository")) != resource_name(repository_link):
-    raise RuntimeError("App Hosting build must resolve to the triggering commit and approved repository.")
+validate_source(built)
 
 rollout_path = f"{backend_path}/rollouts/{app_build_id}"
 rollout_payload = {"build": build_path}
@@ -334,9 +358,7 @@ rollout_operation = api_request(
 wait_operation(build_operation["name"], "App Hosting build")
 wait_operation(rollout_operation["name"], "App Hosting rollout")
 built = wait_state(build_path, "READY", "App Hosting build")
-source = built.get("source", {}).get("codebase", {})
-if source.get("hash") != commit or resource_name(source.get("repository")) != resource_name(repository_link):
-    raise RuntimeError("App Hosting build must resolve to the triggering commit and approved repository.")
+validate_source(built)
 rolled_out = wait_state(rollout_path, "SUCCEEDED", "App Hosting rollout")
 if resource_name(rolled_out.get("build")) != resource_name(build_path):
     raise RuntimeError("App Hosting rollout must point to the verified build.")
