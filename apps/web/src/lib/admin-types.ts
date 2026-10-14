@@ -62,6 +62,10 @@ export type AdminStaff = {
   sortOrder: number;
 };
 
+export type AdminStaffDetail = AdminStaff & {
+  sourceRecords: Array<{ source: string; sourceStoreId: string; importedAt: string; profile: Record<string, unknown> }>;
+};
+
 export type AdminMenu = {
   id: string;
   name: string;

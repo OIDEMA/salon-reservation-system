@@ -193,6 +193,7 @@ model Salon {
 }
 
 model Staff {
+  externalRecords StaffExternalRecord[]
   treatmentCharts TreatmentChart[]
   id               String        @id @default(cuid())
   tenantId         String
@@ -216,6 +217,24 @@ model Staff {
 
   @@unique([tenantId, salonId, id])
   @@index([tenantId, salonId, sortOrder])
+}
+
+// Use a displayed SalonBoard publication staff ID when available. Older captures
+// can use a name/kana snapshot key and may require manual rename reconciliation.
+model StaffExternalRecord {
+  id                String   @id @default(cuid())
+  tenantId          String
+  salonId           String
+  staffId           String
+  source            String
+  sourceStoreId     String
+  externalRecordKey String
+  profile           Json
+  importedAt        DateTime @default(now())
+  staff             Staff    @relation(fields: [tenantId, salonId, staffId], references: [tenantId, salonId, id], onDelete: Cascade)
+
+  @@unique([tenantId, salonId, source, sourceStoreId, externalRecordKey])
+  @@index([tenantId, salonId, staffId])
 }
 
 model Service {

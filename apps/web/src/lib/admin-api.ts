@@ -1,5 +1,6 @@
-import type { AdminCategory, AdminCustomer, AdminCustomerPage, AdminEquipment, AdminMenu, AdminSettingsPayload, AdminStaff } from "./admin-types";
-import { backendJson } from "./backend";
+import type { AdminCategory, AdminCustomer, AdminCustomerPage, AdminEquipment, AdminMenu, AdminSettingsPayload, AdminStaff, AdminStaffDetail } from "./admin-types";
+import { redirect } from "next/navigation";
+import { backendFetch, backendJson } from "./backend";
 
 export function fetchAdminSettings() {
   return backendJson<AdminSettingsPayload>("/api/admin/settings");
@@ -7,6 +8,18 @@ export function fetchAdminSettings() {
 
 export function fetchAdminStaff() {
   return backendJson<AdminStaff[]>("/api/admin/staff");
+}
+
+export async function fetchAdminStaffDetail(tenantSlug: string, staffId: string) {
+  const response = await backendFetch(`/api/admin/staff/${encodeURIComponent(staffId)}`, undefined, tenantSlug);
+  if (response.status === 404) return null;
+  if (response.status === 403) redirect(`/${encodeURIComponent(tenantSlug)}/access-denied`);
+  if (!response.ok) throw new Error(`Staff detail request failed: ${response.status}`);
+  return await response.json() as AdminStaffDetail;
+}
+
+export function fetchAdminStaffNextSort() {
+  return backendJson<{ sortOrder: number }>("/api/admin/staff/next-sort");
 }
 
 export function fetchAdminMenus() {
