@@ -1864,6 +1864,37 @@ a {
   grid-template-columns: repeat(auto-fit, minmax(188px, 1fr));
 }
 
+.reservationStaffTools {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.reservationStaffTools p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.reservationStaffActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.reservationStaffActions a {
+  color: #0f766e;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.reservationStaffActions .secondaryButton {
+  font-size: 13px;
+  padding: 8px 12px;
+}
+
 .menuChoice,
 .staffChoice {
   display: grid;

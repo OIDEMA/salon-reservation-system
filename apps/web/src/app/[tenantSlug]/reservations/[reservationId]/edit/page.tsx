@@ -3,8 +3,9 @@ import { notFound } from "next/navigation";
 import { AdminShell } from "@/components/admin-shell";
 import { ReservationEditForm } from "@/components/reservation-edit-form";
 import { TenantLink } from "@/components/tenant-link";
-import type { AdminMenu, AdminReservation, AdminStaff } from "@/lib/admin-types";
-import { backendFetch, backendJson } from "@/lib/backend";
+import type { AdminReservation } from "@/lib/admin-types";
+import { fetchReservationCatalog } from "@/lib/admin-api";
+import { backendFetch } from "@/lib/backend";
 
 export default async function TenantReservationEditPage({ params }: {
   params: Promise<{ tenantSlug: string; reservationId: string }>;
@@ -14,10 +15,7 @@ export default async function TenantReservationEditPage({ params }: {
   if (response.status === 404) notFound();
   if (!response.ok) throw new Error(`予約の取得に失敗しました (${response.status})`);
   const reservation = (await response.json()) as AdminReservation & { durationMinutes: number };
-  const [menus, staff] = await Promise.all([
-    backendJson<AdminMenu[]>("/api/services", undefined, tenantSlug),
-    backendJson<AdminStaff[]>("/api/staff", undefined, tenantSlug)
-  ]);
+  const { menus, staff } = await fetchReservationCatalog(tenantSlug);
 
   return (
     <AdminShell active="/reservations" title="予約を編集" actions={

@@ -3,6 +3,7 @@
 import { AlertCircle, CalendarCheck, CheckCircle2, Clock3, MessageCircle, Phone, Search, UserRound } from "lucide-react";
 import { useMemo, useState } from "react";
 import { DismissibleMessage } from "@/components/dismissible-message";
+import { ReservationStaffTools, staffRoleLabels } from "@/components/reservation-staff-tools";
 import { useTenantSlug } from "@/components/tenant-provider";
 import type { AdminCategory, AdminMenu, AdminStaff } from "@/lib/admin-types";
 import { tenantApiPath, tenantPath } from "@/lib/tenant-routing";
@@ -101,6 +102,11 @@ export function ReservationCreateForm({ menus, categories, staff, defaultDate }:
 
     if (!selectedMenu) {
       setMessage({ type: "error", text: "メニューを選択してください。" });
+      return;
+    }
+
+    if (selectedStaffId && !selectedStaff) {
+      setMessage({ type: "error", text: "選択したスタッフは現在予約を受け付けていません。担当を選び直してください。" });
       return;
     }
 
@@ -231,19 +237,21 @@ export function ReservationCreateForm({ menus, categories, staff, defaultDate }:
             <h2>担当と状態</h2>
           </div>
           <div className="staffChoiceGrid">
-            <button className={selectedStaffId === "" ? "staffChoice isSelected" : "staffChoice"} type="button" onClick={() => setSelectedStaffId("")}>
+            <button aria-pressed={selectedStaffId === ""} disabled={isSubmitting} className={selectedStaffId === "" ? "staffChoice isSelected" : "staffChoice"} type="button" onClick={() => setSelectedStaffId("")}>
               <span className="resourceDot" style={{ background: "#334155" }} />
               <strong>指名なし</strong>
-              <small>自動割当</small>
+              <small>担当未指定</small>
             </button>
             {activeStaff.map((member) => (
-              <button key={member.id} className={selectedStaffId === member.id ? "staffChoice isSelected" : "staffChoice"} type="button" onClick={() => setSelectedStaffId(member.id)}>
+              <button aria-pressed={selectedStaffId === member.id} disabled={isSubmitting} key={member.id} className={selectedStaffId === member.id ? "staffChoice isSelected" : "staffChoice"} type="button" onClick={() => setSelectedStaffId(member.id)}>
                 <span className="resourceDot" style={{ background: member.color }} />
                 <strong>{member.name}</strong>
-                <small>{member.role} / 指名料 {member.nominationFee.toLocaleString("ja-JP")}円</small>
+                <small>{staffRoleLabels[member.role] ?? member.role} / 指名料 {member.nominationFee.toLocaleString("ja-JP")}円</small>
               </button>
             ))}
           </div>
+          {selectedStaffId && !selectedStaff ? <p className="reservationMenuNotice" role="alert">選択したスタッフは現在予約を受け付けていません。担当を選び直してください。</p> : null}
+          <ReservationStaffTools empty={!activeStaff.length} disabled={isSubmitting} />
           <div className="createFieldGrid two stateFields">
             <label className="createField">
               <span>経路</span>

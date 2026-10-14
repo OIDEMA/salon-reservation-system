@@ -25,6 +25,6 @@ export function fetchAdminCustomers() {
   return backendJson<AdminCustomer[]>("/api/admin/customers");
 }
 
-export function fetchReservationCatalog() {
-  return backendJson<{ menus: AdminMenu[]; categories: AdminCategory[]; staff: AdminStaff[] }>("/api/reservation-catalog");
+export function fetchReservationCatalog(tenantSlug?: string) {
+  return backendJson<{ menus: AdminMenu[]; categories: AdminCategory[]; staff: AdminStaff[] }>("/api/reservation-catalog", undefined, tenantSlug);
 }

@@ -7,8 +7,12 @@ import { PathnameContext, SearchParamsContext } from "next/dist/shared/lib/hooks
 import { AdminSidebar } from "../src/components/admin-shell";
 import { CustomerManagement } from "../src/components/customer-management";
 import { ReservationDashboard } from "../src/components/reservation-dashboard";
+import { ReservationCreateForm } from "../src/components/reservation-create-form";
+import { ReservationEditForm } from "../src/components/reservation-edit-form";
+import { ReservationStaffTools } from "../src/components/reservation-staff-tools";
 import { TenantProvider, type TenantMembership } from "../src/components/tenant-provider";
 import { firstAccessibleAdminPath } from "../src/lib/admin-navigation";
+import type { AdminMenu, AdminReservation, AdminStaff } from "../src/lib/admin-types";
 
 const router: AppRouterInstance = {
   back() {}, forward() {}, refresh() {}, push() {}, replace() {}, prefetch() {}, bfcacheId: "test"
@@ -72,4 +76,74 @@ test("顧客一覧は登録権限を持つ場合だけ新規登録の導線を�
   assert.doesNotMatch(readOnly, /href="\/salon-test\/customers\/new"/);
   const writable = renderFor(["customer.read", "customer.write"], <CustomerManagement initialCustomers={[]} />);
   assert.match(writable, /href="\/salon-test\/customers\/new"/);
+});
+
+const reservationMenu: AdminMenu = {
+  id: "menu-test", name: "登録済み施術", category: "脱毛", description: "", imageUrl: null,
+  durationMinutes: 30, price: 5000, color: "#111111", menuType: "通常メニュー",
+  lineVisible: true, unlimitedBooking: false, active: true, sortOrder: 1
+};
+
+function reservationStaff(id: string, name: string, active: boolean, sortOrder: number): AdminStaff {
+  return {
+    id, name, kana: name, role: "ESTHETICIAN", color: "#18c7bd", imageUrl: null,
+    nominationFee: 0, comment: null, allocationOrder: sortOrder, parallelCapacity: 1,
+    active, sortOrder
+  };
+}
+
+test("予約の担当候補は登録済みの有効スタッフを表示し、停止スタッフは新規選択に出さない", () => {
+  const staff = [
+    reservationStaff("staff-a", "予約担当A", true, 1),
+    reservationStaff("staff-stopped", "停止担当", false, 2),
+    reservationStaff("staff-b", "予約担当B", true, 3)
+  ];
+  const html = renderFor(["reservation.read", "reservation.write"], <ReservationCreateForm
+    menus={[reservationMenu]} categories={[]} staff={staff} defaultDate="2026-10-20"
+  />);
+  assert.match(html, />予約担当A</);
+  assert.match(html, />予約担当B</);
+  assert.ok(html.indexOf("予約担当A") < html.indexOf("予約担当B"));
+  assert.doesNotMatch(html, /停止担当/);
+  assert.match(html, /担当未指定/);
+  assert.doesNotMatch(html, /自動割当/);
+});
+
+test("担当未登録時のスタッフ管理導線はマスタの閲覧・登録権限に従う", () => {
+  const noMaster = renderFor(["reservation.read"], <ReservationStaffTools empty />);
+  assert.doesNotMatch(noMaster, /href="\/salon-test\/staff(?:\/new)?"/);
+
+  const readMaster = renderFor(["reservation.read", "master.read"], <ReservationStaffTools empty />);
+  assert.match(readMaster, /href="\/salon-test\/staff"/);
+  assert.doesNotMatch(readMaster, /href="\/salon-test\/staff\/new"/);
+
+  const writeMaster = renderFor(["reservation.read", "master.write"], <ReservationStaffTools empty />);
+  assert.match(writeMaster, /href="\/salon-test\/staff\/new"/);
+});
+
+test("予約編集は停止した現在の担当を保持し、他の停止スタッフは選択に出さない", () => {
+  const current = reservationStaff("staff-current", "現在の停止担当", false, 1);
+  const otherStopped = reservationStaff("staff-other", "別の停止担当", false, 2);
+  const active = reservationStaff("staff-active", "変更先の有効担当", true, 3);
+  const reservation: AdminReservation & { durationMinutes: number } = {
+    id: "reservation-test", updatedAt: "2026-10-19T00:00:00Z", date: "2026-10-20",
+    startTime: "13:00", endTime: "13:30", durationMinutes: 30, status: "CONFIRMED",
+    source: "PHONE", isRequest: true, memo: "", riskScore: 0, paymentStatus: "UNPAID",
+    lineMessageStatus: "NOT_SENT", customer: { id: "customer-test", name: "テスト顧客", kana: "テスト",
+      phone: null, visitCount: 0, tags: [] }, service: reservationMenu,
+    staff: { id: current.id, name: current.name }
+  };
+  // The catalog returns active staff only, so the current stopped staff must be
+  // kept from the reservation itself rather than disappearing from the select.
+  const fallback = renderFor(["reservation.read", "reservation.write"], <ReservationEditForm
+    initialReservation={reservation} menus={[reservationMenu]} staff={[active]}
+  />);
+  assert.match(fallback, /<option value="staff-current" selected="">現在の停止担当/);
+  assert.match(fallback, />変更先の有効担当</);
+
+  const fullCatalog = renderFor(["reservation.read", "reservation.write"], <ReservationEditForm
+    initialReservation={reservation} menus={[reservationMenu]} staff={[current, otherStopped, active]}
+  />);
+  assert.match(fullCatalog, /<option value="staff-current" selected="">現在の停止担当/);
+  assert.doesNotMatch(fullCatalog, /別の停止担当/);
 });

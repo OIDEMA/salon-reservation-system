@@ -31,7 +31,7 @@ export default async function TenantReservationCreatePage() {
             <CalendarCheck size={28} />
             <h2>新規予約</h2>
           </div>
-          <strong>{menus.length}メニュー / {staff.length}枠</strong>
+          <strong>{menus.length}メニュー / スタッフ{staff.length}名</strong>
         </section>
         <ReservationCreateForm menus={menus} categories={categories} staff={staff} defaultDate={today} />
       </div>

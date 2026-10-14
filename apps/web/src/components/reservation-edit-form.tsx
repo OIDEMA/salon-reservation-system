@@ -4,6 +4,7 @@ import { CheckCircle2, Save, UserCheck, UserX, XCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DismissibleMessage } from "@/components/dismissible-message";
+import { ReservationStaffTools } from "@/components/reservation-staff-tools";
 import { TenantLink } from "@/components/tenant-link";
 import { useTenantSlug } from "@/components/tenant-provider";
 import type { AdminMenu, AdminReservation, AdminStaff } from "@/lib/admin-types";
@@ -32,6 +33,7 @@ export function ReservationEditForm({ initialReservation, menus, staff }: {
   const tenantSlug = useTenantSlug();
   const router = useRouter();
   const [reservation, setReservation] = useState(initialReservation);
+  const [selectedStaffId, setSelectedStaffId] = useState(initialReservation.staff?.id ?? "");
   const [pending, setPending] = useState<"save" | "status" | null>(null);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const busy = pending !== null;
@@ -64,7 +66,11 @@ export function ReservationEditForm({ initialReservation, menus, staff }: {
     if (busy) return;
     const data = new FormData(event.currentTarget);
     const serviceId = String(data.get("serviceId"));
-    const staffId = String(data.get("staffId")) || null;
+    const staffId = selectedStaffId || null;
+    if (staffId && staffId !== reservation.staff?.id && !availableStaff.some((member) => member.id === staffId && member.active)) {
+      setMessage({ type: "error", text: "選択したスタッフは現在予約を受け付けていません。担当を選び直してください。" });
+      return;
+    }
     setPending("save");
     setMessage(null);
     try {
@@ -107,12 +113,14 @@ export function ReservationEditForm({ initialReservation, menus, staff }: {
           <label className="createField"><span>日付</span><input disabled={busy} required name="date" type="date" defaultValue={reservation.date} /></label>
           <label className="createField"><span>開始</span><input disabled={busy} required name="startTime" type="time" defaultValue={reservation.startTime} /></label>
           <label className="createField"><span>所要時間（分）</span><input disabled={busy} required name="durationMinutes" type="number" min="1" max="1440" step="1" defaultValue={reservation.durationMinutes} /></label>
-          <label className="createField"><span>担当</span><select disabled={busy} name="staffId" defaultValue={reservation.staff?.id ?? ""}>
+          <label className="createField"><span>担当</span><select disabled={busy} name="staffId" value={selectedStaffId} onChange={(event) => setSelectedStaffId(event.target.value)}>
             <option value="">指名なし</option>
+            {selectedStaffId && selectedStaffId !== reservation.staff?.id && !availableStaff.some((member) => member.id === selectedStaffId) ? <option value={selectedStaffId} disabled>担当を選び直してください</option> : null}
             {reservation.staff && !availableStaff.some((member) => member.id === reservation.staff?.id) ? <option value={reservation.staff.id}>{reservation.staff.name}（現在の担当）</option> : null}
             {availableStaff.map((member) => <option key={member.id} value={member.id}>{member.name}{member.active ? "" : "（停止中）"}</option>)}
           </select></label>
         </div>
+        <ReservationStaffTools empty={!staff.some((member) => member.active)} disabled={busy} />
         <label className="createField"><span>メニュー</span><select disabled={busy} required name="serviceId" defaultValue={reservation.service.id}>
           {!availableMenus.some((menu) => menu.id === reservation.service.id) ? <option value={reservation.service.id}>{reservation.service.name}（現在のメニュー）</option> : null}
           {availableMenus.map((menu) => <option key={menu.id} value={menu.id}>{menu.name}（{menu.durationMinutes}分 / {yen.format(menu.price)}）{menu.active ? "" : "（停止中）"}</option>)}
