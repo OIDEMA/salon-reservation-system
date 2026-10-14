@@ -4,10 +4,12 @@ import { AlertCircle, CalendarCheck, CheckCircle2, Clock3, MessageCircle, Phone,
 import { useMemo, useState } from "react";
 import { DismissibleMessage } from "@/components/dismissible-message";
 import { ReservationStaffTools, staffRoleLabels } from "@/components/reservation-staff-tools";
+import { ReservationCustomerFields } from "@/components/reservation-customer-fields";
 import { useTenantSlug } from "@/components/tenant-provider";
 import type { AdminCategory, AdminMenu, AdminStaff } from "@/lib/admin-types";
 import { tenantApiPath, tenantPath } from "@/lib/tenant-routing";
 import { ALL_RESERVATION_MENUS, filterReservationMenus, reservationMenuCatalog } from "@/lib/reservation-menu-catalog";
+import { reservationCustomerPayload, type ReservationCustomerInput } from "@/lib/reservation-customer";
 
 const sourceOptions = [
   { value: "PHONE", label: "電話" },
@@ -60,9 +62,7 @@ export function ReservationCreateForm({ menus, categories, staff, defaultDate }:
   const activeMenus = useMemo(() => catalog.menus.filter((menu) => menu.active), [catalog]);
   const activeStaff = useMemo(() => staff.filter((member) => member.active), [staff]);
 
-  const [customerName, setCustomerName] = useState("");
-  const [customerKana, setCustomerKana] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
+  const [customer, setCustomer] = useState<ReservationCustomerInput>({ name: "", kana: "", phone: "" });
   const [date, setDate] = useState(defaultDate);
   const [startTime, setStartTime] = useState("13:00");
   const [selectedMenuId, setSelectedMenuId] = useState(activeMenus[0]?.id ?? "");
@@ -95,7 +95,7 @@ export function ReservationCreateForm({ menus, categories, staff, defaultDate }:
     setMessage(null);
     setCreatedReservationId("");
 
-    if (!customerName.trim()) {
+    if (!customer.name.trim()) {
       setMessage({ type: "error", text: "顧客名を入力してください。" });
       return;
     }
@@ -124,9 +124,7 @@ export function ReservationCreateForm({ menus, categories, staff, defaultDate }:
           serviceId: selectedMenu.id,
           serviceName: selectedMenu.name,
           staffId: selectedStaffId || undefined,
-          customerName: customerName.trim(),
-          customerKana: customerKana.trim() || undefined,
-          customerPhone: customerPhone.trim() || undefined,
+          ...reservationCustomerPayload(customer),
           source,
           status,
           isRequest: Boolean(selectedStaffId),
@@ -157,20 +155,7 @@ export function ReservationCreateForm({ menus, categories, staff, defaultDate }:
             <UserRound size={18} />
             <h2>顧客情報</h2>
           </div>
-          <div className="createFieldGrid three">
-            <label className="createField">
-              <span>顧客名</span>
-              <input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="顧客名" required />
-            </label>
-            <label className="createField">
-              <span>カナ</span>
-              <input value={customerKana} onChange={(event) => setCustomerKana(event.target.value)} placeholder="顧客名（カナ）" />
-            </label>
-            <label className="createField">
-              <span>電話番号</span>
-              <input value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="090-0000-0000" inputMode="tel" />
-            </label>
-          </div>
+          <ReservationCustomerFields value={customer} onChange={setCustomer} disabled={isSubmitting} />
         </article>
 
         <article className="adminPanel createFormPanel">
@@ -286,7 +271,7 @@ export function ReservationCreateForm({ menus, categories, staff, defaultDate }:
 
       <aside className="createSummaryRail">
         <section className="panelSection createSummaryCard">
-          <h2>{customerName || "顧客名未入力"}</h2>
+          <h2>{customer.name || "顧客名未入力"}</h2>
           <div className="summarySlot">
             <CalendarCheck size={18} />
             <strong>{date}</strong>

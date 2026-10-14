@@ -19,6 +19,7 @@ import { registerAccessRoutes } from "./access-routes.js";
 import { z } from "zod";
 import { prisma } from "./database.js";
 import { customerAccountingTotals } from "./accounting-stats.js";
+import { customerLookupQuerySchema, lookupCustomers, registeredCustomerPhoneExists } from "./customer-lookup.js";
 import { requestedSalonId, requireAuthenticatedUser, requireTenantContext, type TenantContext } from "./tenant-context.js";
 
 export const server = Fastify({
@@ -40,6 +41,7 @@ const dateQuerySchema = z.object({
 const createReservationSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   customerId: z.string().optional(),
+  requireCustomerSelection: z.boolean().default(false),
   serviceId: z.string().optional(),
   staffId: z.string().optional(),
   customerName: z.string().min(1),
@@ -569,7 +571,8 @@ server.addHook("preHandler", async (request, reply) => {
 });
 server.addHook("preSerialization", async (request, _reply, payload) => {
   const context = legacyAccess.get(request);
-  if (!context || !(request.routeOptions.url ?? "").startsWith("/api/admin/customers") || !payload || typeof payload !== "object") return payload;
+  const route = request.routeOptions.url ?? "";
+  if (!context || !route.startsWith("/api/admin/customers") || route === "/api/admin/customers/lookup" || !payload || typeof payload !== "object") return payload;
   const sanitize = (customer: Record<string, unknown>) => ({ ...customer,
     ...(!hasPermission(context, "chart.read") ? { memo: null } : {}),
     ...(!hasPermission(context, "checkout.read") ? { totalSpent: null } : {})
@@ -961,6 +964,17 @@ server.get("/api/admin/customers", async (request, reply) => {
   return customers.map((customer) => ({ ...customer, totalSpent: totals.get(customer.id) ?? 0 }));
 });
 
+server.get("/api/admin/customers/lookup", async (request, reply) => {
+  const context = await requireTenantContext(request, reply);
+  if (!context) return;
+  const { q } = customerLookupQuerySchema.parse(request.query);
+  const salon = await findScopedSalon(context, request);
+  const result = salon
+    ? await lookupCustomers(prisma, context.tenant.id, salon.id, q)
+    : { customers: [], hasMore: false };
+  return reply.header("Cache-Control", "private, no-store").send(result);
+});
+
 server.get("/api/admin/customers/:id", async (request, reply) => {
   const context = await requireTenantContext(request, reply);
   if (!context) return;
@@ -1167,6 +1181,10 @@ server.post("/api/reservations", async (request, reply) => {
         ? await transaction.customer.findFirst({ where: { tenantId: context.tenant.id, salonId: salon.id, phone: input.customerPhone } })
         : null;
     if (input.customerId && !customer) throw operationError(400, "顧客が見つかりません。");
+    if (input.requireCustomerSelection && !input.customerId && (customer || input.customerPhone &&
+      await registeredCustomerPhoneExists(transaction, context.tenant.id, salon.id, input.customerPhone))) {
+      throw operationError(409, "同じ電話番号の登録済み顧客がいます。検索候補からお客様を選択してください。");
+    }
     if (!customer) {
       if (!hasPermission(context, "customer.write")) throw operationError(403, "新規顧客の登録には顧客の編集権限が必要です。登録済みのお客様を選択してください。");
       customer = await transaction.customer.create({ data: {

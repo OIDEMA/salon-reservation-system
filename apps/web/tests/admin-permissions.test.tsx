@@ -10,6 +10,7 @@ import { ReservationDashboard } from "../src/components/reservation-dashboard";
 import { ReservationCreateForm } from "../src/components/reservation-create-form";
 import { ReservationEditForm } from "../src/components/reservation-edit-form";
 import { ReservationStaffTools } from "../src/components/reservation-staff-tools";
+import { ReservationCustomerFields } from "../src/components/reservation-customer-fields";
 import { TenantProvider, type TenantMembership } from "../src/components/tenant-provider";
 import { firstAccessibleAdminPath } from "../src/lib/admin-navigation";
 import type { AdminMenu, AdminReservation, AdminStaff } from "../src/lib/admin-types";
@@ -146,4 +147,29 @@ test("予約編集は停止した現在の担当を保持し、他の停止ス�
   />);
   assert.match(fullCatalog, /<option value="staff-current" selected="">現在の停止担当/);
   assert.doesNotMatch(fullCatalog, /別の停止担当/);
+});
+
+test("予約の登録済み顧客検索は顧客の閲覧権限を持つ場合だけ表示する", () => {
+  const fields = <ReservationCustomerFields value={{ name: "", kana: "", phone: "" }} onChange={() => {}} />;
+  const blocked = renderFor(["reservation.read", "reservation.write"], fields);
+  assert.doesNotMatch(blocked, /登録済みのお客様を検索/);
+  assert.doesNotMatch(blocked, /readonly=""/i);
+  assert.match(blocked, /顧客名/);
+  assert.match(blocked, /カナ/);
+  assert.match(blocked, /電話番号/);
+
+  const permitted = renderFor(["reservation.read", "reservation.write", "customer.read"], fields);
+  assert.match(permitted, /登録済みのお客様を検索/);
+  assert.doesNotMatch(permitted, /readonly=""/i);
+});
+
+test("選択した登録済み顧客の情報は解除するまで読み取り専用にして顧客の取り違えを防ぐ", () => {
+  const selected = renderFor(["reservation.read", "reservation.write", "customer.read"],
+    <ReservationCustomerFields value={{ customerId: "customer-selected", name: "登録済み顧客", kana: "トウロクズミコキャク", phone: "090-1234-5678" }} onChange={() => {}} />);
+  assert.equal((selected.match(/readonly=""/gi) ?? []).length, 3);
+  assert.match(selected, /選択を解除/);
+  assert.match(selected, /value="登録済み顧客"/);
+  assert.match(selected, /value="トウロクズミコキャク"/);
+  assert.match(selected, /value="090-1234-5678"/);
+  assert.doesNotMatch(selected, /<input[^>]*disabled=""/);
 });

@@ -1872,6 +1872,100 @@ a {
   font-size: 13px;
 }
 
+.reservationCustomerFields,
+.reservationCustomerLookup {
+  display: grid;
+  gap: 12px;
+}
+
+.reservationCustomerLookup p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.reservationCustomerHint,
+.reservationCustomerSelected,
+.reservationCustomerSelected span {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.reservationCustomerSelected {
+  justify-content: space-between;
+  padding: 12px;
+  border: 1px solid #99d5ce;
+  border-radius: 8px;
+  background: #effcf9;
+  color: #0f766e;
+  font-size: 13px;
+}
+
+.reservationCustomerSelected button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-decoration: underline;
+}
+
+.reservationCustomerResults {
+  display: grid;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.reservationCustomerResults button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 12px;
+  background: #fff;
+  text-align: left;
+  font-size: 13px;
+}
+
+.reservationCustomerResults button:last-child {
+  border-bottom: 0;
+}
+
+.reservationCustomerResults button:hover,
+.reservationCustomerResults button:focus-visible {
+  background: #effcf9;
+}
+
+.reservationCustomerResults button > span:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.reservationCustomerResults small {
+  color: #64748b;
+}
+
+.reservationCustomerError {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.reservationCustomerFields input[readonly] {
+  background: #f8fafc;
+}
+
 .reservationStaffTools p {
   margin: 0;
   line-height: 1.7;
