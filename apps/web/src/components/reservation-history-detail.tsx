@@ -2,6 +2,7 @@
 
 import type { ReservationHistoryDetail as HistoryDetail } from "@/lib/admin-types";
 import { historyAmount, historyDate } from "@/lib/reservation-history";
+import { TenantLink } from "./tenant-link";
 import { usePermissions } from "./tenant-provider";
 
 export function ReservationHistoryDetail({ history }: { history: HistoryDetail }) {
@@ -14,6 +15,7 @@ export function ReservationHistoryDetail({ history }: { history: HistoryDetail }
     ["顧客名", history.customerName],
     ["カナ", history.customerKana || "未登録"],
     ["担当", history.staffName || "担当未登録"],
+    ["担当の紐付け", history.staffId ? "紐付け済み" : "未紐付け"],
     ["指名", history.nominated === null ? "未登録" : history.nominated ? "あり" : "なし"],
     ["メニュー", history.menuText || "未登録"],
     ["予約時金額", historyAmount(history.reservationAmount)],
@@ -28,7 +30,10 @@ export function ReservationHistoryDetail({ history }: { history: HistoryDetail }
   const allowedOriginal = can("chart.read") && history.canReadOriginal;
   const hasRawData = allowedOriginal && Array.isArray(history.rawHeaders) && Array.isArray(history.rawValues) && history.rawHeaders.length === history.rawValues.length;
 
+  const boardDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date(history.startsAt));
+
   return <div className="historyDetail">
+    <div className="adminActions"><TenantLink className="secondaryButton" href={`/?date=${encodeURIComponent(boardDate)}`}>予約表で確認</TenantLink></div>
     <section className="adminPanel masterCreatePanel">
       <h2>移行元の予約情報</h2>
       <p className="historyContext">サロンボードに記録されていた内容を表示しています。予約時金額は移行元の予約価格です。</p>

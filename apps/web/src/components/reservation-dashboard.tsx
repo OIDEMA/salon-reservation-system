@@ -4,7 +4,6 @@ import {
   AlertCircle,
   Bell,
   Building2,
-  CalendarDays,
   CalendarRange,
   CheckCircle2,
   ChevronLeft,
@@ -28,13 +27,15 @@ import { AdminSidebar } from "@/components/admin-shell";
 import { fetchDashboard } from "@/lib/api";
 import { useTenantSlug, usePermissions } from "@/components/tenant-provider";
 import { TenantSwitcher } from "@/components/tenant-switcher";
+import { HistoricalScheduleAgenda, HistoricalScheduleCard } from "@/components/historical-schedule";
+import { buildScheduleLayout, scheduleCardKey, scheduleRowAcceptsNewReservation, SCHEDULE_HOUR_WIDTH, SCHEDULE_LANE_HEIGHT } from "@/lib/schedule-layout";
 import { TimelineReservationEditor, type TimelineEditorValue } from "@/components/timeline-reservation-editor";
 import type { AdminMenu } from "@/lib/admin-types";
 import { tenantApiPath, tenantPath } from "@/lib/tenant-routing";
 import { createEmptyDashboard, type DashboardData, type ReservationStatus, type ScheduleReservation } from "@/lib/types";
 
-const HOUR_WIDTH = 132;
-const ROW_HEIGHT = 76;
+const HOUR_WIDTH = SCHEDULE_HOUR_WIDTH;
+const ROW_HEIGHT = SCHEDULE_LANE_HEIGHT;
 const HEADER_HEIGHT = 42;
 
 type TimelineInteraction =
@@ -125,6 +126,7 @@ function iconButtonLabel(label: string, icon: React.ReactNode) {
 export function ReservationDashboard() {
   const tenantSlug = useTenantSlug();
   const { can } = usePermissions();
+  const canRead = can("reservation.read");
   const canWrite = can("reservation.write");
   const pathname = usePathname();
   const router = useRouter();
@@ -135,6 +137,7 @@ export function ReservationDashboard() {
   const [selectedId, setSelectedId] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | ReservationStatus>("ALL");
   const [query, setQuery] = useState("");
+  const [appliedQuery, setAppliedQuery] = useState("");
   const [viewMode, setViewMode] = useState<"timeline" | "agenda">("timeline");
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -154,9 +157,16 @@ export function ReservationDashboard() {
 
   useEffect(() => {
     let ignore = false;
+    const controller = new AbortController();
+    if (!canRead) {
+      setDashboard(createEmptyDashboard(date));
+      return;
+    }
     setIsLoading(true);
     setLoadError("");
-    fetchDashboard(date, tenantSlug)
+    setInteraction(null);
+    setEditor(null);
+    fetchDashboard(date, tenantSlug, { q: appliedQuery, status: statusFilter }, controller.signal)
       .then((data) => {
         if (!ignore) {
           setDashboard(data);
@@ -178,11 +188,12 @@ export function ReservationDashboard() {
 
     return () => {
       ignore = true;
+      controller.abort();
     };
-  }, [date, refreshKey, tenantSlug]);
+  }, [date, refreshKey, tenantSlug, appliedQuery, statusFilter, canRead]);
 
   useEffect(() => {
-    if (!canWrite) {
+    if (!canRead || !canWrite) {
       setMenus([]);
       setEditor(null);
       setInteraction(null);
@@ -197,7 +208,7 @@ export function ReservationDashboard() {
       .then((data) => { if (!ignore) setMenus(data); })
       .catch(() => { if (!ignore) setMenus([]); });
     return () => { ignore = true; };
-  }, [canWrite, tenantSlug]);
+  }, [canRead, canWrite, tenantSlug]);
 
   const timeline = useMemo(() => {
     const start = toMinutes(dashboard.hours.start);
@@ -210,26 +221,19 @@ export function ReservationDashboard() {
     return { start, end, width: hourCount * HOUR_WIDTH, hours };
   }, [dashboard.hours.end, dashboard.hours.start]);
 
-  const filteredReservations = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    return dashboard.reservations.filter((reservation) => {
-      const matchesStatus = statusFilter === "ALL" || reservation.status === statusFilter;
-      const matchesQuery =
-        normalizedQuery.length === 0 ||
-        [reservation.customerName, reservation.customerKana, reservation.serviceName, reservation.memo, reservation.tags.join(" ")]
-          .join(" ")
-          .toLowerCase()
-          .includes(normalizedQuery);
-      return matchesStatus && matchesQuery;
-    });
-  }, [dashboard.reservations, query, statusFilter]);
+  // Date and search/status filters are resolved by the API. Only the selected
+  // day's bounded source cards are loaded, separately from live reservations.
+  const filteredReservations = dashboard.reservations;
+  const historicalReservations = dashboard.historicalReservations ?? [];
+  const scheduleLayout = useMemo(() => buildScheduleLayout(dashboard.rows, dashboard.reservations,
+    dashboard.historicalReservations ?? [], timeline.start, timeline.end), [dashboard, timeline.start, timeline.end]);
 
   const now = new Date();
   const currentMinute = now.getHours() * 60 + now.getMinutes() - timeline.start;
   const showNowLine = date === today && currentMinute >= 0 && currentMinute <= timeline.end - timeline.start;
-  const boardHeight = dashboard.rows.length * ROW_HEIGHT;
+  const boardHeight = scheduleLayout.height;
 
-  function pointerSlot(clientX: number, clientY: number) {
+  function pointerSlot(clientX: number, clientY: number, allowInactiveSelection = false) {
     const element = gridRef.current;
     if (!element || dashboard.rows.length === 0) return null;
     const bounds = element.getBoundingClientRect();
@@ -237,9 +241,11 @@ export function ReservationDashboard() {
     const y = clamp(clientY - bounds.top, 0, Math.max(0, boardHeight - 1));
     const rawMinutes = timeline.start + (x / HOUR_WIDTH) * 60;
     const step = dashboard.hours.stepMinutes;
+    const rowIndex = scheduleLayout.rows.findIndex((row) => y >= row.top && y < row.top + row.height);
+    if (rowIndex < 0 || (!allowInactiveSelection && !scheduleRowAcceptsNewReservation(dashboard.rows[rowIndex]))) return null;
     return {
       minutes: clamp(Math.floor(rawMinutes / step) * step, timeline.start, timeline.end - step),
-      rowIndex: clamp(Math.floor(y / ROW_HEIGHT), 0, dashboard.rows.length - 1)
+      rowIndex
     };
   }
 
@@ -269,7 +275,7 @@ export function ReservationDashboard() {
   }
 
   function handleGridPointerDown(event: React.PointerEvent<HTMLDivElement>) {
-    if (!canWrite || event.button !== 0 || isSavingSchedule || (event.target as HTMLElement).closest("[data-reservation-card]")) return;
+    if (!canWrite || isLoading || dashboard.date !== date || event.button !== 0 || isSavingSchedule || (event.target as HTMLElement).closest("[data-reservation-card]")) return;
     const slot = pointerSlot(event.clientX, event.clientY);
     if (!slot) return;
     event.preventDefault();
@@ -297,7 +303,7 @@ export function ReservationDashboard() {
     const endMinutes = Math.max(finalInteraction.anchorMinutes, finalInteraction.currentMinutes) + dashboard.hours.stepMinutes;
     const row = dashboard.rows[finalInteraction.rowIndex];
     setInteraction(null);
-    if (!row) return;
+    if (!scheduleRowAcceptsNewReservation(row)) return;
     setEditor({
       kind: "create",
       date,
@@ -308,10 +314,10 @@ export function ReservationDashboard() {
   }
 
   function startReservationInteraction(event: React.PointerEvent<HTMLElement>, reservation: ScheduleReservation) {
-    if (event.button !== 0 || isSavingSchedule) return;
+    if (event.button !== 0 || isSavingSchedule || isLoading || dashboard.date !== date) return;
     setSelectedId(reservation.id);
     if (!canWrite) return;
-    const slot = pointerSlot(event.clientX, event.clientY);
+    const slot = pointerSlot(event.clientX, event.clientY, true);
     if (!slot) return;
     event.preventDefault();
     event.stopPropagation();
@@ -357,7 +363,7 @@ export function ReservationDashboard() {
   async function saveTimelineChange(current: Extract<TimelineInteraction, { mode: "move" | "resize" }>) {
     if (!canWrite) return;
     const row = dashboard.rows[current.rowIndex];
-    if (!row) return;
+    if (!scheduleRowAcceptsNewReservation(row)) return;
     const unchanged =
       current.startMinutes === toMinutes(current.reservation.startTime) &&
       current.durationMinutes === toMinutes(current.reservation.endTime) - toMinutes(current.reservation.startTime) &&
@@ -408,6 +414,8 @@ export function ReservationDashboard() {
     });
   }
 
+  if (!canRead) return <p className="formMessage error" role="alert">予約表を閲覧する権限がありません。</p>;
+
   return (
     <main className="appShell">
       <AdminSidebar active="/" />
@@ -442,7 +450,7 @@ export function ReservationDashboard() {
                 </button>
                 <div className="dateBadge">
                   <strong>{formatDisplayDate(date)}</strong>
-                  <CalendarDays size={25} />
+                  <input aria-label="予約表の日付" type="date" value={date} onChange={(event) => { const selectedDate = validDateParam(event.target.value); if (selectedDate) changeDate(selectedDate); }} />
                 </div>
                 <button className="secondaryButton" type="button" onClick={() => changeDate(today)}>
                   本日
@@ -477,10 +485,13 @@ export function ReservationDashboard() {
             </div>
 
             <div className="filterBar">
-              <label className="searchBox">
-                <Search size={18} />
-                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="顧客・メニュー・メモを検索" />
-              </label>
+              <form className="dashboardSearch" onSubmit={(event) => { event.preventDefault(); setAppliedQuery(query.trim()); }}>
+                <label className="searchBox">
+                  <Search size={18} />
+                  <input aria-label="予約表を検索" value={query} maxLength={100} onChange={(event) => setQuery(event.target.value)} placeholder="顧客・担当・メニュー・予約番号を検索" />
+                </label>
+                <button className="secondaryButton" type="submit" disabled={isLoading}>検索</button>
+              </form>
               <div className="filterButtons">
                 {(["ALL", "PENDING", "CONFIRMED", "WAITLIST"] as const).map((status) => (
                   <button key={status} className={statusFilter === status ? "filterButton isSelected" : "filterButton"} type="button" onClick={() => setStatusFilter(status)}>
@@ -496,6 +507,11 @@ export function ReservationDashboard() {
 
             {loadError ? <div className="adminNotice">{loadError}</div> : null}
             {!loadError && !dashboard.salon ? <div className="adminNotice">店舗情報が未登録です。基本設定から店舗を登録してください。</div> : null}
+            {historicalReservations.length ? <div className="historyBoardContext">
+              <span>移行した予約履歴 {historicalReservations.length}件</span>
+              <span>履歴を選択すると詳細が開きます。</span>
+            </div> : null}
+            {dashboard.historicalHasMore ? <div className="adminNotice">この日の移行履歴は表示上限を超えています。<a href={tenantPath(tenantSlug, "/reservations/history")}>予約履歴一覧</a>で検索してください。</div> : null}
             {canWrite && viewMode === "timeline" && dashboard.salon ? (
               <div className="timelineHelp">
                 <span>空き枠をクリック／ドラッグして予約登録</span>
@@ -516,12 +532,12 @@ export function ReservationDashboard() {
               <div className={`scheduleShell ${interaction ? "isInteracting" : ""}`}>
                 <div className="resourceColumn">
                   <div className="resourceHeader">予約枠</div>
-                  {dashboard.rows.map((row) => (
-                    <div className="resourceCell" key={row.id}>
+                  {scheduleLayout.rows.map(({ row, height }) => (
+                    <div className={`resourceCell ${row.active === false ? "isInactive" : ""}`} style={{ height }} key={row.id}>
                       <span className="resourceDot" style={{ backgroundColor: row.color }} />
                       <div>
                         <strong>{row.label}</strong>
-                        <small>{row.subtitle}</small>
+                        <small>{row.active === false ? "予約受付停止" : row.subtitle}</small>
                       </div>
                       <em>{row.count}</em>
                     </div>
@@ -545,8 +561,8 @@ export function ReservationDashboard() {
                       onPointerUp={canWrite ? finishGridInteraction : undefined}
                       onPointerCancel={() => setInteraction(null)}
                     >
-                      {dashboard.rows.map((row, rowIndex) => (
-                        <div className="gridRow" key={row.id} style={{ top: rowIndex * ROW_HEIGHT, height: ROW_HEIGHT }} />
+                      {scheduleLayout.rows.map(({ row, top, height }) => (
+                        <div className={`gridRow ${row.active === false ? "isInactive" : ""}`} key={row.id} style={{ top, height }} />
                       ))}
                       {timeline.hours.map((hour, index) => (
                         <div className="hourLine" key={hour} style={{ left: index * HOUR_WIDTH }} />
@@ -562,7 +578,7 @@ export function ReservationDashboard() {
                             className="slotSelection"
                             style={{
                               left: ((startMinutes - timeline.start) / 60) * HOUR_WIDTH,
-                              top: interaction.rowIndex * ROW_HEIGHT + 7,
+                              top: (scheduleLayout.rows[interaction.rowIndex]?.top ?? 0) + 7,
                               width: ((endMinutes - startMinutes) / 60) * HOUR_WIDTH,
                               height: ROW_HEIGHT - 14
                             }}
@@ -581,9 +597,9 @@ export function ReservationDashboard() {
                             key={block.id}
                             style={{
                               left: ((toMinutes(block.startTime) - timeline.start) / 60) * HOUR_WIDTH,
-                              top: rowIndex * ROW_HEIGHT + 8,
+                              top: scheduleLayout.rows[rowIndex].top + 8,
                               width: ((toMinutes(block.endTime) - toMinutes(block.startTime)) / 60) * HOUR_WIDTH,
-                              height: ROW_HEIGHT - 14
+                              height: scheduleLayout.rows[rowIndex].height - 14
                             }}
                           >
                             <span>{block.startTime}-{block.endTime}</span>
@@ -595,6 +611,7 @@ export function ReservationDashboard() {
                         const activeInteraction = interaction?.mode !== "create" && interaction?.reservation.id === reservation.id ? interaction : null;
                         const rowIndex = activeInteraction?.rowIndex ?? dashboard.rows.findIndex((row) => row.id === reservation.rowId);
                         if (rowIndex < 0) return null;
+                        const cardLayout = scheduleLayout.cards.get(scheduleCardKey("reservation", reservation.id));
                         const startMinutes = activeInteraction?.startMinutes ?? toMinutes(reservation.startTime);
                         const durationMinutes = activeInteraction?.durationMinutes ?? toMinutes(reservation.endTime) - toMinutes(reservation.startTime);
                         return (
@@ -605,9 +622,9 @@ export function ReservationDashboard() {
                             selected={reservation.id === selectedId}
                             dragging={Boolean(activeInteraction)}
                             style={{
-                              left: ((startMinutes - timeline.start) / 60) * HOUR_WIDTH,
-                              top: rowIndex * ROW_HEIGHT + 12,
-                              width: Math.max(72, (durationMinutes / 60) * HOUR_WIDTH - 8),
+                              left: activeInteraction ? ((startMinutes - timeline.start) / 60) * HOUR_WIDTH : cardLayout?.left,
+                              top: scheduleLayout.rows[rowIndex].top + (activeInteraction ? 0 : cardLayout?.lane ?? 0) * ROW_HEIGHT + 12,
+                              width: activeInteraction ? Math.max(72, (durationMinutes / 60) * HOUR_WIDTH - 8) : cardLayout?.width,
                               height: ROW_HEIGHT - 20
                             }}
                             displayStartTime={toTime(startMinutes)}
@@ -618,7 +635,7 @@ export function ReservationDashboard() {
                             onPointerCancel={() => setInteraction(null)}
                             onKeyboardOpen={() => {
                               setSelectedId(reservation.id);
-                              if (!canWrite) return;
+                              if (!canWrite || isLoading || dashboard.date !== date) return;
                               setEditor({
                                 kind: "edit",
                                 date,
@@ -631,6 +648,13 @@ export function ReservationDashboard() {
                           />
                         );
                       })}
+                      {historicalReservations.map((reservation) => {
+                        const row = scheduleLayout.rows.find((layout) => layout.row.id === reservation.rowId);
+                        const placement = scheduleLayout.cards.get(scheduleCardKey("history", reservation.id));
+                        if (!row || !placement) return null;
+                        return <HistoricalScheduleCard key={`history:${reservation.id}`} reservation={reservation}
+                          style={{ left: placement.left, width: placement.width, top: row.top + placement.lane * ROW_HEIGHT + 7, height: ROW_HEIGHT - 14 }} />;
+                      })}
                       {showNowLine ? (
                         <div className="nowLine" style={{ left: (currentMinute / 60) * HOUR_WIDTH }}>
                           <span />
@@ -641,7 +665,10 @@ export function ReservationDashboard() {
                 </div>
               </div>
             ) : (
-              <Agenda reservations={filteredReservations} selectedId={selectedId} onSelect={setSelectedId} />
+              <>
+                <Agenda reservations={filteredReservations} selectedId={selectedId} onSelect={setSelectedId} />
+                <HistoricalScheduleAgenda reservations={historicalReservations} />
+              </>
             )}
           </section>
         </div>

@@ -196,6 +196,7 @@ model Salon {
 
 model Staff {
   externalRecords StaffExternalRecord[]
+  historicalReservations HistoricalReservation[] @relation("HistoricalReservationStaff")
   treatmentCharts TreatmentChart[]
   id               String        @id @default(cuid())
   tenantId         String
@@ -418,6 +419,7 @@ model HistoricalReservation {
   externalCustomerId    String?
   customerNumber        String?
   externalStaffId       String?
+  staffId               String?
   customerName          String
   customerKana          String?
   staffName             String?
@@ -436,10 +438,12 @@ model HistoricalReservation {
   capturedAt            DateTime
   importedAt            DateTime           @default(now())
   salon                 Salon              @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
+  staff                 Staff?             @relation("HistoricalReservationStaff", fields: [tenantId, salonId, staffId], references: [tenantId, salonId, id], onDelete: Restrict)
 
   @@unique([tenantId, salonId, source, sourceStoreId, externalReservationId], map: "HistoricalReservation_source_identity_key")
   @@index([tenantId, salonId, startsAt, id])
   @@index([tenantId, salonId, sourceStatus, startsAt, id])
+  @@index([tenantId, salonId, staffId, startsAt])
 }
 
 // Prepared manifests contain hashes and counts only, not original customer notes.

@@ -159,7 +159,7 @@ export async function registerHistoryImportRoutes(server: FastifyInstance, optio
     const { id } = paramsSchema.parse(request.params);
     const canReadOriginal = hasPermission(context, "chart.read");
     const record = await prisma.historicalReservation.findFirst({ where: { id, ...scope(context) }, select: {
-      ...listSelect, source: true, sourceStoreId: true, externalCustomerId: true, customerNumber: true, externalStaffId: true,
+      ...listSelect, source: true, sourceStoreId: true, externalCustomerId: true, customerNumber: true, externalStaffId: true, staffId: true,
       customerKana: true, nominated: true, equipmentName: true, capturedAt: true, importedAt: true,
       ...(canReadOriginal ? { rawHeaders: true, rawValues: true } : {})
     } });
@@ -175,7 +175,7 @@ export async function registerHistoryImportRoutes(server: FastifyInstance, optio
     ]);
     return reply.header("Cache-Control", "private, no-store").send({ ...listItem(record),
       capturedAt: record.capturedAt.toISOString(), importedAt: record.importedAt.toISOString(),
-      customerId: customer?.customerId ?? null, staffId: staff?.staffId ?? null, canReadOriginal
+      customerId: customer?.customerId ?? null, staffId: record.staffId ?? staff?.staffId ?? null, canReadOriginal
     });
   }));
 }

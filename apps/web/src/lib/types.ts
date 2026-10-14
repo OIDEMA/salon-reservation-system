@@ -7,6 +7,7 @@ export type ScheduleRow = {
   subtitle: string;
   color: string;
   count: number;
+  active?: boolean;
 };
 
 export type ScheduleReservation = {
@@ -29,6 +30,25 @@ export type ScheduleReservation = {
   memo: string;
   visitCount: number;
   tags: string[];
+};
+
+export type HistoricalScheduleReservation = {
+  id: string;
+  externalReservationId: string;
+  rowId: string;
+  startsAt: string;
+  endsAt: string | null;
+  startTime: string;
+  endTime: string | null;
+  customerName: string;
+  customerKana: string | null;
+  staffName: string | null;
+  serviceName: string;
+  reservationAmount: number | null;
+  sourceStatus: string;
+  source: "SALONBOARD";
+  isRequest: boolean;
+  readOnly: true;
 };
 
 export type ScheduleBlock = {
@@ -54,6 +74,8 @@ export type DashboardData = {
   };
   rows: ScheduleRow[];
   reservations: ScheduleReservation[];
+  historicalReservations: HistoricalScheduleReservation[];
+  historicalHasMore: boolean;
   blocks: ScheduleBlock[];
   notifications: Array<{
     id: string;
@@ -91,6 +113,8 @@ export function createEmptyDashboard(date: string): DashboardData {
     },
     rows: [],
     reservations: [],
+    historicalReservations: [],
+    historicalHasMore: false,
     blocks: [],
     notifications: [],
     queue: [],

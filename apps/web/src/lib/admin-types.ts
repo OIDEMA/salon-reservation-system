@@ -279,3 +279,38 @@ export type ReservationHistoryImportProgress = {
   monthCounts: Record<string, number>;
   statusCounts: Record<string, number>;
 };
+
+export type ReservationHistoryStaffLinkGroup = {
+  key: string;
+  sourceStaffName: string;
+  count: number;
+  staffId: string | null;
+  staffName: string | null;
+  role: "ESTHETICIAN" | "ROOM_RESOURCE";
+  action: "LINK_EXISTING" | "CREATE_INACTIVE";
+  active: boolean;
+  alreadyLinkedCount: number;
+};
+
+export type ReservationHistoryStaffLinkPlan = {
+  checksum: string;
+  periodFrom: string;
+  periodTo: string;
+  totalCount: number;
+  linkedCount: number;
+  pendingCount: number;
+  existingStaffCount: number;
+  newStaffCount: number;
+  groups: ReservationHistoryStaffLinkGroup[];
+  ready: boolean;
+  issues: string[];
+};
+
+export type ReservationHistoryStaffLinkResult = {
+  totalCount: number;
+  linkedCount: number;
+  pendingCount: number;
+  createdStaffCount: number;
+  alreadyLinkedCount: number;
+  completed: boolean;
+};

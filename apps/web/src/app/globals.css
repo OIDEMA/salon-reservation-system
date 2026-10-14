@@ -3385,3 +3385,69 @@ a {
 }
 
 .operationRowActions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.dashboardSearch {
+  display: flex;
+  min-width: 0;
+  gap: 8px;
+}
+.dashboardSearch .searchBox { flex: 1; min-width: 0; }
+.historyBoardContext {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.historyBoardContext > span:first-child { font-weight: 800; }
+.gridRow.isInactive { background: rgba(148, 163, 184, .12); cursor: default; }
+.resourceCell.isInactive small { color: #e2e8f0; }
+.historicalReservationCard {
+  cursor: pointer;
+  touch-action: auto;
+  background: #475569;
+  border: 1px dashed #cbd5e1;
+  text-decoration: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 6px;
+}
+.historicalReservationCard em {
+  display: block;
+  align-self: stretch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 12px;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  background: none;
+}
+.historicalAgenda { margin-top: 12px; }
+.historicalAgenda h2 { margin: 0 0 4px; font-size: 14px; }
+.historicalAgendaItem { text-decoration: none; color: inherit; grid-template-columns: 100px 1fr 1.5fr 120px; }
+.historicalAgendaItem small { display: block; margin-top: 3px; color: var(--muted); font-weight: 500; font-size: 11px; }
+.historySourceStatus { font-size: 12px; }
+.historyStaffLinkCounts { display: flex; flex-wrap: wrap; gap: 18px 48px; margin: 0 0 20px; }
+.historyStaffLinkCounts dt { color: var(--muted); font-size: 13px; }
+.historyStaffLinkCounts dd { margin: 6px 0 0; font-size: 22px; font-weight: 800; }
+.historyStaffLinkActions { margin-top: 20px; }
+
+.dateBadge input[type="date"] {
+  min-width: 145px;
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 4px 6px;
+  color: var(--ink);
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.historicalReservationCard .cardTime { font-size: 10px; line-height: 12px; white-space: nowrap; }
+.historicalReservationCard strong { font-size: 14px; line-height: 16px; }
+.historicalReservationCard small { font-size: 10px; line-height: 11px; }

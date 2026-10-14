@@ -69,7 +69,8 @@ export function TimelineReservationEditor({ value, menus, rows, onClose, onSaved
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const selectedMenu = activeMenus.find((menu) => menu.id === serviceId);
-  const assignableRows = rows.filter((row) => row.type === "staff" || row.type === "resource");
+  const assignableRows = rows.filter((row) => (row.type === "staff" || row.type === "resource") &&
+    (row.active !== false || (value.kind === "edit" && row.id === reservation?.rowId)));
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

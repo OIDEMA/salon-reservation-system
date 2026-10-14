@@ -17,6 +17,7 @@ import { registerCashRoutes } from "./cash-routes.js";
 import { registerChartRoutes } from "./chart-routes.js";
 import { registerStaffImportRoutes } from "./staff-import-routes.js";
 import { registerHistoryImportRoutes } from "./history-import-routes.js";
+import { registerHistoryStaffLinkRoutes } from "./history-staff-links.js";
 import { registerAccessRoutes } from "./access-routes.js";
 import { registerCustomerImportRoutes } from "./customer-import-routes.js";
 import { customerExternalDetail } from "./customer-import.js";
@@ -27,6 +28,8 @@ import { customerAccountingTotals } from "./accounting-stats.js";
 import { customerLookupQuerySchema, lookupCustomers, registeredCustomerPhoneExists } from "./customer-lookup.js";
 import { customerPage, customerPageQuerySchema } from "./customer-page.js";
 import { reservationPage, reservationPageQuerySchema, reservationOptions, reservationOptionsQuerySchema } from "./reservation-page.js";
+import { dashboardQuerySchema, dashboardHistory, dashboardReservationWhere, dashboardScheduleRows, dashboardDisplayHours,
+  japanDayBounds, scheduleTime, staffScheduleDependencyCount, type DashboardFilters } from "./dashboard-history.js";
 import { requestedSalonId, requireAuthenticatedUser, requireTenantContext, type TenantContext } from "./tenant-context.js";
 
 export const server = Fastify({
@@ -39,10 +42,6 @@ export const server = Fastify({
             options: { colorize: true }
           }
   }
-});
-
-const dateQuerySchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
 });
 
 const createReservationSchema = z.object({
@@ -187,10 +186,7 @@ const shiftInputSchema = shiftFieldsSchema.refine((value) => value.endsAt > valu
 const writeRoles: TenantRole[] = ["OWNER", "ADMIN", "MANAGER", "STAFF"];
 
 function dayBounds(date: string) {
-  const start = new Date(`${date}T00:00:00.000+09:00`);
-  const end = new Date(start);
-  end.setDate(start.getDate() + 1);
-  return { start, end };
+  return japanDayBounds(date);
 }
 
 function toTime(date: Date) {
@@ -222,6 +218,8 @@ function buildEmptyDashboard(date: string) {
     },
     rows: [],
     reservations: [],
+    historicalReservations: [],
+    historicalHasMore: false,
     blocks: [],
     notifications: [],
     queue: [],
@@ -239,7 +237,7 @@ function buildEmptyDashboard(date: string) {
   };
 }
 
-async function buildDashboardFromDatabase(date: string, tenantId: string, salonId?: string) {
+async function buildDashboardFromDatabase(date: string, tenantId: string, salonId?: string, filters: DashboardFilters = { status: "ALL" }) {
   const { start, end } = dayBounds(date);
   const salon = await prisma.salon.findFirst({
     where: {
@@ -261,19 +259,16 @@ async function buildDashboardFromDatabase(date: string, tenantId: string, salonI
     return buildEmptyDashboard(date);
   }
 
-  const [reservations, shifts] = await Promise.all([
+  const scope = { tenantId, salonId: salon.id };
+  const [reservations, shifts, history, operationalMetrics] = await Promise.all([
     prisma.reservation.findMany({
-      where: {
-        tenantId,
-        salonId: salon.id,
-        startsAt: { gte: start, lt: end }
-      },
+      where: dashboardReservationWhere(scope, { start, end }, filters),
       include: {
         customer: true,
         service: true,
         staff: true
       },
-      orderBy: { startsAt: "asc" }
+      orderBy: [{ startsAt: "asc" }, { id: "asc" }]
     }),
     prisma.shift.findMany({
       where: {
@@ -284,27 +279,24 @@ async function buildDashboardFromDatabase(date: string, tenantId: string, salonI
       },
       include: { staff: true },
       orderBy: { startsAt: "asc" }
+    }),
+    dashboardHistory(prisma, scope, { start, end }, filters),
+    // Metrics remain full-day operational values even when the visual board is searched.
+    prisma.reservation.findMany({
+      where: { ...scope, startsAt: { gte: start, lt: end } },
+      select: { startsAt: true, endsAt: true, status: true, riskScore: true, lineMessageStatus: true,
+        service: { select: { price: true } } }
     })
   ]);
 
-  const rows = [
-    { id: "unassigned", type: "unassigned", label: "指名なし", subtitle: "自動割当待ち", color: "#334155", count: reservations.filter((reservation) => !reservation.staffId).length },
-    ...salon.staff.map((staff) => ({
-      id: staff.id,
-      type: staff.role === "ROOM_RESOURCE" ? "resource" : "staff",
-      label: staff.name,
-      subtitle: `${staff.role.toLowerCase()} / 指名 ${reservations.filter((reservation) => reservation.staffId === staff.id && reservation.isRequest).length}`,
-      color: staff.color,
-      count: reservations.filter((reservation) => reservation.staffId === staff.id).length
-    }))
-  ];
+  const rows = dashboardScheduleRows(salon.staff, reservations, shifts, history.historicalReservations);
 
   const mappedReservations = reservations.map((reservation) => ({
     id: reservation.id,
     rowId: reservation.staffId ?? "unassigned",
     serviceId: reservation.serviceId,
-    startTime: toTime(reservation.startsAt),
-    endTime: toTime(reservation.endsAt),
+    startTime: scheduleTime(reservation.startsAt, start),
+    endTime: scheduleTime(reservation.endsAt, start),
     customerName: reservation.customer.name,
     customerKana: reservation.customer.kana,
     serviceName: reservation.service.name,
@@ -321,8 +313,8 @@ async function buildDashboardFromDatabase(date: string, tenantId: string, salonI
     tags: reservation.customer.tags
   }));
 
-  const pendingCount = mappedReservations.filter((reservation) => reservation.status === "PENDING").length;
-  const revenue = mappedReservations.reduce((total, reservation) => total + reservation.price, 0);
+  const pendingCount = operationalMetrics.filter((reservation) => reservation.status === "PENDING").length;
+  const revenue = operationalMetrics.reduce((total, reservation) => total + reservation.service.price, 0);
   const openTime = salon.settings?.openTime ?? "09:00";
   const closeTime = salon.settings?.closeTime ?? "20:00";
   const toMinutes = (time: string) => {
@@ -331,10 +323,10 @@ async function buildDashboardFromDatabase(date: string, tenantId: string, salonI
   };
   const activeStaffCount = salon.staff.filter((staff) => staff.active && staff.role !== "ROOM_RESOURCE").length;
   const bookableMinutes = Math.max(0, toMinutes(closeTime) - toMinutes(openTime)) * activeStaffCount;
-  const reservedMinutes = reservations
+  const reservedMinutes = operationalMetrics
     .filter((reservation) => !["CANCELLED", "NO_SHOW"].includes(reservation.status))
     .reduce((total, reservation) => total + Math.max(0, (reservation.endsAt.getTime() - reservation.startsAt.getTime()) / 60_000), 0);
-  const messageReservations = mappedReservations.filter((reservation) => !["NOT_SENT", "QUEUED"].includes(reservation.lineStatus));
+  const messageReservations = operationalMetrics.filter((reservation) => !["NOT_SENT", "QUEUED"].includes(reservation.lineMessageStatus));
 
   return {
     date,
@@ -343,13 +335,10 @@ async function buildDashboardFromDatabase(date: string, tenantId: string, salonI
       name: salon.name,
       timezone: salon.timezone
     },
-    hours: {
-      start: openTime,
-      end: closeTime,
-      stepMinutes: 30
-    },
+    hours: dashboardDisplayHours(openTime, closeTime, [...mappedReservations, ...history.historicalReservations]),
     rows,
     reservations: mappedReservations,
+    ...history,
     blocks: shifts.map((shift) => ({
       id: shift.id,
       rowId: shift.staffId ?? "unassigned",
@@ -372,15 +361,15 @@ async function buildDashboardFromDatabase(date: string, tenantId: string, salonI
     summary: {
       revenue,
       pendingCount,
-      confirmedCount: mappedReservations.filter((reservation) => reservation.status === "CONFIRMED").length,
+      confirmedCount: operationalMetrics.filter((reservation) => reservation.status === "CONFIRMED").length,
       occupancyRate: bookableMinutes > 0 ? Math.round((reservedMinutes / bookableMinutes) * 100) : 0,
-      waitlistCount: mappedReservations.filter((reservation) => reservation.status === "WAITLIST").length,
-      noShowRiskCount: mappedReservations.filter((reservation) => reservation.riskScore >= 50).length,
+      waitlistCount: operationalMetrics.filter((reservation) => reservation.status === "WAITLIST").length,
+      noShowRiskCount: operationalMetrics.filter((reservation) => reservation.riskScore >= 50).length,
       lineReadRate:
         messageReservations.length > 0
-          ? Math.round((messageReservations.filter((reservation) => reservation.lineStatus === "READ").length / messageReservations.length) * 100)
+          ? Math.round((messageReservations.filter((reservation) => reservation.lineMessageStatus === "READ").length / messageReservations.length) * 100)
           : 0,
-      averageTicket: Math.round(revenue / Math.max(1, mappedReservations.filter((reservation) => reservation.price > 0).length))
+      averageTicket: Math.round(revenue / Math.max(1, operationalMetrics.filter((reservation) => reservation.service.price > 0).length))
     }
   };
 }
@@ -649,8 +638,9 @@ server.get("/api/me/tenants", async (request, reply) => {
 server.get("/api/dashboard", async (request, reply) => {
   const context = await requireTenantContext(request, reply);
   if (!context) return;
-  const query = dateQuerySchema.parse(request.query);
-  return buildDashboardFromDatabase(query.date ?? currentDateInJapan(), context.tenant.id, requestedSalonId(request));
+  const query = dashboardQuerySchema.parse(request.query);
+  reply.header("Cache-Control", "private, no-store");
+  return buildDashboardFromDatabase(query.date ?? currentDateInJapan(), context.tenant.id, requestedSalonId(request), query);
 });
 
 server.get("/api/staff", async (request, reply) => {
@@ -810,11 +800,7 @@ server.delete("/api/admin/staff/:id", async (request, reply) => {
   const salon = await findScopedSalon(context, request);
   if (!salon) return reply.code(404).send({ code: "SALON_NOT_FOUND", message: "店舗が見つかりません。" });
   const { id } = idParamsSchema.parse(request.params);
-  const [reservationCount, shiftCount] = await Promise.all([
-    prisma.reservation.count({ where: { tenantId: context.tenant.id, salonId: salon.id, staffId: id } }),
-    prisma.shift.count({ where: { tenantId: context.tenant.id, salonId: salon.id, staffId: id } })
-  ]);
-  const dependentCount = reservationCount + shiftCount;
+  const dependentCount = await staffScheduleDependencyCount(prisma, { tenantId: context.tenant.id, salonId: salon.id }, id);
   if (dependentCount) {
     const updated = await prisma.staff.updateMany({ where: { id, tenantId: context.tenant.id, salonId: salon.id }, data: { active: false } });
     if (!updated.count) return reply.code(404).send({ code: "STAFF_NOT_FOUND", message: "スタッフが見つかりません。" });
@@ -1407,6 +1393,7 @@ await registerCashRoutes(server);
 await registerChartRoutes(server);
 await registerStaffImportRoutes(server);
 await registerHistoryImportRoutes(server);
+await registerHistoryStaffLinkRoutes(server);
 await registerAccessRoutes(server);
 await registerCustomerImportRoutes(server);
 await registerMasterPageRoutes(server);
