@@ -124,16 +124,28 @@ export function AccessAssignmentForm({ data, member }: { data: AccessData; membe
 
 export function AuditManagement({ initialData }: { initialData: AuditData }) {
   const tenantSlug = useTenantSlug(); const [data,setData] = useState(initialData); const [action,setAction] = useState(""); const [busy,setBusy] = useState(false); const [message,setMessage] = useState("");
-  async function load(more: boolean) {
+  const [appliedAction,setAppliedAction] = useState("");
+  const [page,setPage] = useState(0);
+  const [pageStarts,setPageStarts] = useState<Array<string | null>>([null]);
+  async function load(targetPage: number, search = false) {
     if (busy) return; setBusy(true); setMessage("");
-    try { const query = new URLSearchParams(); if(action.trim()) query.set("action",action.trim()); if(more && data.nextCursor) query.set("cursor",data.nextCursor);
+    try { const filter = search ? action.trim() : appliedAction;
+      const start = search ? null : targetPage > page ? data.nextCursor : pageStarts[targetPage];
+      if (targetPage < 0 || targetPage > page + 1 || (!search && targetPage > page && !start)) return;
+      const query = new URLSearchParams(); if(filter) query.set("action",filter); if(start) query.set("cursor",start);
       const next = await responseBody(await fetch(`${tenantApiPath(tenantSlug,"/access/audit")}?${query}`,{cache:"no-store"})) as AuditData;
-      setData(more ? {...next,records:[...data.records,...next.records]} : next);
+      setData(next); setAppliedAction(filter); setPage(targetPage);
+      if(search) setPageStarts([null]);
+      else if(targetPage > page) setPageStarts((starts)=>[...starts.slice(0,targetPage),start]);
     } catch(error) { setMessage(error instanceof Error ? error.message : "取得に失敗しました。"); } finally {setBusy(false);}
   }
-  return <section className="adminPanel"><div className={styles.toolbar}><label className={styles.field}><span>操作名で検索</span><input value={action} maxLength={120} onChange={(event)=>setAction(event.target.value)} placeholder="例: checkout、reservation" /></label><button className="primaryButton" type="button" disabled={busy} onClick={()=>void load(false)}>検索</button></div>
+  return <section className="adminPanel"><div className={styles.toolbar}><label className={styles.field}><span>操作名で検索</span><input value={action} maxLength={120} onChange={(event)=>setAction(event.target.value)} placeholder="例: checkout、reservation" /></label><button className="primaryButton" type="button" disabled={busy} onClick={()=>void load(0,true)}>検索</button></div>
     {message ? <p role="alert">{message}</p> : null}<p className={styles.muted}>操作者・操作内容・対象・日時を確認できます。</p>
     <div className={styles.scroll}><table className={styles.table}><thead><tr><th>日時</th><th>操作者</th><th>操作</th><th>対象</th><th>接続元</th></tr></thead><tbody>{data.records.map((record)=><tr key={record.id}><td>{new Date(record.createdAt).toLocaleString("ja-JP")}</td><td>{record.actor?.displayName || record.actor?.email || "システム"}</td><td>{record.action}</td><td>{record.resource}<br/><span className={styles.muted}>{record.resourceId}</span></td><td>{record.ipAddress || "—"}</td></tr>)}</tbody></table></div>
-    {!data.records.length ? <p className={styles.muted}>該当する操作履歴はありません。</p> : null}{data.nextCursor ? <button className="secondaryButton" type="button" disabled={busy} onClick={()=>void load(true)}>続きを表示</button> : null}
+    {!data.records.length ? <p className={styles.muted}>該当する操作履歴はありません。</p> : null}
+    <nav className={styles.toolbar} aria-label="操作履歴一覧のページ"><span aria-live="polite">{page+1}ページ / {data.records.length}件</span>
+      <button className="secondaryButton" type="button" disabled={busy || page===0} onClick={()=>void load(page-1)}>前へ</button>
+      <button className="secondaryButton" type="button" disabled={busy || !data.nextCursor} onClick={()=>void load(page+1)}>次へ</button>
+    </nav>
   </section>;
 }

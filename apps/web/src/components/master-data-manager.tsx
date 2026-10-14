@@ -2,7 +2,8 @@
 
 import { Edit3, Plus, Save, Search, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { MasterPage, MasterResource } from "@/lib/master-page-types";
 import { DismissibleMessage } from "@/components/dismissible-message";
 import { TenantLink } from "@/components/tenant-link";
 import { useTenantSlug, usePermissions } from "@/components/tenant-provider";
@@ -30,11 +31,6 @@ type ItemRecord = Record<string, unknown>;
 
 function record(item: MasterItem) {
   return item as unknown as ItemRecord;
-}
-
-function normalizeSearch(value: unknown) {
-  return String(value ?? "").normalize("NFKC").toLowerCase()
-    .replace(/[\u30a1-\u30f6]/g, (character) => String.fromCharCode(character.charCodeAt(0) - 0x60));
 }
 
 function formatted(value: unknown, format?: MasterColumn["format"]) {
@@ -126,98 +122,78 @@ export function MasterDataEditForm(props: MasterDataFormProps & { itemId: string
   return <MasterDataForm key={props.itemId} {...props} />;
 }
 
-export function MasterDataManager({
-  resource,
-  initialItems,
-  fields,
-  columns,
-  defaults,
-  itemLabel,
-  createHref,
-  editBaseHref,
-  searchKeys,
-  searchPlaceholder = "キーワードで検索"
+export function MasterDataManager({ resource, initialPage, columns, itemLabel, createHref, editBaseHref,
+  searchPlaceholder = "キーワードで検索", typeOptions
 }: {
-  resource: "staff" | "menus" | "categories" | "equipment";
-  initialItems: MasterItem[];
-  fields: MasterField[];
+  resource: MasterResource;
+  initialPage: MasterPage;
   columns: MasterColumn[];
-  defaults: ItemRecord;
   itemLabel: string;
-  createHref?: string;
-  editBaseHref?: string;
-  searchKeys?: string[];
+  createHref: string;
+  editBaseHref: string;
   searchPlaceholder?: string;
+  typeOptions?: Array<{ value: string; label: string }>;
 }) {
   const tenantSlug = useTenantSlug();
   const { can } = usePermissions();
   const canWrite = can("master.write");
-  const [items, setItems] = useState(initialItems);
-  const [editing, setEditing] = useState<MasterItem | "new" | null>(null);
-  const [form, setForm] = useState<ItemRecord>(defaults);
+  const [result, setResult] = useState(initialPage);
+  const [requestedPage, setRequestedPage] = useState(initialPage.page);
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("");
+  const [type, setType] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const [query, setQuery] = useState("");
-  const searchEnabled = Boolean(searchKeys?.length);
-  const searchTerms = normalizeSearch(query).trim().split(/\s+/).filter(Boolean);
-  const filteredItems = searchEnabled && searchTerms.length > 0
-    ? items.filter((item) => {
-      const text = normalizeSearch(searchKeys!.map((key) => record(item)[key] ?? "").join(" "));
-      return searchTerms.every((term) => text.includes(term));
-    })
-    : items;
+  const [listBusy, setListBusy] = useState(false);
+  const [refreshSequence, setRefreshSequence] = useState(0);
+  const requestSequence = useRef(0);
+  const initialRequest = useRef(true);
+  const hasFilters = Boolean(query.trim() || status || type);
 
-  function startNew() {
-    if (!canWrite || busy) return;
-    setForm(defaults);
-    setEditing("new");
-    setMessage("");
-  }
-
-  function startEdit(item: MasterItem) {
-    if (!canWrite || busy) return;
-    setForm({ ...record(item) });
-    setEditing(item);
-    setMessage("");
-  }
-
-  async function save(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!canWrite || busy || !editing) return;
-    const isNew = editing === "new";
-    setBusy(true);
-    setMessage("");
-    try {
-      const response = await fetch(tenantApiPath(tenantSlug, isNew ? `/admin/${resource}` : `/admin/${resource}/${editing.id}`), {
-        method: isNew ? "POST" : "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form)
-      });
-      if (!response.ok) throw new Error(await responseError(response));
-      const saved = (await response.json()) as MasterItem;
-      setItems((current) => isNew ? [...current, saved] : current.map((item) => item.id === saved.id ? saved : item));
-      setEditing(null);
-      setMessage(`${itemLabel}を保存しました。`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : `${itemLabel}を保存できませんでした。`);
-    } finally {
-      setBusy(false);
-    }
-  }
+  useEffect(() => {
+    // SSR already obtained the first bounded page. Subsequent interactions use
+    // the same endpoint, without fetching the entire booking catalog again.
+    if (initialRequest.current) { initialRequest.current = false; return; }
+    const sequence = ++requestSequence.current;
+    const controller = new AbortController();
+    setListBusy(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ page: String(requestedPage), pageSize: String(initialPage.pageSize) });
+        if (query.trim()) params.set("q", query.trim());
+        if (status) params.set("status", status);
+        if (type) params.set("type", type);
+        const response = await fetch(tenantApiPath(tenantSlug, `/admin/${resource}/page?${params}`), {
+          cache: "no-store", signal: controller.signal
+        });
+        if (!response.ok) throw new Error(await responseError(response));
+        const nextPage = await response.json() as MasterPage;
+        if (controller.signal.aborted || sequence !== requestSequence.current) return;
+        setResult(nextPage);
+        setRequestedPage(nextPage.page);
+      } catch (error) {
+        if (!controller.signal.aborted && sequence === requestSequence.current) {
+          setMessage(error instanceof Error ? error.message : `${itemLabel}一覧を取得できませんでした。`);
+        }
+      } finally {
+        if (!controller.signal.aborted && sequence === requestSequence.current) setListBusy(false);
+      }
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [query, status, type, requestedPage, resource, tenantSlug, initialPage.pageSize, itemLabel, refreshSequence]);
 
   async function remove(item: MasterItem) {
-    if (!canWrite || busy) return;
+    if (!canWrite || busy || listBusy) return;
     const name = String(record(item).name ?? itemLabel);
     if (!window.confirm(`${name}を削除しますか？ 予約履歴がある項目は無効化されます。`)) return;
     setBusy(true);
     setMessage("");
     try {
-      const response = await fetch(tenantApiPath(tenantSlug, `/admin/${resource}/${item.id}`), { method: "DELETE" });
+      const response = await fetch(tenantApiPath(tenantSlug, `/admin/${resource}/${encodeURIComponent(item.id)}`), { method: "DELETE" });
       if (!response.ok) throw new Error(await responseError(response));
-      const result = (await response.json()) as { deleted?: boolean; deactivated?: boolean };
-      if (result.deleted) setItems((current) => current.filter((currentItem) => currentItem.id !== item.id));
-      else if (result.deactivated) setItems((current) => current.map((currentItem) => currentItem.id === item.id ? { ...currentItem, active: false } : currentItem));
-      setMessage(result.deactivated ? `${itemLabel}を無効化しました。` : `${itemLabel}を削除しました。`);
+      const removed = await response.json() as { deactivated?: boolean };
+      setRefreshSequence((current) => current + 1);
+      setMessage(removed.deactivated ? `${itemLabel}を無効化しました。` : `${itemLabel}を削除しました。`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : `${itemLabel}を削除できませんでした。`);
     } finally {
@@ -225,51 +201,48 @@ export function MasterDataManager({
     }
   }
 
-  return (
-    <div className="masterManager">
-      <div className={`masterToolbar${searchEnabled ? " hasSearch" : ""}`}>
-        {searchEnabled ? (
-          <div className="masterToolbarSummary">
-            <div className="searchBox masterSearch">
-              <Search size={18} aria-hidden="true" />
-              <input type="search" aria-label={`${itemLabel}を検索`} placeholder={searchPlaceholder} value={query} onChange={(event) => setQuery(event.target.value)} />
-              {query ? <button className="masterSearchClear" type="button" aria-label="検索をクリア" onClick={() => setQuery("")}><X size={16} aria-hidden="true" /></button> : null}
-            </div>
-            {searchTerms.length > 0 || resource !== "menus" ? <p role="status">{searchTerms.length > 0 ? `${filteredItems.length}件 / 全${items.length}件` : `${items.length}件登録されています。`}</p> : null}
-          </div>
-        ) : <p>{items.length}件登録されています。</p>}
-        {canWrite ? createHref ? <TenantLink className="primaryButton" href={createHref}><Plus size={17} />{itemLabel}を新規登録</TenantLink> : <button className="primaryButton" type="button" onClick={startNew}><Plus size={17} />{itemLabel}を新規登録</button> : null}
-      </div>
-      {message ? <DismissibleMessage message={message} onDismiss={() => setMessage("")} /> : null}
-      <section className="tablePanel">
-        <table className="adminTable">
-          <thead><tr>{columns.map((column) => <th key={column.key}>{column.label}</th>)}{canWrite ? <th>操作</th> : null}</tr></thead>
-          <tbody>
-            {filteredItems.length === 0 ? <tr><td colSpan={columns.length + (canWrite ? 1 : 0)}><div className="emptyState">{searchTerms.length > 0 ? `検索に一致する${itemLabel}がありません。キーワードを変更してください。` : `${itemLabel}はまだ登録されていません。`}</div></td></tr> : null}
-            {filteredItems.map((item) => (
-              <tr key={item.id}>
-                {columns.map((column) => {
-                  const value = record(item)[column.key];
-                  return <td key={column.key}>{column.format === "color" ? <><span className="menuColor" style={{ background: String(value) }} /> {String(value)}</> : formatted(value, column.format)}</td>;
-                })}
-                {canWrite ? <td><div className="tableActions">{editBaseHref ? <TenantLink className="miniButton" href={`${editBaseHref}/${encodeURIComponent(item.id)}/edit`}><Edit3 size={15} />編集</TenantLink> : <button className="miniButton" type="button" onClick={() => startEdit(item)}><Edit3 size={15} />編集</button>}<button className="dangerButton" disabled={busy} type="button" onClick={() => void remove(item)}><Trash2 size={15} /></button></div></td> : null}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-
-      {canWrite && editing ? (
-        <div className="drawerBackdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setEditing(null); }}>
-          <aside className="editDrawer masterDrawer">
-            <div className="detailPanelHeader"><div><span>Master data</span><h2>{editing === "new" ? `${itemLabel}を登録` : `${itemLabel}を編集`}</h2></div><button className="iconOnlyButton" type="button" onClick={() => setEditing(null)}><X size={18} /></button></div>
-            <form className="masterForm" onSubmit={save}>
-              <MasterFields fields={fields} form={form} onChange={(key, value) => setForm((current) => ({ ...current, [key]: value }))} />
-              <button className="primaryButton" disabled={busy} type="submit"><Save size={17} />{busy ? "保存中..." : "保存"}</button>
-            </form>
-          </aside>
+  return <div className="masterManager">
+    <div className="masterToolbar hasSearch">
+      <div className="masterToolbarSummary">
+        <div className="searchBox masterSearch">
+          <Search size={18} aria-hidden="true" />
+          <input type="search" aria-label={`${itemLabel}を検索`} maxLength={100} placeholder={searchPlaceholder} value={query}
+            onChange={(event) => { setQuery(event.target.value); setRequestedPage(1); }} />
+          {query ? <button className="masterSearchClear" type="button" aria-label="検索をクリア" onClick={() => { setQuery(""); setRequestedPage(1); }}><X size={16} aria-hidden="true" /></button> : null}
         </div>
-      ) : null}
+        <label className="createField"><select aria-label="状態で絞り込み" value={status}
+          onChange={(event) => { setStatus(event.target.value); setRequestedPage(1); }}>
+          <option value="">すべての状態</option><option value="ACTIVE">有効</option><option value="INACTIVE">無効</option>
+        </select></label>
+        {typeOptions ? <label className="createField"><select aria-label="種別で絞り込み" value={type}
+          onChange={(event) => { setType(event.target.value); setRequestedPage(1); }}>
+          <option value="">すべての種別</option>{typeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select></label> : null}
+      </div>
+      {canWrite ? <TenantLink className="primaryButton" href={createHref}><Plus size={17} />{itemLabel}を新規登録</TenantLink> : null}
     </div>
-  );
+    {message ? <DismissibleMessage message={message} onDismiss={() => setMessage("")} /> : null}
+    <nav className="masterToolbar" aria-label={`${itemLabel}一覧のページ`}>
+      <span aria-live="polite">{listBusy ? "検索中..." : `${result.page} / ${result.totalPages}ページ`}</span>
+      <div className="adminActions">
+        <button className="secondaryButton" type="button" disabled={listBusy || busy || result.page <= 1} onClick={() => setRequestedPage(result.page - 1)}>前へ</button>
+        <button className="secondaryButton" type="button" disabled={listBusy || busy || result.page >= result.totalPages} onClick={() => setRequestedPage(result.page + 1)}>次へ</button>
+      </div>
+    </nav>
+    <section className="tablePanel" aria-busy={listBusy}>
+      <table className="adminTable">
+        <thead><tr>{columns.map((column) => <th key={column.key}>{column.label}</th>)}{canWrite ? <th>操作</th> : null}</tr></thead>
+        <tbody>
+          {!listBusy && result.items.length === 0 ? <tr><td colSpan={columns.length + (canWrite ? 1 : 0)}><div className="emptyState">{hasFilters ? `検索に一致する${itemLabel}がありません。` : `${itemLabel}はまだ登録されていません。`}</div></td></tr> : null}
+          {result.items.map((item) => <tr key={item.id}>
+            {columns.map((column) => {
+              const value = item[column.key];
+              return <td key={column.key}>{column.format === "color" ? <><span className="menuColor" style={{ background: String(value) }} /> {String(value)}</> : formatted(value, column.format)}</td>;
+            })}
+            {canWrite ? <td><div className="tableActions"><TenantLink className="miniButton" href={`${editBaseHref}/${encodeURIComponent(item.id)}/edit`}><Edit3 size={15} />編集</TenantLink><button className="dangerButton" disabled={busy || listBusy} type="button" onClick={() => void remove(item)}><Trash2 size={15} /></button></div></td> : null}
+          </tr>)}
+        </tbody>
+      </table>
+    </section>
+  </div>;
 }

@@ -2,7 +2,7 @@ import { CalendarCheck } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
 import { ReservationManagement } from "@/components/reservation-management";
 import { TenantLink } from "@/components/tenant-link";
-import type { AdminReservation } from "@/lib/admin-types";
+import type { AdminReservationPage } from "@/lib/admin-types";
 import { backendJson } from "@/lib/backend";
 
 export default async function TenantReservationSearchPage() {
@@ -10,7 +10,7 @@ export default async function TenantReservationSearchPage() {
   const fromDate = new Date(`${today}T00:00:00+09:00`);
   fromDate.setDate(fromDate.getDate() - 30);
   const dateFrom = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(fromDate);
-  const reservations = await backendJson<AdminReservation[]>(`/api/reservations?dateFrom=${dateFrom}&dateTo=${today}`);
+  const reservationPage = await backendJson<AdminReservationPage>(`/api/reservations/page?dateFrom=${dateFrom}&dateTo=${today}`);
 
   return (
     <AdminShell
@@ -23,7 +23,7 @@ export default async function TenantReservationSearchPage() {
         </TenantLink>
       }
     >
-      <div className="adminContent"><ReservationManagement initialReservations={reservations} initialDateFrom={dateFrom} initialDateTo={today} /></div>
+      <div className="adminContent"><ReservationManagement initialPage={reservationPage} initialDateFrom={dateFrom} initialDateTo={today} /></div>
     </AdminShell>
   );
 }

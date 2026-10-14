@@ -4,6 +4,8 @@ import { z } from "zod";
 import { prisma } from "./database.js";
 import { requireOperationContext, operationAudit, runSerializable, lockOperation } from "./operations-support.js";
 import { refreshCustomerAccounting } from "./accounting-stats.js";
+import { checkoutPage, checkoutPageQuerySchema } from "./checkout-page.js";
+import { registerPage, registerPageQuerySchema, openRegisterOptions } from "./register-page.js";
 import { assertCashSettlement, assertCashVersion, businessDateAt, calculateCashDraft, cashAssert,
   cashDraftSchema, CashError, cashRequestHash, expectedCash, CASH_MAX_YEN } from "./cash-domain.js";
 
@@ -88,6 +90,13 @@ export function registerCashRoutes(server: FastifyInstance) {
     const query = z.object({ reservationId: identifier.optional() }).strict().parse(request.query);
     return prisma.cashCheckout.findMany({ where: { ...scope(context), ...(query.reservationId ? { reservationId: query.reservationId } : {}) },
       include: checkoutInclude, orderBy: { createdAt: "desc" }, take: 200 });
+  });
+
+  server.get("/api/cash/checkouts/page", async (request, reply) => {
+    const context = await requireOperationContext(request, reply, "checkout.read");
+    if (!context) return;
+    const query = checkoutPageQuerySchema.parse(request.query);
+    return reply.header("Cache-Control", "private, no-store").send(await checkoutPage(prisma, scope(context), query));
   });
 
   server.get("/api/cash/checkouts/:id", async (request, reply) => {
@@ -268,6 +277,19 @@ export function registerCashRoutes(server: FastifyInstance) {
     if (!context) return;
     const sessions = await prisma.cashRegisterSession.findMany({ where: scope(context), include: registerInclude, orderBy: { businessDate: "desc" }, take: 90 });
     return sessions.map(registerResponse);
+  });
+
+  server.get("/api/cash/register-sessions/page", async (request, reply) => {
+    const context = await requireOperationContext(request, reply, "register.read");
+    if (!context) return;
+    const query = registerPageQuerySchema.parse(request.query);
+    return reply.header("Cache-Control", "private, no-store").send(await registerPage(prisma, scope(context), query));
+  });
+
+  server.get("/api/cash/register-sessions/options", async (request, reply) => {
+    const context = await requireOperationContext(request, reply, "register.read");
+    if (!context) return;
+    return reply.header("Cache-Control", "private, no-store").send(await openRegisterOptions(prisma, scope(context), businessDateAt(new Date(), context.salon.timezone)));
   });
 
   server.get("/api/cash/register-sessions/:id", async (request, reply) => {

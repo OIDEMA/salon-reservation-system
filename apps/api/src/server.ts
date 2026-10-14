@@ -16,10 +16,15 @@ import { legacyPermission } from "./legacy-permissions.js";
 import { registerCashRoutes } from "./cash-routes.js";
 import { registerChartRoutes } from "./chart-routes.js";
 import { registerAccessRoutes } from "./access-routes.js";
+import { registerCustomerImportRoutes } from "./customer-import-routes.js";
+import { customerExternalDetail } from "./customer-import.js";
+import { registerMasterPageRoutes } from "./master-page.js";
 import { z } from "zod";
 import { prisma } from "./database.js";
 import { customerAccountingTotals } from "./accounting-stats.js";
 import { customerLookupQuerySchema, lookupCustomers, registeredCustomerPhoneExists } from "./customer-lookup.js";
+import { customerPage, customerPageQuerySchema } from "./customer-page.js";
+import { reservationPage, reservationPageQuerySchema, reservationOptions, reservationOptionsQuerySchema } from "./reservation-page.js";
 import { requestedSalonId, requireAuthenticatedUser, requireTenantContext, type TenantContext } from "./tenant-context.js";
 
 export const server = Fastify({
@@ -574,9 +579,12 @@ server.addHook("preSerialization", async (request, _reply, payload) => {
   const route = request.routeOptions.url ?? "";
   if (!context || !route.startsWith("/api/admin/customers") || route === "/api/admin/customers/lookup" || !payload || typeof payload !== "object") return payload;
   const sanitize = (customer: Record<string, unknown>) => ({ ...customer,
-    ...(!hasPermission(context, "chart.read") ? { memo: null } : {}),
+    ...("memo" in customer && !hasPermission(context, "chart.read") ? { memo: null } : {}),
     ...(!hasPermission(context, "checkout.read") ? { totalSpent: null } : {})
   });
+  if (route === "/api/admin/customers/page" && "customers" in payload && Array.isArray(payload.customers)) {
+    return { ...payload, customers: payload.customers.map(sanitize) };
+  }
   return Array.isArray(payload) ? payload.map(sanitize) : sanitize(payload as Record<string, unknown>);
 });
 
@@ -964,6 +972,18 @@ server.get("/api/admin/customers", async (request, reply) => {
   return customers.map((customer) => ({ ...customer, totalSpent: totals.get(customer.id) ?? 0 }));
 });
 
+server.get("/api/admin/customers/page", async (request, reply) => {
+  const context = await requireTenantContext(request, reply);
+  if (!context) return;
+  const query = customerPageQuerySchema.parse(request.query);
+  const salon = await findScopedSalon(context, request);
+  const result = salon
+    ? await customerPage(prisma, { tenantId: context.tenant.id, salonId: salon.id,
+        readMemo: hasPermission(context, "chart.read"), readCheckout: hasPermission(context, "checkout.read") }, query)
+    : { customers: [], total: 0, page: 1, pageSize: query.pageSize, totalPages: 1 };
+  return reply.header("Cache-Control", "private, no-store").send(result);
+});
+
 server.get("/api/admin/customers/lookup", async (request, reply) => {
   const context = await requireTenantContext(request, reply);
   if (!context) return;
@@ -984,6 +1004,7 @@ server.get("/api/admin/customers/:id", async (request, reply) => {
   const customer = await prisma.customer.findFirst({
     where: { id, tenantId: context.tenant.id, salonId: salon.id },
     include: {
+      externalRecords: true,
       reservations: {
         include: { service: true, staff: true },
         orderBy: { startsAt: "desc" },
@@ -993,7 +1014,13 @@ server.get("/api/admin/customers/:id", async (request, reply) => {
   });
   if (!customer) return reply.code(404).send({ code: "CUSTOMER_NOT_FOUND", message: "顧客が見つかりません。" });
   const totals = await customerAccountingTotals(prisma, context.tenant.id, salon.id, [customer.id]);
-  return { ...customer, totalSpent: totals.get(customer.id) ?? 0 };
+  return {
+    id: customer.id, name: customer.name, kana: customer.kana, phone: customer.phone,
+    lineDisplayName: customer.lineDisplayName, tags: customer.tags, visitCount: customer.visitCount,
+    totalSpent: totals.get(customer.id) ?? 0, lastVisitAt: customer.lastVisitAt, memo: customer.memo,
+    createdAt: customer.createdAt, updatedAt: customer.updatedAt, reservations: customer.reservations,
+    importedProfiles: customer.externalRecords.map((record) => customerExternalDetail(record, hasPermission(context, "chart.read")))
+  };
 });
 
 server.post("/api/admin/customers", async (request, reply) => {
@@ -1140,6 +1167,28 @@ server.get("/api/reservations", async (request, reply) => {
     take: 1000
   });
   return reservations.map(reservationResponse);
+});
+
+server.get("/api/reservations/page", async (request, reply) => {
+  const context = await requireTenantContext(request, reply);
+  if (!context) return;
+  const query = reservationPageQuerySchema.parse(request.query);
+  const salon = await findScopedSalon(context, request);
+  const result = salon
+    ? await reservationPage(prisma, { tenantId: context.tenant.id, salonId: salon.id }, query)
+    : { reservations: [], total: 0, page: 1, pageSize: query.pageSize, totalPages: 1 };
+  return reply.header("Cache-Control", "private, no-store").send(result);
+});
+
+server.get("/api/reservations/options", async (request, reply) => {
+  const context = await requireTenantContext(request, reply);
+  if (!context) return;
+  const query = reservationOptionsQuerySchema.parse(request.query);
+  const salon = await findScopedSalon(context, request);
+  const result = salon
+    ? await reservationOptions(prisma, { tenantId: context.tenant.id, salonId: salon.id }, query)
+    : { reservations: [], hasMore: false };
+  return reply.header("Cache-Control", "private, no-store").send(result);
 });
 
 server.get("/api/reservations/:id", async (request, reply) => {
@@ -1355,6 +1404,8 @@ server.patch("/api/reservations/:id/status", async (request, reply) => {
 await registerCashRoutes(server);
 await registerChartRoutes(server);
 await registerAccessRoutes(server);
+await registerCustomerImportRoutes(server);
+await registerMasterPageRoutes(server);
 
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4001);
 const host = process.env.API_HOST ?? "0.0.0.0";

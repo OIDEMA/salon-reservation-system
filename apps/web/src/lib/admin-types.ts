@@ -115,6 +115,18 @@ export type AdminCustomer = {
   _count?: { reservations: number };
 };
 
+export type AdminCustomerSummary = Pick<AdminCustomer,
+  "id" | "name" | "kana" | "phone" | "lineDisplayName" | "tags" | "visitCount" | "lastVisitAt"
+> & { totalSpent: number | null };
+
+export type AdminCustomerPage = {
+  customers: AdminCustomerSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
 export type AdminCustomerDetail = AdminCustomer & {
   reservations: Array<{
     id: string;
@@ -166,4 +178,28 @@ export type AdminShift = {
   startsAt: string;
   endsAt: string;
   staff: { id: string; name: string } | null;
+};
+
+export type AdminReservationListItem = Pick<AdminReservation,
+  "id" | "date" | "startTime" | "endTime" | "status" | "source"
+> & {
+  customer: Pick<AdminReservation["customer"], "id" | "name" | "kana" | "phone">;
+  service: Pick<AdminReservation["service"], "id" | "name" | "price">;
+  staff: AdminReservation["staff"];
+};
+
+export type AdminReservationPage = {
+  reservations: AdminReservationListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+export type ReservationOption = {
+  id: string;
+  date: string;
+  startTime: string;
+  customerName: string;
+  serviceName: string;
 };

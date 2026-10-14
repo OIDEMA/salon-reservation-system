@@ -6,6 +6,8 @@ import { AppRouterContext, type AppRouterInstance } from "next/dist/shared/lib/a
 import { PathnameContext, SearchParamsContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
 import { AdminSidebar } from "../src/components/admin-shell";
 import { CustomerManagement } from "../src/components/customer-management";
+import { ReservationManagement } from "../src/components/reservation-management";
+import { CashCheckoutList, CashCheckoutCreate } from "../src/components/cash-views";
 import { ReservationDashboard } from "../src/components/reservation-dashboard";
 import { ReservationCreateForm } from "../src/components/reservation-create-form";
 import { ReservationEditForm } from "../src/components/reservation-edit-form";
@@ -73,10 +75,43 @@ test("予約表は閲覧権限だけの場合に新規登録の導線を表示�
 });
 
 test("顧客一覧は登録権限を持つ場合だけ新規登録の導線を表示する", () => {
-  const readOnly = renderFor(["customer.read"], <CustomerManagement initialCustomers={[]} />);
+  const readOnly = renderFor(["customer.read"], <CustomerManagement initialPage={{ customers: [], total: 0, page: 1, pageSize: 50, totalPages: 1 }} />);
   assert.doesNotMatch(readOnly, /href="\/salon-test\/customers\/new"/);
-  const writable = renderFor(["customer.read", "customer.write"], <CustomerManagement initialCustomers={[]} />);
+  const writable = renderFor(["customer.read", "customer.write"], <CustomerManagement initialPage={{ customers: [], total: 0, page: 1, pageSize: 50, totalPages: 1 }} />);
   assert.match(writable, /href="\/salon-test\/customers\/new"/);
+});
+
+test("顧客一覧のページ操作は全体件数を表示し、先頭・末尾の移動を制限する", () => {
+  const first = renderFor(["customer.read"], <CustomerManagement initialPage={{ customers: [], total: 1050, page: 1, pageSize: 50, totalPages: 21 }} />);
+  assert.match(first, /1,050件 \/ 1 \/ 21ページ/);
+  assert.match(first, /<button[^>]*disabled=""[^>]*>前へ<\/button>/);
+  assert.match(first, /<button class="secondaryButton" type="button">次へ<\/button>/);
+  assert.doesNotMatch(first, /氏名・カナ・電話・タグ・メモで検索/);
+  const last = renderFor(["customer.read", "chart.read"], <CustomerManagement initialPage={{ customers: [], total: 1050, page: 21, pageSize: 50, totalPages: 21 }} />);
+  assert.match(last, /<button[^>]*disabled=""[^>]*>次へ<\/button>/);
+  assert.match(last, /氏名・カナ・電話・タグ・メモで検索/);
+});
+
+test("予約・会計一覧はページ情報を表示し、会計の予約全件フォームを埋め込まない", () => {
+  const reservation = renderFor(["reservation.read"], <ReservationManagement initialPage={{ reservations: [], total: 1005, page: 1, pageSize: 50, totalPages: 21 }} initialDateFrom="2026-10-01" initialDateTo="2026-10-14" />);
+  assert.match(reservation, /1,005件 \/ 1 \/ 21ページ/);
+  assert.match(reservation, /<button[^>]*disabled=""[^>]*>前へ<\/button>/);
+  assert.doesNotMatch(reservation, />編集</);
+  const checkout = renderFor(["checkout.read"], <CashCheckoutList initialPage={{ checkouts: [], total: 220, page: 5, pageSize: 50, totalPages: 5 }} />);
+  assert.match(checkout, /220件 \/ 5 \/ 5ページ/);
+  assert.match(checkout, /<button[^>]*disabled=""[^>]*>次へ<\/button>/);
+  assert.doesNotMatch(checkout, /予約から会計を開始/);
+});
+
+test("会計作成の予約検索は予約閲覧権限を持つ場合だけ表示する", () => {
+  const lookup = renderFor(["checkout.write", "reservation.read"], <CashCheckoutCreate />);
+  assert.match(lookup, /予約を検索/);
+  assert.doesNotMatch(lookup, /placeholder="予約番号"/);
+  const manual = renderFor(["checkout.write"], <CashCheckoutCreate initialReservationId="known-reservation" />);
+  assert.doesNotMatch(manual, /予約を検索/);
+  assert.match(manual, /placeholder="予約番号"/);
+  assert.match(manual, /value="known-reservation"/);
+  assert.equal(renderFor(["checkout.read"], <CashCheckoutCreate />), "");
 });
 
 const reservationMenu: AdminMenu = {

@@ -1,9 +1,9 @@
 import { AdminShell } from "@/components/admin-shell";
 import { MasterDataManager } from "@/components/master-data-manager";
-import { fetchAdminCategories } from "@/lib/admin-api";
-import { categoryColumns, categoryDefaults, categoryFields } from "@/lib/category-form";
+import { fetchMasterPage } from "@/lib/master-page-api";
+import { categoryColumns } from "@/lib/category-form";
 
 export default async function TenantCategoriesPage() {
-  const categories = await fetchAdminCategories();
-  return <AdminShell active="/categories" title="カテゴリー管理"><div className="adminContent"><MasterDataManager resource="categories" initialItems={categories} fields={categoryFields} columns={categoryColumns} itemLabel="カテゴリー" defaults={categoryDefaults(categories.length)} createHref="/categories/new" editBaseHref="/categories" /></div></AdminShell>;
+  const page = await fetchMasterPage("categories");
+  return <AdminShell active="/categories" title="カテゴリー管理"><div className="adminContent"><MasterDataManager resource="categories" initialPage={page} columns={categoryColumns} itemLabel="カテゴリー" createHref="/categories/new" editBaseHref="/categories" searchPlaceholder="カテゴリー名・説明で検索" typeOptions={[{value:"MENU",label:"メニュー"},{value:"OPTION",label:"オプション"}]} /></div></AdminShell>;
 }

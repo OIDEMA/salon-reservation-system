@@ -167,6 +167,7 @@ model AuditLog {
 }
 
 model Salon {
+  customerImportRuns CustomerImportRun[]
   treatmentCharts TreatmentChart[]
   cashCheckouts CashCheckout[]
   cashRegisterSessions CashRegisterSession[]
@@ -322,6 +323,7 @@ model SalonSettings {
 }
 
 model Customer {
+  externalRecords CustomerExternalRecord[]
   treatmentCharts TreatmentChart[]
   id              String        @id @default(cuid())
   tenantId        String
@@ -342,6 +344,46 @@ model Customer {
 
   @@unique([tenantId, salonId, id])
   @@index([tenantId, salonId, kana])
+}
+
+// Imported identifiers remain independent of editable customer names and telephone numbers.
+model CustomerExternalRecord {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  salonId            String
+  customerId         String
+  source             String
+  sourceStoreId      String
+  externalCustomerId String
+  profile            Json
+  importedAt         DateTime @default(now())
+  customer           Customer @relation(fields: [tenantId, salonId, customerId], references: [tenantId, salonId, id], onDelete: Cascade)
+
+  @@unique([tenantId, salonId, source, sourceStoreId, externalCustomerId])
+  @@index([tenantId, salonId, customerId])
+}
+
+// The manifest contains hashes only. Customer data is sent in bounded, retryable chunks.
+model CustomerImportRun {
+  id               String   @id @default(cuid())
+  tenantId         String
+  salonId          String
+  source           String
+  sourceStoreId    String
+  capturedAt       DateTime
+  expectedCount    Int
+  checksum         String
+  recordHashes     String[]
+  processedOffsets Int[]    @default([])
+  createdCount     Int      @default(0)
+  skippedCount     Int      @default(0)
+  createdByUserId   String
+  createdAt        DateTime @default(now())
+  completedAt      DateTime?
+  salon            Salon    @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([tenantId, salonId, source, sourceStoreId, checksum])
+  @@index([tenantId, salonId, createdAt])
 }
 
 model Reservation {

@@ -1,4 +1,4 @@
-import type { AdminCategory, AdminCustomer, AdminEquipment, AdminMenu, AdminSettingsPayload, AdminStaff } from "./admin-types";
+import type { AdminCategory, AdminCustomer, AdminCustomerPage, AdminEquipment, AdminMenu, AdminSettingsPayload, AdminStaff } from "./admin-types";
 import { backendJson } from "./backend";
 
 export function fetchAdminSettings() {
@@ -23,6 +23,10 @@ export function fetchAdminEquipment() {
 
 export function fetchAdminCustomers() {
   return backendJson<AdminCustomer[]>("/api/admin/customers");
+}
+
+export function fetchAdminCustomerPage() {
+  return backendJson<AdminCustomerPage>("/api/admin/customers/page");
 }
 
 export function fetchReservationCatalog(tenantSlug?: string) {

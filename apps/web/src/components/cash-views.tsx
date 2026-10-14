@@ -1,16 +1,16 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DismissibleMessage } from "@/components/dismissible-message";
 import { TenantLink } from "@/components/tenant-link";
 import { usePermissions, useTenant, useTenantSlug } from "@/components/tenant-provider";
 import { tenantApiPath, tenantPath } from "@/lib/tenant-routing";
-import type { AdminReservation } from "@/lib/admin-types";
-import { cashMethodLabels, cashStatusLabels, cashYen, type CashCheckout, type CashItem, type CashPayment, type CashRegister } from "./cash-types";
+import type { ReservationOption } from "@/lib/admin-types";
+import { cashMethodLabels, cashStatusLabels, cashYen, type CashCheckout, type CashCheckoutPage, type CashItem, type CashPayment, type CashRegister, type CashRegisterSummary, type CashRegisterPage } from "./cash-types";
 
-async function api<T>(slug: string, path: string, method = "GET", body?: unknown): Promise<T> {
-  const response = await fetch(tenantApiPath(slug, `/cash${path}`), { method, cache: "no-store",
+async function api<T>(slug: string, path: string, method = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(tenantApiPath(slug, `/cash${path}`), { method, cache: "no-store", signal,
     ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) });
   const result = await response.json().catch(() => null);
   if (!response.ok) throw new Error(result?.message ?? `処理に失敗しました (${response.status})`);
@@ -21,17 +21,46 @@ function CashMessage({ message, dismiss }: { message: string; dismiss: () => voi
   return message ? <DismissibleMessage className="formMessage" role="status" message={message} onDismiss={dismiss} /> : null;
 }
 
-export function CashCheckoutCreate({ reservations, initialReservationId = "" }: { reservations: AdminReservation[]; initialReservationId?: string }) {
+export function CashCheckoutCreate({ initialReservation, initialReservationId = initialReservation?.id ?? "" }: { initialReservation?: ReservationOption; initialReservationId?: string }) {
   const slug = useTenantSlug();
   const router = useRouter();
   const { can } = usePermissions();
+  const canReadReservations = can("reservation.read");
   const [reservationId, setReservationId] = useState(initialReservationId);
+  const [query, setQuery] = useState("");
+  const [options, setOptions] = useState<ReservationOption[]>(initialReservation ? [initialReservation] : []);
+  const [hasMore, setHasMore] = useState(false);
+  const [optionsBusy, setOptionsBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const request = useRef("");
+
+  useEffect(() => {
+    if (!canReadReservations) return;
+    const controller = new AbortController();
+    setOptionsBusy(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams();
+        if (query.trim()) params.set("q", query.trim());
+        const response = await fetch(tenantApiPath(slug, `/reservations/options?${params}`), { cache: "no-store", signal: controller.signal });
+        const data = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(data?.message ?? "予約候補を取得できませんでした。");
+        if (controller.signal.aborted) return;
+        const result = data as { reservations: ReservationOption[]; hasMore: boolean };
+        setOptions(initialReservation && !query.trim() && !result.reservations.some((item) => item.id === initialReservation.id)
+          ? [initialReservation, ...result.reservations] : result.reservations);
+        setHasMore(result.hasMore);
+      } catch (error) {
+        if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "予約候補を取得できませんでした。");
+      } finally { if (!controller.signal.aborted) setOptionsBusy(false); }
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [query, slug, canReadReservations, initialReservation]);
+
   async function create(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || !can("checkout.write")) return;
+    if (busy || optionsBusy || !can("checkout.write")) return;
     setBusy(true); setMessage("");
     request.current ||= crypto.randomUUID();
     try {
@@ -41,20 +70,68 @@ export function CashCheckoutCreate({ reservations, initialReservationId = "" }: 
   }
   if (!can("checkout.write")) return null;
   return <section className="adminPanel cashPanel"><h2>予約から会計を開始</h2>
-      <form className="cashStartForm" onSubmit={create}><label className="createField"><span>予約</span>
-        {reservations.length ? <select required disabled={busy} value={reservationId} onChange={(event) => { setReservationId(event.target.value); request.current = ""; }}>
-          <option value="">予約を選択してください</option>
-          {reservations.filter((reservation) => !["CANCELLED", "NO_SHOW"].includes(reservation.status)).map((reservation) => <option key={reservation.id} value={reservation.id}>{reservation.date} {reservation.startTime} / {reservation.customer.name} / {reservation.service.name}</option>)}
-        </select> : <input required disabled={busy} maxLength={160} placeholder="予約番号" value={reservationId} onChange={(event) => { setReservationId(event.target.value); request.current = ""; }} />}</label><button className="primaryButton" disabled={busy || !reservationId}>{busy ? "作成中..." : "会計を開く"}</button></form>
+      <form className="cashStack" onSubmit={create}>
+        {canReadReservations ? <>
+          <label className="createField"><span>予約を検索</span><input maxLength={100} disabled={busy} value={query} onChange={(event) => {
+            setQuery(event.target.value); setReservationId(""); setOptions([]); setHasMore(false); setMessage(""); request.current = "";
+          }} placeholder="氏名・カナ・電話番号・メニューで検索" /></label>
+          <label className="createField"><span>予約</span><select required disabled={busy || optionsBusy} value={reservationId} onChange={(event) => { setReservationId(event.target.value); request.current = ""; }}>
+            <option value="">{optionsBusy ? "検索中..." : "予約を選択してください"}</option>
+            {options.map((reservation) => <option key={reservation.id} value={reservation.id}>{reservation.date} {reservation.startTime} / {reservation.customerName} / {reservation.serviceName}</option>)}
+          </select></label>
+          {!optionsBusy && hasMore ? <p className="cashNotice">候補が多いため、氏名などで絞り込んでください。</p> : null}
+          {!optionsBusy && !options.length ? <p className="cashNotice">該当する予約はありません。</p> : null}
+        </> : <label className="createField"><span>予約番号</span><input required disabled={busy} maxLength={160} placeholder="予約番号" value={reservationId} onChange={(event) => { setReservationId(event.target.value); request.current = ""; }} /></label>}
+        <button className="primaryButton" disabled={busy || optionsBusy || !reservationId}>{busy ? "作成中..." : "会計を開く"}</button>
+      </form>
       <CashMessage message={message} dismiss={() => setMessage("")} />
     </section>;
 }
 
-export function CashCheckoutList({ checkouts, reservations }: { checkouts: CashCheckout[]; reservations: AdminReservation[] }) {
-  return <div className="cashStack"><CashCheckoutCreate reservations={reservations} />
-    <section className="tablePanel"><table className="adminTable"><thead><tr><th>お客様・予約</th><th>会計金額</th><th>状態</th><th>操作</th></tr></thead><tbody>
-      {checkouts.map((checkout) => <tr key={checkout.id}><td><strong>{checkout.reservationSnapshot.customerName}</strong><small>{checkout.reservationSnapshot.serviceName}</small></td><td>{cashYen(checkout.totalYen)}</td><td>{cashStatusLabels[checkout.status]}</td><td><TenantLink className="miniButton" href={`/checkout/${checkout.id}`}>詳細</TenantLink>{checkout.status !== "DRAFT" ? <TenantLink className="miniButton" href={`/checkout/${checkout.id}/receipt`}>会計控え</TenantLink> : null}</td></tr>)}
-      {!checkouts.length ? <tr><td colSpan={4}>会計の記録はありません。</td></tr> : null}
+export function CashCheckoutList({ initialPage }: { initialPage: CashCheckoutPage }) {
+  const slug = useTenantSlug();
+  const [checkoutPage, setCheckoutPage] = useState(initialPage);
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("");
+  const [applied, setApplied] = useState({ query: "", status: "" });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const controller = useRef<AbortController | null>(null);
+  useEffect(() => () => { controller.current?.abort(); }, []);
+
+  async function load(page: number, filters = applied) {
+    controller.current?.abort();
+    const current = new AbortController(); controller.current = current;
+    setBusy(true); setMessage("");
+    try {
+      const params = new URLSearchParams({ page: String(page), pageSize: String(initialPage.pageSize) });
+      if (filters.query.trim()) params.set("q", filters.query.trim());
+      if (filters.status) params.set("status", filters.status);
+      const result = await api<CashCheckoutPage>(slug, `/checkouts/page?${params}`, "GET", undefined, current.signal);
+      if (current.signal.aborted) return;
+      setCheckoutPage(result); setApplied(filters);
+    } catch (error) {
+      if (!current.signal.aborted) setMessage(error instanceof Error ? error.message : "会計一覧を取得できませんでした。");
+    } finally { if (!current.signal.aborted) setBusy(false); }
+  }
+
+  return <div className="cashStack">
+    <form className="masterToolbar" onSubmit={(event) => { event.preventDefault(); void load(1, { query, status }); }}>
+      <label className="searchBox wide"><input maxLength={100} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="顧客名・カナ・電話・メニューで検索" /></label>
+      <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="会計状態"><option value="">全ステータス</option>{Object.entries(cashStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+      <button className="primaryButton" disabled={busy} type="submit">検索</button>
+    </form>
+    <CashMessage message={message} dismiss={() => setMessage("")} />
+    <nav className="masterToolbar" aria-label="会計一覧のページ">
+      <span aria-live="polite">{busy ? "検索中..." : `${checkoutPage.total.toLocaleString("ja-JP")}件 / ${checkoutPage.page} / ${checkoutPage.totalPages}ページ`}</span>
+      <div className="adminActions">
+        <button className="secondaryButton" type="button" disabled={busy || checkoutPage.page <= 1} onClick={() => void load(checkoutPage.page - 1)}>前へ</button>
+        <button className="secondaryButton" type="button" disabled={busy || checkoutPage.page >= checkoutPage.totalPages} onClick={() => void load(checkoutPage.page + 1)}>次へ</button>
+      </div>
+    </nav>
+    <section className="tablePanel" aria-busy={busy}><table className="adminTable"><thead><tr><th>お客様・予約</th><th>会計金額</th><th>状態</th><th>操作</th></tr></thead><tbody>
+      {checkoutPage.checkouts.map((checkout) => <tr key={checkout.id}><td><strong>{checkout.customerName}</strong><small>{checkout.serviceName}</small></td><td>{cashYen(checkout.totalYen)}</td><td>{cashStatusLabels[checkout.status]}</td><td><TenantLink className="miniButton" href={`/checkout/${checkout.id}`}>詳細</TenantLink>{checkout.status !== "DRAFT" ? <TenantLink className="miniButton" href={`/checkout/${checkout.id}/receipt`}>会計控え</TenantLink> : null}</td></tr>)}
+      {!busy && !checkoutPage.checkouts.length ? <tr><td colSpan={4}>該当する会計はありません。</td></tr> : null}
     </tbody></table></section>
   </div>;
 }
@@ -65,7 +142,7 @@ function editable(checkout: CashCheckout) {
     legacyPaidAcknowledged: checkout.legacyPaidAcknowledged, notes: checkout.notes };
 }
 
-export function CashCheckoutEditor({ initialCheckout, registers }: { initialCheckout: CashCheckout; registers: CashRegister[] }) {
+export function CashCheckoutEditor({ initialCheckout, registers }: { initialCheckout: CashCheckout; registers: CashRegisterSummary[] }) {
   const slug = useTenantSlug();
   const { can } = usePermissions();
   const canEdit = can("checkout.write");
@@ -159,8 +236,48 @@ export function CashCheckoutEditor({ initialCheckout, registers }: { initialChec
   </div>;
 }
 
-export function CashRegisterList({ registers }: { registers: CashRegister[] }) {
-  return <section className="tablePanel"><table className="adminTable"><thead><tr><th>営業日</th><th>状態</th><th>開店現金</th><th>想定現金</th><th>実査差額</th><th>操作</th></tr></thead><tbody>{registers.map((register) => <tr key={register.id}><td>{register.businessDate}</td><td>{register.status === "OPEN" ? "営業中" : "締め済み"}</td><td>{cashYen(register.openingCashYen)}</td><td>{cashYen(register.expectedCashYen)}</td><td>{register.differenceYen === null ? "—" : cashYen(register.differenceYen)}</td><td><TenantLink className="miniButton" href={`/register/${register.id}`}>詳細</TenantLink></td></tr>)}{!registers.length ? <tr><td colSpan={6}>レジの記録はありません。</td></tr> : null}</tbody></table></section>;
+export function CashRegisterList({ initialPage }: { initialPage: CashRegisterPage }) {
+  const slug = useTenantSlug();
+  const [registerPage, setRegisterPage] = useState(initialPage);
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("");
+  const [applied, setApplied] = useState({ query: "", status: "" });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const controller = useRef<AbortController | null>(null);
+  useEffect(() => () => { controller.current?.abort(); }, []);
+
+  async function load(page: number, filters = applied) {
+    controller.current?.abort();
+    const current = new AbortController(); controller.current = current;
+    setBusy(true); setMessage("");
+    try {
+      const params = new URLSearchParams({ page: String(page), pageSize: String(initialPage.pageSize) });
+      if (filters.query.trim()) params.set("q", filters.query.trim());
+      if (filters.status) params.set("status", filters.status);
+      const result = await api<CashRegisterPage>(slug, `/register-sessions/page?${params}`, "GET", undefined, current.signal);
+      if (current.signal.aborted) return;
+      setRegisterPage(result); setApplied(filters);
+    } catch (error) {
+      if (!current.signal.aborted) setMessage(error instanceof Error ? error.message : "レジ一覧を取得できませんでした。");
+    } finally { if (!current.signal.aborted) setBusy(false); }
+  }
+  return <div className="cashStack">
+    <form className="masterToolbar" onSubmit={(event) => { event.preventDefault(); void load(1, { query, status }); }}>
+      <label className="searchBox wide"><input maxLength={100} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="営業日・メモで検索" /></label>
+      <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="レジ状態"><option value="">すべての状態</option><option value="OPEN">営業中</option><option value="CLOSED">締め済み</option></select>
+      <button className="primaryButton" type="submit" disabled={busy}>検索</button>
+    </form>
+    <CashMessage message={message} dismiss={() => setMessage("")} />
+    <nav className="masterToolbar" aria-label="レジ一覧のページ">
+      <span aria-live="polite">{busy ? "検索中..." : `${registerPage.total.toLocaleString("ja-JP")}件 / ${registerPage.page} / ${registerPage.totalPages}ページ`}</span>
+      <div className="adminActions">
+        <button className="secondaryButton" type="button" disabled={busy || registerPage.page <= 1} onClick={() => void load(registerPage.page - 1)}>前へ</button>
+        <button className="secondaryButton" type="button" disabled={busy || registerPage.page >= registerPage.totalPages} onClick={() => void load(registerPage.page + 1)}>次へ</button>
+      </div>
+    </nav>
+    <section className="tablePanel" aria-busy={busy}><table className="adminTable"><thead><tr><th>営業日</th><th>状態</th><th>開店現金</th><th>想定現金</th><th>実査差額</th><th>操作</th></tr></thead><tbody>{registerPage.registers.map((register) => <tr key={register.id}><td>{register.businessDate}</td><td>{register.status === "OPEN" ? "営業中" : "締め済み"}</td><td>{cashYen(register.openingCashYen)}</td><td>{cashYen(register.expectedCashYen)}</td><td>{register.differenceYen === null ? "—" : cashYen(register.differenceYen)}</td><td><TenantLink className="miniButton" href={`/register/${register.id}`}>詳細</TenantLink></td></tr>)}{!busy && !registerPage.registers.length ? <tr><td colSpan={6}>該当するレジはありません。</td></tr> : null}</tbody></table></section>
+  </div>;
 }
 
 export function CashRegisterOpen() {

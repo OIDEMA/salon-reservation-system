@@ -1,11 +1,11 @@
 "use client";
 
 import { Edit3, Search } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DismissibleMessage } from "@/components/dismissible-message";
 import { TenantLink } from "@/components/tenant-link";
 import { useTenantSlug, usePermissions } from "@/components/tenant-provider";
-import type { AdminReservation } from "@/lib/admin-types";
+import type { AdminReservationPage } from "@/lib/admin-types";
 import { tenantApiPath } from "@/lib/tenant-routing";
 
 const statusOptions = [
@@ -25,17 +25,19 @@ async function responseError(response: Response) {
 }
 
 export function ReservationManagement({
-  initialReservations,
+  initialPage,
   initialDateFrom,
   initialDateTo
 }: {
-  initialReservations: AdminReservation[];
+  initialPage: AdminReservationPage;
   initialDateFrom: string;
   initialDateTo: string;
 }) {
   const tenantSlug = useTenantSlug();
   const { can } = usePermissions();
-  const [reservations, setReservations] = useState(initialReservations);
+  const [reservationPage, setReservationPage] = useState(initialPage);
+  const controller = useRef<AbortController | null>(null);
+  const [appliedFilters, setAppliedFilters] = useState({ q: "", status: "", dateFrom: initialDateFrom, dateTo: initialDateTo });
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [dateFrom, setDateFrom] = useState(initialDateFrom);
@@ -43,27 +45,41 @@ export function ReservationManagement({
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function searchReservations() {
+  useEffect(() => () => { controller.current?.abort(); }, []);
+
+  async function loadReservations(page: number, filters = appliedFilters) {
+    controller.current?.abort();
+    const current = new AbortController();
+    controller.current = current;
     setBusy(true);
     setMessage("");
     try {
-      const params = new URLSearchParams({ dateFrom, dateTo });
-      if (q.trim()) params.set("q", q.trim());
-      if (status) params.set("status", status);
-      const response = await fetch(`${tenantApiPath(tenantSlug, "/reservations")}?${params}`, { cache: "no-store" });
+      const params = new URLSearchParams({ page: String(page), pageSize: String(initialPage.pageSize) });
+      if (filters.q.trim()) params.set("q", filters.q.trim());
+      if (filters.status) params.set("status", filters.status);
+      if (filters.dateFrom) params.set("dateFrom", filters.dateFrom);
+      if (filters.dateTo) params.set("dateTo", filters.dateTo);
+      const response = await fetch(`${tenantApiPath(tenantSlug, "/reservations/page")}?${params}`, { cache: "no-store", signal: current.signal });
       if (!response.ok) throw new Error(await responseError(response));
-      setReservations((await response.json()) as AdminReservation[]);
+      const data = await response.json() as AdminReservationPage;
+      if (current.signal.aborted) return;
+      setReservationPage(data);
+      setAppliedFilters(filters);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "予約検索に失敗しました。");
+      if (!current.signal.aborted) setMessage(error instanceof Error ? error.message : "予約検索に失敗しました。");
     } finally {
-      setBusy(false);
+      if (!current.signal.aborted) setBusy(false);
     }
+  }
+
+  function searchReservations() {
+    void loadReservations(1, { q, status, dateFrom, dateTo });
   }
 
   return (
     <div className="reservationManager">
       <section className="searchPanel reservationSearchControls">
-        <label className="searchBox wide"><Search size={18} /><input value={q} onChange={(event) => setQ(event.target.value)} placeholder="顧客名・カナ・電話・メニュー・メモ" /></label>
+        <label className="searchBox wide"><Search size={18} /><input value={q} maxLength={100} onChange={(event) => setQ(event.target.value)} placeholder="顧客名・カナ・電話・メニュー・メモ" /></label>
         <select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全ステータス</option>{statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
         <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
         <span>〜</span>
@@ -72,11 +88,19 @@ export function ReservationManagement({
       </section>
       {message ? <DismissibleMessage message={message} onDismiss={() => setMessage("")} /> : null}
 
-      <section className="tablePanel">
+      <nav className="masterToolbar" aria-label="予約一覧のページ">
+        <span aria-live="polite">{busy ? "検索中..." : `${reservationPage.total.toLocaleString("ja-JP")}件 / ${reservationPage.page} / ${reservationPage.totalPages}ページ`}</span>
+        <div className="adminActions">
+          <button className="secondaryButton" type="button" disabled={busy || reservationPage.page <= 1} onClick={() => void loadReservations(reservationPage.page - 1)}>前へ</button>
+          <button className="secondaryButton" type="button" disabled={busy || reservationPage.page >= reservationPage.totalPages} onClick={() => void loadReservations(reservationPage.page + 1)}>次へ</button>
+        </div>
+      </nav>
+      <section className="tablePanel" aria-busy={busy}>
         <table className="adminTable reservationTable">
           <thead><tr><th>日時</th><th>顧客</th><th>メニュー</th><th>担当</th><th>価格</th><th>状態</th><th>経路</th><th>操作</th></tr></thead>
           <tbody>
-            {reservations.map((reservation) => (
+            {!busy && !reservationPage.reservations.length ? <tr><td colSpan={8}>該当する予約はありません。</td></tr> : null}
+            {reservationPage.reservations.map((reservation) => (
               <tr key={reservation.id}>
                 <td><strong>{reservation.date.replaceAll("-", "/")}</strong><small>{reservation.startTime}-{reservation.endTime}</small></td>
                 <td><strong>{reservation.customer.name}</strong><small>{reservation.customer.kana} / {reservation.customer.phone || "電話未登録"}</small></td>

@@ -60,7 +60,8 @@ const detailInclude = {
   }
 } satisfies Prisma.TreatmentChartInclude;
 const summaryInclude = {
-  revisions: { orderBy: { revisionNumber: "desc" as const }, take: 1, include: { _count: { select: { photoLinks: true } } } }
+  revisions: { orderBy: { revisionNumber: "desc" as const }, take: 1,
+    select: { revisionNumber: true, treatmentAt: true, status: true, _count: { select: { photoLinks: true } } } }
 } satisfies Prisma.TreatmentChartInclude;
 const reservationInclude = {
   customer: { select: { id: true, name: true } },
