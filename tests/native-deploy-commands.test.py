@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -14,7 +15,8 @@ SHA = 'a' * 40
 BUILD = '11111111-2222-3333-4444-555555555555'
 LINK = 'projects/salon-reserve-bg/locations/asia-east1/connections/firebase/gitRepositoryLinks/salon-reservation-system'
 BACKEND = 'projects/salon-reserve-bg/locations/asia-east1/backends/salon-reserve-web'
-BUILD_PATH = f'{BACKEND}/builds/native-{BUILD}'
+APP_ID = 'native-666ff6ccaa5b3c07feaa3a9'
+BUILD_PATH = f'{BACKEND}/builds/{APP_ID}'
 ENV = {
     'PROJECT_ID': 'salon-reserve-bg', 'PROJECT_NUMBER': '42401528382', 'REGION': 'asia-east1',
     'API_SERVICE': 'reservation-api', 'CHART_PHOTOS_BUCKET': 'salon-reserve-bg-chart-photos',
@@ -37,6 +39,12 @@ class NativeDeploymentTests(unittest.TestCase):
         self.commands = []
         self.requests = []
         self.events = []
+        self.validation_attempts = 0
+        self.real_rollout_created = False
+        self.build_reads = 0
+        env = dict(ENV, **(changes or {}))
+        active_app_id = 'native-' + hashlib.sha256(env['BUILD_ID'].encode('utf-8')).hexdigest()[:23]
+        active_build_path = f'{BACKEND}/builds/{active_app_id}'
         def run(command, **kwargs):
             self.commands.append(command)
             self.events.append(('command', command))
@@ -86,14 +94,31 @@ class NativeDeploymentTests(unittest.TestCase):
             if url.endswith('/services/reservation-api'):
                 return Response({'generation': '20'})
             if method == 'POST':
+                if '/builds?' in url and bad == 'build-id-error':
+                    body = {'error': {'code': 400, 'message': 'build_id must have length between 3 and 30.\nAuthorization: Bearer test-token\nHeaders: {"Cookie":"top-secret"}', 'details': [{'headers': {'secret': 'hidden-detail'}}]}}
+                    raise urllib.error.HTTPError(url, 400, 'bad request', {'Authorization': 'private-header'}, Response(body))
+                if 'validateOnly=true' in url:
+                    self.validation_attempts += 1
+                    status = 403 if bad == 'validation-fatal' else 400
+                    if bad in ('validation-fatal', 'validation-always400') or (bad == 'validation-pending' and self.validation_attempts < 3):
+                        raise urllib.error.HTTPError(url, status, 'validation error', {}, Response({'error': {'message': 'Build reference is not ready.'}}))
+                    return Response({'name': 'projects/42401528382/locations/asia-east1/operations/validation'})
+                if '/rollouts?' in url:
+                    self.real_rollout_created = True
                 name = 'build' if '/builds?' in url else 'rollout'
                 return Response({'name': f'projects/42401528382/locations/asia-east1/operations/{name}'})
             if '/operations/' in url:
+                if bad == 'operation-error':
+                    return Response({'done': True, 'error': {'code': 7, 'message': 'Build compilation failed.\nAuthorization: Bearer test-token\nHeaders: {"Cookie":"top-secret"}'}})
                 return Response({'done': True})
             if '/builds/' in url:
-                return Response({'state': 'READY', 'source': {'codebase': {'hash': 'b' * 40 if bad == 'wrong-build' else SHA, 'repository': LINK}}})
+                self.build_reads += 1
+                state = 'READY' if self.real_rollout_created else 'BUILT'
+                if bad == 'build-pending' and self.build_reads == 1:
+                    state = 'BUILDING'
+                return Response({'state': state, 'source': {'codebase': {'hash': 'b' * 40 if bad == 'wrong-build' else SHA, 'repository': LINK}}})
             if '/rollouts/' in url:
-                return Response({'state': 'SUCCEEDED', 'build': BUILD_PATH})
+                return Response({'state': 'SUCCEEDED', 'build': active_build_path})
             if url.endswith('/login'):
                 return Response('サロン管理へログイン')
             if url.endswith('/ready'):
@@ -106,7 +131,6 @@ class NativeDeploymentTests(unittest.TestCase):
             def open(self, url, timeout=None):
                 raise urllib.error.HTTPError(url, 307, 'redirect', {'Location': '/login'}, None)
 
-        env = dict(ENV, **(changes or {}))
         with patch.dict(os.environ, env, clear=True), patch('subprocess.run', side_effect=run), patch('urllib.request.urlopen', side_effect=open_url), patch('urllib.request.build_opener', return_value=Opener()), patch('time.sleep'), contextlib.redirect_stdout(io.StringIO()):
             exec(compile(SOURCE, 'deploy-native', 'exec'), {})
 
@@ -128,7 +152,7 @@ class NativeDeploymentTests(unittest.TestCase):
         self.assertIn('--wait', mutations[1])
         self.assertIn(f"--image={ENV['API_IMAGE']}", mutations[2])
         self.assertIn(f'--labels=native-deploy-build={BUILD}', mutations[2])
-        writes = [data for method, _, data in self.requests if method == 'POST']
+        writes = [data for method, url, data in self.requests if method == 'POST' and 'validateOnly=true' not in url]
         self.assertEqual(writes, [{'source': {'codebase': {'commit': SHA}}}, {'build': BUILD_PATH}])
 
     def test_each_mutation_has_an_intent_written_immediately_before_it(self):
@@ -168,7 +192,7 @@ class NativeDeploymentTests(unittest.TestCase):
                 with self.assertRaises(subprocess.CalledProcessError):
                     self.run_deploy(bad='intent-' + phase)
                 mutations = [command for command in self.commands if command[1:2] == ['run'] and (command[2] == 'deploy' or command[3] in ('deploy', 'execute'))]
-                app_writes = [request for request in self.requests if request[0] == 'POST']
+                app_writes = [request for request in self.requests if request[0] == 'POST' and 'validateOnly=true' not in request[1]]
                 self.assertEqual(len(mutations) + len(app_writes), completed)
 
     def test_automatic_rollouts_must_be_explicitly_disabled(self):
@@ -236,6 +260,66 @@ class NativeDeploymentTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.run_deploy(bad='wrong-build')
         self.assertFalse(any(method == 'POST' and '/rollouts?' in url for method, url, _ in self.requests))
+
+    def test_app_hosting_ids_are_short_deterministic_and_shared_by_build_and_rollout(self):
+        cases = (
+            (BUILD, APP_ID),
+            ('11111111-1111-4111-8111-111111111111', 'native-bd7662a5eeb41614e720d47'),
+        )
+        for build, expected_id in cases:
+            with self.subTest(build=build):
+                self.run_deploy({'BUILD_ID': build, 'API_IMAGE': f'asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-api:{SHA}-{build}'})
+                self.assertEqual(len(expected_id), 30)
+                self.assertEqual(expected_id, 'native-' + hashlib.sha256(build.encode('utf-8')).hexdigest()[:23])
+                create_build = next(url for method, url, _ in self.requests if method == 'POST' and '/builds?' in url)
+                rollout = next((url, payload) for method, url, payload in self.requests if method == 'POST' and '/rollouts?' in url and 'validateOnly=true' not in url)
+                self.assertTrue(create_build.endswith('buildId=' + expected_id))
+                self.assertTrue(rollout[0].endswith('rolloutId=' + expected_id))
+                self.assertEqual(rollout[1]['build'], f'{BACKEND}/builds/{expected_id}')
+
+    def test_compiled_source_is_checked_and_rollout_is_created_before_lro_waits(self):
+        self.run_deploy(bad='build-pending')
+        actual_index = next(i for i, event in enumerate(self.events) if event[0:2] == ('request', 'POST') and '/rollouts?' in event[2] and 'validateOnly=true' not in event[2])
+        previous = [event for event in self.events[:actual_index] if event[0] == 'request']
+        self.assertGreaterEqual(sum(event[1] == 'GET' and '/builds/' in event[2] for event in previous), 2)
+        self.assertTrue(any(event[1] == 'POST' and 'validateOnly=true' in event[2] for event in previous))
+        self.assertFalse(any('/operations/' in event[2] for event in previous))
+        following = [event[2] for event in self.events[actual_index + 1:] if event[0] == 'request' and event[1] == 'GET']
+        self.assertIn('/operations/build', following[0])
+        self.assertIn('/operations/rollout', following[1])
+        self.assertIn('/builds/' + APP_ID, following[2])
+        self.assertIn('/rollouts/' + APP_ID, following[3])
+
+    def test_rollout_validation_retries_400_without_repeating_real_rollout(self):
+        self.run_deploy(bad='validation-pending')
+        self.assertEqual(self.validation_attempts, 3)
+        real = [request for request in self.requests if request[0] == 'POST' and '/rollouts?' in request[1] and 'validateOnly=true' not in request[1]]
+        self.assertEqual(len(real), 1)
+
+    def test_validation_failure_or_exhaustion_never_creates_real_rollout(self):
+        for bad, attempts in (('validation-fatal', 1), ('validation-always400', 10)):
+            with self.subTest(bad=bad):
+                with self.assertRaises(RuntimeError):
+                    self.run_deploy(bad=bad)
+                self.assertEqual(self.validation_attempts, attempts)
+                self.assertFalse(self.real_rollout_created)
+                self.assertFalse(any('appRolloutRequested' in command for command in self.commands))
+
+    def test_http_diagnostics_include_safe_message_without_tokens_headers_or_details(self):
+        with self.assertRaises(RuntimeError) as error:
+            self.run_deploy(bad='build-id-error')
+        message = str(error.exception)
+        self.assertIn('build_id must have length between 3 and 30.', message)
+        for secret in ('test-token', 'top-secret', 'hidden-detail', 'private-header', 'Authorization:', 'Headers:'):
+            self.assertNotIn(secret, message)
+
+    def test_operation_diagnostics_redact_authorization_and_headers(self):
+        with self.assertRaises(RuntimeError) as error:
+            self.run_deploy(bad='operation-error')
+        message = str(error.exception)
+        self.assertIn('Build compilation failed.', message)
+        for secret in ('test-token', 'top-secret', 'Authorization:', 'Headers:'):
+            self.assertNotIn(secret, message)
 
 
 if __name__ == '__main__':

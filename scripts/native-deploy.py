@@ -7,6 +7,7 @@ It never touches App Hosting sources or clinical photographs.
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -69,6 +70,12 @@ class GoogleApi:
 
 def canonical_resource(name):
     return name.replace("projects/42401528382/", f"projects/{PROJECT}/", 1)
+
+
+def app_hosting_id(build_id):
+    # App Hosting IDs are limited to 30 characters; keep this mapping identical
+    # to deploy-native.sh so recovery observes the resources that were created.
+    return "native-" + hashlib.sha256(build_id.encode("utf-8")).hexdigest()[:23]
 
 
 def execution_resource(name):
@@ -177,13 +184,14 @@ def deployment_children_finished(api, build_id, commit=None, intents=None):
     """
     intents = intents or {}
     backend = f"projects/{PROJECT}/locations/{REGION}/backends/salon-reserve-web"
+    app_id = app_hosting_id(build_id)
     for resource_type, phase, terminal_states in (
         ("builds", "appBuildRequested", {"READY", "FAILED", "SKIPPED", "EXPIRED"}),
         ("rollouts", "appRolloutRequested", {"SUCCEEDED", "FAILED", "CANCELLED", "SKIPPED"}),
     ):
         try:
             resource = api.request(
-                "GET", f"https://firebaseapphosting.googleapis.com/v1beta/{backend}/{resource_type}/native-{build_id}"
+                "GET", f"https://firebaseapphosting.googleapis.com/v1beta/{backend}/{resource_type}/{app_id}"
             )
         except ApiError as error:
             if error.status == 404:

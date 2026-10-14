@@ -12,6 +12,7 @@ fi
 # native-deploy.py must hold the production lease before invoking this script.
 # The image and App Hosting source always use the triggering commit, not branch HEAD.
 python3 - <<'PY'
+import hashlib
 import json
 import os
 import re
@@ -82,6 +83,29 @@ token = ""
 token_time = 0.0
 
 
+def sanitized_message(value):
+    if not isinstance(value, str):
+        return ""
+    if token:
+        value = value.replace(token, "[redacted]")
+    # Only display the message field, never response/request headers or details.
+    value = re.sub(r"(?im)^.*\b(?:headers?|authorization|proxy-authorization|cookie|set-cookie)\s*[\":={].*$", "[redacted headers]", value)
+    value = re.sub(r"(?i)\bBearer\s+[^\s\"'<>]+", "Bearer [redacted]", value)
+    value = re.sub(r"\bya29\.[A-Za-z0-9._~-]+", "[redacted]", value)
+    value = re.sub(r"\bey[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", "[redacted]", value)
+    value = re.sub(r"(?i)\b(?:access_token|refresh_token|id_token|api_key|x-api-key)\s*[:=]\s*[^\s\"'<>]+", "[redacted]", value)
+    value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", " ", value)
+    return " ".join(value.split())[:1200]
+
+
+class DeploymentApiError(RuntimeError):
+    def __init__(self, status, method, url, message=""):
+        self.status = status
+        detail = sanitized_message(message)
+        suffix = f": {detail}" if detail else ""
+        super().__init__(f"Deployment API request failed: {method} {url}, HTTP {status}{suffix}")
+
+
 def api_request(method, url, payload=None):
     global token, token_time
     if not token or time.monotonic() - token_time > 2400:
@@ -96,8 +120,14 @@ def api_request(method, url, payload=None):
         with urllib.request.urlopen(request, timeout=90) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
-        # Never print access tokens or request headers on a deployment failure.
-        raise RuntimeError(f"Deployment API request failed: {method} {url}, HTTP {error.code}") from None
+        message = ""
+        try:
+            body = json.loads(error.read(65536).decode("utf-8"))
+            if isinstance(body, dict) and isinstance(body.get("error"), dict):
+                message = body["error"].get("message", "")
+        except (ValueError, UnicodeError):
+            pass
+        raise DeploymentApiError(error.code, method, url, message) from None
 
 
 app_hosting_api = "https://firebaseapphosting.googleapis.com/v1beta"
@@ -243,44 +273,70 @@ def wait_operation(operation_name, label):
         if response.get("done") is True:
             if response.get("error"):
                 error = response["error"]
-                raise RuntimeError(f"{label} failed with code {error.get('code', 'unknown')}: {error.get('message', '')}")
+                code = error.get("code") if isinstance(error.get("code"), int) else "unknown"
+                raise RuntimeError(f"{label} failed with code {code}: {sanitized_message(error.get('message', ''))}")
             return
         time.sleep(10)
     raise RuntimeError(f"Timed out waiting for {label}.")
 
 
-def wait_state(path, state, label):
-    for _ in range(120):
-        resource = api_request("GET", f"{app_hosting_api}/{path}")
+def wait_state(path, state, label, attempts=120, delay=5):
+    wanted = {state} if isinstance(state, str) else set(state)
+    for _ in range(attempts):
+        try:
+            resource = api_request("GET", f"{app_hosting_api}/{path}")
+        except DeploymentApiError as error:
+            if error.status != 404:
+                raise
+            # The resource can become visible after its creation was accepted.
+            time.sleep(delay)
+            continue
         current = resource.get("state", "UNKNOWN")
-        if current == state:
+        if current in wanted:
             return resource
         if current in ("FAILED", "CANCELLED", "PAUSED"):
             raise RuntimeError(f"{label} entered terminal state {current}.")
-        time.sleep(5)
-    raise RuntimeError(f"Timed out waiting for {label} to reach {state}.")
+        time.sleep(delay)
+    raise RuntimeError(f"Timed out waiting for {label} to reach {' or '.join(sorted(wanted))}.")
 
 
-app_build_id = f"native-{build_id}"
+app_build_id = "native-" + hashlib.sha256(build_id.encode("utf-8")).hexdigest()[:23]
 build_path = f"{backend_path}/builds/{app_build_id}"
 mark_intent("appBuildRequested")
 build_operation = api_request(
     "POST", f"{app_hosting_api}/{backend_path}/builds?buildId={app_build_id}",
     {"source": {"codebase": {"commit": commit}}},
 )
-wait_operation(build_operation["name"], "App Hosting build")
-built = wait_state(build_path, "READY", "App Hosting build")
+built = wait_state(build_path, {"BUILT", "READY"}, "App Hosting compiled source", attempts=150, delay=10)
 source = built.get("source", {}).get("codebase", {})
 if source.get("hash") != commit or resource_name(source.get("repository")) != resource_name(repository_link):
     raise RuntimeError("App Hosting build must resolve to the triggering commit and approved repository.")
 
 rollout_path = f"{backend_path}/rollouts/{app_build_id}"
+rollout_payload = {"build": build_path}
+for attempt in range(10):
+    try:
+        api_request(
+            "POST", f"{app_hosting_api}/{backend_path}/rollouts?rolloutId={app_build_id}&validateOnly=true",
+            rollout_payload,
+        )
+        break
+    except DeploymentApiError as error:
+        if error.status != 400 or attempt == 9:
+            raise
+        time.sleep(2)
+
 mark_intent("appRolloutRequested")
 rollout_operation = api_request(
     "POST", f"{app_hosting_api}/{backend_path}/rollouts?rolloutId={app_build_id}",
-    {"build": build_path},
+    rollout_payload,
 )
+wait_operation(build_operation["name"], "App Hosting build")
 wait_operation(rollout_operation["name"], "App Hosting rollout")
+built = wait_state(build_path, "READY", "App Hosting build")
+source = built.get("source", {}).get("codebase", {})
+if source.get("hash") != commit or resource_name(source.get("repository")) != resource_name(repository_link):
+    raise RuntimeError("App Hosting build must resolve to the triggering commit and approved repository.")
 rolled_out = wait_state(rollout_path, "SUCCEEDED", "App Hosting rollout")
 if resource_name(rolled_out.get("build")) != resource_name(build_path):
     raise RuntimeError("App Hosting rollout must point to the verified build.")

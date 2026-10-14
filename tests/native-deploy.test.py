@@ -19,6 +19,11 @@ SPEC.loader.exec_module(native_deploy)
 BUILD_ID = "11111111-1111-4111-8111-111111111111"
 OLD_BUILD_ID = "22222222-2222-4222-8222-222222222222"
 OTHER_BUILD_ID = "33333333-3333-4333-8333-333333333333"
+APP_HOSTING_IDS = {
+    BUILD_ID: "native-bd7662a5eeb41614e720d47",
+    OLD_BUILD_ID: "native-b454f82c5857ebabf342b72",
+    OTHER_BUILD_ID: "native-f6222a1106eefe4f6b25302",
+}
 COMMIT = "a" * 40
 OLDER_COMMIT = "b" * 40
 REPOSITORY_LINK = (
@@ -105,7 +110,7 @@ class FakeGoogleApi:
             )
             assert parsed.path.startswith(expected), url
             resource_type, resource_name = parsed.path.removeprefix(expected).split("/")
-            assert resource_name in (f"native-{BUILD_ID}", f"native-{OLD_BUILD_ID}"), url
+            assert resource_name in APP_HOSTING_IDS.values(), url
             resource = {"builds": self.app_build, "rollouts": self.app_rollout}[resource_type]
             if resource is None:
                 raise native_deploy.ApiError(404)
@@ -853,6 +858,28 @@ class ProductionLeaseTests(unittest.TestCase):
         native_deploy.mark_deployment_intent(api, "41", "jobExecutionRequested", "")
         self.assertEqual(self.digest_lookup.call_args.args[0][5], IMAGE.replace(BUILD_ID, OLD_BUILD_ID))
         self.assertEqual(api.intents()["jobExecutionRequested"]["expectedExecutionDigest"], DIGEST)
+
+    def test_app_hosting_ids_are_deterministic_distinct_and_30_characters(self):
+        actual = []
+        for build_id, expected in APP_HOSTING_IDS.items():
+            with self.subTest(build_id=build_id):
+                self.assertEqual(native_deploy.app_hosting_id(build_id), expected)
+                self.assertEqual(native_deploy.app_hosting_id(build_id), expected)
+                self.assertEqual(len(expected), 30)
+                self.assertRegex(expected, r"^native-[0-9a-f]{23}$")
+                actual.append(native_deploy.app_hosting_id(build_id))
+        self.assertEqual(len(set(actual)), len(APP_HOSTING_IDS))
+
+    def test_recovery_looks_up_short_app_hosting_id_for_the_lock_owner(self):
+        api = FakeGoogleApi({"buildId": OLD_BUILD_ID}, "SUCCESS")
+        self.lease(api).acquire()
+        app_urls = [url for method, url, _ in api.calls
+                    if method == "GET" and "firebaseapphosting.googleapis.com" in url]
+        backend = "https://firebaseapphosting.googleapis.com/v1beta/projects/salon-reserve-bg/locations/asia-east1/backends/salon-reserve-web"
+        self.assertEqual(app_urls, [
+            backend + "/builds/" + APP_HOSTING_IDS[OLD_BUILD_ID],
+            backend + "/rollouts/" + APP_HOSTING_IDS[OLD_BUILD_ID],
+        ])
 
 
 if __name__ == "__main__":
