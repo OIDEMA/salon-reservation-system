@@ -54,6 +54,7 @@ function MasterFields({ fields, form, onChange }: {
     if (field.type === "checkbox") return <label className="checkboxField" key={field.key}><input type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(field.key, event.target.checked)} /><span>{field.label}</span></label>;
     if (field.type === "textarea") return <label className="createField masterFieldWide" key={field.key}><span>{field.label}</span><textarea rows={6} maxLength={field.maxLength} value={String(value ?? "")} onChange={(event) => onChange(field.key, event.target.value)} /></label>;
     if (field.type === "select") return <label className="createField" key={field.key}><span>{field.label}</span><select required={field.required} value={String(value ?? "")} onChange={(event) => onChange(field.key, event.target.value)}>{field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
+    if (field.type === "color") return <label className="createField" key={field.key}><span>{field.label}</span><span className="colorValue"><input className="masterColorPicker" aria-label={field.label} required={field.required} type="color" value={String(value ?? "")} onChange={(event) => onChange(field.key, event.target.value)} /><span className="colorCode" aria-hidden="true">{String(value ?? "")}</span></span></label>;
     return <label className="createField" key={field.key}><span>{field.label}</span><input required={field.required} min={field.min} max={field.max} maxLength={field.maxLength} type={field.type ?? "text"} value={String(value ?? "")} onChange={(event) => onChange(field.key, field.type === "number" ? event.target.value === "" && field.required ? "" : Number(event.target.value) : event.target.value)} /></label>;
   });
 }
@@ -237,7 +238,7 @@ export function MasterDataManager({ resource, initialPage, columns, itemLabel, c
           {result.items.map((item) => <tr key={item.id}>
             {columns.map((column) => {
               const value = item[column.key];
-              return <td key={column.key}>{column.format === "color" ? <><span className="menuColor" style={{ background: String(value) }} /> {String(value)}</> : formatted(value, column.format)}</td>;
+              return <td key={column.key}>{column.format === "color" ? <span className="colorValue"><span className="menuColor" aria-hidden="true" style={{ background: String(value) }} /><span className="colorCode">{String(value)}</span></span> : formatted(value, column.format)}</td>;
             })}
             {canWrite ? <td><div className="tableActions"><TenantLink className="miniButton" href={`${editBaseHref}/${encodeURIComponent(item.id)}/edit`}><Edit3 size={15} />編集</TenantLink><button className="dangerButton" disabled={busy || listBusy} type="button" onClick={() => void remove(item)}><Trash2 size={15} /></button></div></td> : null}
           </tr>)}

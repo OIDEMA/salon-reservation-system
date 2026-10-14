@@ -2767,6 +2767,54 @@ a {
   outline-offset: 2px;
 }
 
+.colorValue {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.colorValue .menuColor {
+  flex: 0 0 28px;
+}
+
+.colorValue .colorCode {
+  line-height: 1.3;
+}
+
+.createField .colorCode {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.createField input.masterColorPicker {
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  padding: 4px;
+  cursor: pointer;
+}
+
+.masterColorPicker::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.masterColorPicker::-webkit-color-swatch {
+  border: 0;
+  border-radius: 4px;
+}
+
+.masterColorPicker::-moz-color-swatch {
+  border: 0;
+  border-radius: 4px;
+}
+
+.masterColorPicker:disabled {
+  cursor: not-allowed;
+}
+
 .masterCreateActions {
   display: flex;
   justify-content: flex-end;
