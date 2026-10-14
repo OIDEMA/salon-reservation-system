@@ -1,6 +1,6 @@
 steps:
   - id: verify-deployment-target
-    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:stable
+    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
     entrypoint: bash
     args:
       - scripts/deploy-native.sh
@@ -30,7 +30,7 @@ steps:
       - push
       - asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-api:${COMMIT_SHA}-${BUILD_ID}
   - id: deploy-production
-    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:stable
+    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
     entrypoint: bash
     args:
       - -euc
