@@ -140,3 +140,13 @@ test("取込中断とAPIの検証エラーは次のチャンクへ進めない",
   context.mock.method(globalThis, "fetch", async () => Response.json({ message: "元データを確認してください" }, { status: 422 }));
   await assert.rejects(importReservationHistory("missmrs-takamatsu", document, { signal: new AbortController().signal, onProgress: () => assert.fail("invalid file must not progress") }), /元データを確認してください/);
 });
+
+
+test("移動済み履歴の詳細は有効な予約表の日付へ戻り、移行時の日時と担当を別に保持する", () => {
+  const history = { ...detail, scheduleOverride: { startsAt: "2025-10-16T02:30:00Z", endsAt: null, staffId: "new-staff", staffName: "移動先の担当", scheduleVersion: 2, updatedAt: "2026-10-15T00:00:00Z" } };
+  const html = render(createElement(ReservationHistoryDetail, { history }), ["reservation.read"]);
+  assert.match(html, /href="\/missmrs-takamatsu\?date=2025-10-16"/);
+  assert.match(html, /予約表の表示位置/); assert.match(html, /移動先の担当/);
+  assert.match(html, /2025\/10\/16.*11:30/); assert.match(html, /2025\/10\/14.*10:00/); assert.match(html, /過去の担当/);
+  assert.doesNotMatch(html, /移行元の予約情報|<button|checkout/);
+});

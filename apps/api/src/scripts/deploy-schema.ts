@@ -5,7 +5,6 @@ import { PrismaClient } from "@prisma/client";
 
 const maximumAttempts = 8;
 const retryDelayMs = 15_000;
-const referenceIndex = "Reservation_tenantId_salonId_id_key";
 const referenceColumns = ["tenantId", "salonId", "id"];
 
 function identifier(value: string) { return `"${value.replaceAll('"', '""')}"`; }
@@ -16,17 +15,18 @@ function identifier(value: string) { return `"${value.replaceAll('"', '""')}"`; 
  * after verifying its uniqueness is already guaranteed. All other schema warnings
  * still stop db push; no accept-data-loss option is used.
  */
-export async function ensureReservationReferenceIndex(prisma: PrismaClient): Promise<"created" | "already_present" | "table_absent"> {
+export async function ensureScopedReferenceIndex(prisma: PrismaClient, tableName: "Reservation" | "HistoricalReservation"): Promise<"created" | "already_present" | "table_absent"> {
+  const referenceIndex = `${tableName}_tenantId_salonId_id_key`;
   return prisma.$transaction(async (tx) => {
     const tables = await tx.$queryRaw<Array<{ tableId: string; schemaName: string; kind: string }>>`
       SELECT c.oid::text AS "tableId", n.nspname AS "schemaName", c.relkind::text AS kind
       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = current_schema() AND c.relname = 'Reservation'`;
+      WHERE n.nspname = current_schema() AND c.relname = ${tableName}`;
     if (!tables.length) return "table_absent";
     const table = tables[0];
-    if (table.kind !== "r") throw new Error("Reservation must be an ordinary table before preparing its reference index.");
+    if (table.kind !== "r") throw new Error(`${tableName} must be an ordinary table before preparing its reference index.`);
     // Keep concurrent schema changes/writes out while verifying and creating the index.
-    await tx.$executeRawUnsafe(`LOCK TABLE ${identifier(table.schemaName)}."Reservation" IN SHARE ROW EXCLUSIVE MODE`);
+    await tx.$executeRawUnsafe(`LOCK TABLE ${identifier(table.schemaName)}.${identifier(tableName)} IN SHARE ROW EXCLUSIVE MODE`);
     const columns = await tx.$queryRaw<Array<{ name: string; notNull: boolean }>>`
       SELECT attname::text AS name, attnotnull AS "notNull" FROM pg_attribute
       WHERE attrelid = ${table.tableId}::oid AND attnum > 0 AND NOT attisdropped
@@ -38,7 +38,7 @@ export async function ensureReservationReferenceIndex(prisma: PrismaClient): Pro
           AND i.indnkeyatts = 1 AND a.attname = 'id'
       ) AS "guaranteedUnique"`;
     if (columns.length !== 3 || columns.some((column) => !column.notNull) || !primaryKeys[0]?.guaranteedUnique) {
-      throw new Error("Reservation reference index requires non-null tenantId/salonId/id and an existing single-column id primary key.");
+      throw new Error(`${tableName} reference index requires non-null tenantId/salonId/id and an existing single-column id primary key.`);
     }
     // The id primary key proves every existing triple is unique; no data rewrite or
     // deduplication is permitted. An unexpected same-name index fails closed.
@@ -60,13 +60,17 @@ export async function ensureReservationReferenceIndex(prisma: PrismaClient): Pro
       if (index.tableId !== table.tableId || !index.unique || !index.valid || !index.ready || !index.unconditional || !index.plain ||
         index.keyCount !== 3 || index.totalCount !== 3 || index.method !== "btree" ||
         index.columns.join(",") !== referenceColumns.join(",")) {
-        throw new Error("The existing Reservation reference index differs from the reviewed definition.");
+        throw new Error(`The existing ${tableName} reference index differs from the reviewed definition.`);
       }
       return "already_present";
     }
-    await tx.$executeRawUnsafe(`CREATE UNIQUE INDEX ${identifier(referenceIndex)} ON ${identifier(table.schemaName)}."Reservation" ("tenantId", "salonId", "id")`);
+    await tx.$executeRawUnsafe(`CREATE UNIQUE INDEX ${identifier(referenceIndex)} ON ${identifier(table.schemaName)}.${identifier(tableName)} ("tenantId", "salonId", "id")`);
     return "created";
   }, { maxWait: 5000, timeout: 60000 });
+}
+
+export async function ensureReservationReferenceIndex(prisma: PrismaClient) {
+  return ensureScopedReferenceIndex(prisma, "Reservation");
 }
 
 function runPrismaPush() {
@@ -83,12 +87,14 @@ async function main() {
     for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
       let exitCode = 1;
       try {
-        const prepared = await ensureReservationReferenceIndex(prisma);
-        console.log(`Reservation reference index: ${prepared}.`);
+        for (const tableName of ["Reservation", "HistoricalReservation"] as const) {
+          const prepared = await ensureScopedReferenceIndex(prisma, tableName);
+          console.log(`${tableName} reference index: ${prepared}.`);
+        }
         exitCode = await runPrismaPush();
       } catch {
         // Prisma/SQL diagnostics can include connection details or row values.
-        console.error("Schema preparation failed; check database connectivity and the Reservation primary key/index definition.");
+        console.error("Schema preparation failed; check database connectivity and the scoped primary key/index definitions.");
       }
       if (exitCode === 0 || attempt === maximumAttempts) { process.exitCode = exitCode; return; }
       console.error(`Schema deployment attempt ${attempt}/${maximumAttempts} failed; retrying in ${retryDelayMs / 1000}s.`);

@@ -58,7 +58,7 @@ function listItem(record: Pick<HistoricalReservation, keyof typeof listSelect>) 
   return { ...record, startsAt: record.startsAt.toISOString(), endsAt: record.endsAt?.toISOString() ?? null };
 }
 
-/** Historical snapshots have no operational reservation, cash or chart write path. */
+/** Historical source snapshots have no operational reservation, cash or chart write path. */
 export async function registerHistoryImportRoutes(server: FastifyInstance, options: { requireContext?: typeof requireOperationContext } = {}) {
   const requireContext = options.requireContext ?? requireOperationContext;
   server.post(`${root}/prepare`, { bodyLimit: HISTORY_IMPORT_BODY_LIMIT }, safeRoute(async (request, reply) => {
@@ -161,6 +161,7 @@ export async function registerHistoryImportRoutes(server: FastifyInstance, optio
     const record = await prisma.historicalReservation.findFirst({ where: { id, ...scope(context) }, select: {
       ...listSelect, source: true, sourceStoreId: true, externalCustomerId: true, customerNumber: true, externalStaffId: true, staffId: true,
       customerKana: true, nominated: true, equipmentName: true, capturedAt: true, importedAt: true,
+      scheduleOverride: { select: { startsAt: true, endsAt: true, staffId: true, version: true, updatedAt: true, staff: { select: { name: true } } } },
       ...(canReadOriginal ? { rawHeaders: true, rawValues: true } : {})
     } });
     if (!record) throw operationError(404, "この店舗の予約履歴が見つかりません。");
@@ -175,7 +176,12 @@ export async function registerHistoryImportRoutes(server: FastifyInstance, optio
     ]);
     return reply.header("Cache-Control", "private, no-store").send({ ...listItem(record),
       capturedAt: record.capturedAt.toISOString(), importedAt: record.importedAt.toISOString(),
-      customerId: customer?.customerId ?? null, staffId: record.staffId ?? staff?.staffId ?? null, canReadOriginal
+      customerId: customer?.customerId ?? null, staffId: record.staffId ?? staff?.staffId ?? null, canReadOriginal,
+      scheduleOverride: record.scheduleOverride ? {
+        startsAt: record.scheduleOverride.startsAt.toISOString(), endsAt: record.scheduleOverride.endsAt?.toISOString() ?? null,
+        staffId: record.scheduleOverride.staffId, staffName: record.scheduleOverride.staff?.name ?? null,
+        scheduleVersion: record.scheduleOverride.version, updatedAt: record.scheduleOverride.updatedAt.toISOString()
+      } : null
     });
   }));
 }

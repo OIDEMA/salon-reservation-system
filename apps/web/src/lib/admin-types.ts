@@ -246,6 +246,14 @@ export type ReservationHistoryDetail = ReservationHistorySummary & {
   importedAt: string;
   customerId: string | null;
   staffId: string | null;
+  scheduleOverride?: {
+    startsAt: string;
+    endsAt: string | null;
+    staffId: string | null;
+    staffName: string | null;
+    scheduleVersion: number;
+    updatedAt: string;
+  } | null;
   rawHeaders?: string[];
   rawValues?: string[];
 };

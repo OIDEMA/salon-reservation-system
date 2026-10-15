@@ -22,7 +22,7 @@ export type ScheduleCardLayout = {
   lane: number;
 };
 
-export function buildScheduleLayout(rows: ScheduleRow[], reservations: ScheduleReservation[], history: HistoricalScheduleReservation[], start: number, end: number) {
+export function buildScheduleLayout(rows: ScheduleRow[], reservations: ScheduleReservation[], history: HistoricalScheduleReservation[], start: number, end: number, minimumRowHeights?: ReadonlyMap<string, number>) {
   const cards = new Map<string, ScheduleCardLayout>();
   const rowLayouts: Array<{ row: ScheduleRow; top: number; height: number }> = [];
   let height = 0;
@@ -51,7 +51,7 @@ export function buildScheduleLayout(rows: ScheduleRow[], reservations: ScheduleR
       laneEnds[lane] = item.visibleEnd;
       cards.set(item.key, { left: item.left, width: item.width, lane });
     }
-    const rowHeight = Math.max(1, laneEnds.length) * SCHEDULE_LANE_HEIGHT;
+    const rowHeight = Math.max(Math.max(1, laneEnds.length) * SCHEDULE_LANE_HEIGHT, minimumRowHeights?.get(row.id) ?? 0);
     rowLayouts.push({ row, top: height, height: rowHeight });
     height += rowHeight;
   }

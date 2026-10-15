@@ -30,10 +30,19 @@ export function ReservationHistoryDetail({ history }: { history: HistoryDetail }
   const allowedOriginal = can("chart.read") && history.canReadOriginal;
   const hasRawData = allowedOriginal && Array.isArray(history.rawHeaders) && Array.isArray(history.rawValues) && history.rawHeaders.length === history.rawValues.length;
 
-  const boardDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date(history.startsAt));
+  const boardDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo" }).format(new Date(history.scheduleOverride?.startsAt ?? history.startsAt));
 
   return <div className="historyDetail">
     <div className="adminActions"><TenantLink className="secondaryButton" href={`/?date=${encodeURIComponent(boardDate)}`}>予約表で確認</TenantLink></div>
+    {history.scheduleOverride ? <section className="adminPanel masterCreatePanel">
+      <h2>予約表の表示位置</h2>
+      <dl className="historyDetailFields">
+        <div><dt>予約日時</dt><dd>{historyDate(history.scheduleOverride.startsAt)}</dd></div>
+        <div><dt>終了日時</dt><dd>{historyDate(history.scheduleOverride.endsAt)}</dd></div>
+        <div><dt>担当</dt><dd>{history.scheduleOverride.staffName || "指名なし"}</dd></div>
+      </dl>
+      <p className="historyContext">予約表で移動した位置です。以下には移行時の記録を保存しています。</p>
+    </section> : null}
     <section className="adminPanel masterCreatePanel">
       <p className="historyContext">サロンボードに記録されていた内容を表示しています。予約時金額は移行元の予約価格です。</p>
       <dl className="historyDetailFields">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>

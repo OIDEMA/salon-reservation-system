@@ -7,6 +7,7 @@ import { ReservationHistoryStaffLink, ReservationHistoryStaffLinkLink, Reservati
 import { TenantProvider } from "../src/components/tenant-provider";
 import { TimelineReservationEditor } from "../src/components/timeline-reservation-editor";
 import { buildScheduleLayout, scheduleCardKey, scheduleRowAcceptsNewReservation } from "../src/lib/schedule-layout";
+import { historyScheduleDate, historyScheduleDuration, moveHistorySchedule, scheduleDragDelta, scheduleDragStarted, scheduleDropSlot, scheduleMoveStart, ScheduleUpdateError } from "../src/lib/schedule-drag";
 import { fetchDashboard } from "../src/lib/api";
 import { applyHistoryStaffLinks, canLinkHistoryStaff, prepareHistoryStaffLinks } from "../src/lib/history-staff-link";
 import { createEmptyDashboard, type HistoricalScheduleReservation, type ScheduleReservation, type ScheduleRow } from "../src/lib/types";
@@ -25,7 +26,7 @@ const history: HistoricalScheduleReservation = {
   id: "history/unsafe-id", externalReservationId: "source-history-id", rowId: "legacy", startsAt: "2025-10-14T10:00:00+09:00",
   endsAt: "2025-10-14T11:00:00+09:00", startTime: "10:00", endTime: "11:00", customerName: "移行した顧客",
   customerKana: null, staffName: "過去の担当", serviceName: "元の施術", reservationAmount: null,
-  sourceStatus: "会計済み<script>元の状態</script>", source: "SALONBOARD", isRequest: true, readOnly: true
+  sourceStatus: "会計済み<script>元の状態</script>", source: "SALONBOARD", isRequest: true, readOnly: true, scheduleVersion: 0
 };
 const operational: ScheduleReservation = {
   id: "operational", rowId: "active", serviceId: "menu", startTime: "10:00", endTime: "10:30", customerName: "現在の顧客",
@@ -33,7 +34,7 @@ const operational: ScheduleReservation = {
   riskScore: 0, lineStatus: "NONE", paymentStatus: "UNPAID", memo: "", visitCount: 0, tags: []
 };
 
-test("履歴カードは原状態を安全に表示し、編集・ドラッグ・会計を持たず履歴詳細へリンクする", () => {
+test("履歴カードは原状態を安全に表示し、時間変更・会計を持たず履歴詳細へリンクする", () => {
   assert.equal(render(createElement(HistoricalScheduleCard, { reservation: history, style: {} }), []), "");
   const html = render(createElement(HistoricalScheduleCard, { reservation: history, style: { left: 100 } }), ["reservation.read", "reservation.write", "checkout.write", "chart.write"]);
   assert.match(html, /^<a/);
@@ -41,7 +42,7 @@ test("履歴カードは原状態を安全に表示し、編集・ドラッグ�
   assert.match(html, /data-history-card="true"/);
   assert.match(html, /href="\/missmrs-takamatsu\/reservations\/history\/history%2Funsafe-id"/);
   assert.match(html, /会計済み&lt;script&gt;元の状態&lt;\/script&gt;/);
-  assert.doesNotMatch(html, /data-resize-handle|<button|draggable|\/edit|\/checkout|<script>/);
+  assert.doesNotMatch(html, /data-resize-handle|<button|draggable="true"|\/edit|\/checkout|<script>/);
   const missing = render(createElement(HistoricalScheduleCard, { reservation: { ...history, endsAt: null, endTime: null }, style: {} }), ["reservation.read"]);
   assert.match(missing, /終了時刻未登録/); assert.doesNotMatch(missing, /から11:00|10:00–11:00/);
   assert.match(historicalScheduleLabel(history), /移行した予約履歴を開く/);
@@ -128,4 +129,79 @@ test("紐付けはAPIが計算したプランのチェックサムだけを送�
   context.mock.restoreAll();
   context.mock.method(globalThis, "fetch", async () => Response.json({ message: "プランが変更されています。再確認してください。" }, { status: 409 }));
   await assert.rejects(applyHistoryStaffLinks("missmrs-takamatsu", plan.checksum), /プランが変更/);
+});
+
+
+test("履歴の移動ハンドラーは予約編集権限を要求し、通常クリックのリンクと元状態を維持する", () => {
+  const handlers = { onPointerDown() {}, onPointerMove() {}, onPointerUp() {}, onPointerCancel() {} };
+  const readonly = render(createElement(HistoricalScheduleCard, { reservation: history, style: {}, editable: true, ...handlers }), ["reservation.read"]);
+  assert.doesNotMatch(readonly, /isMovable|ドラッグして予約枠/);
+  assert.match(readonly, /draggable="false"/);
+  const writable = render(createElement(HistoricalScheduleCard, { reservation: history, style: {}, editable: true, ...handlers }), ["reservation.read", "reservation.write"]);
+  assert.match(writable, /isMovable/); assert.match(writable, /ドラッグして予約枠を移動/);
+  assert.match(writable, /href="\/missmrs-takamatsu\/reservations\/history\/history%2Funsafe-id"/);
+  assert.doesNotMatch(writable, /data-resize-handle|<button|checkout/);
+});
+
+test("5px未満はクリックのまま、15分開始の予約は移動量をスナップして元の分を保持する", () => {
+  assert.equal(scheduleDragStarted(10, 20, 13, 23), false);
+  assert.equal(scheduleDragStarted(10, 20, 13, 24), true);
+  assert.equal(10 * 60 + 15 + scheduleDragDelta(20, 20, 132, 30), 615);
+  assert.equal(615 + scheduleDragDelta(20, 86, 132, 30), 645);
+  assert.equal(615 + scheduleDragDelta(86, 20, 132, 30), 585);
+  assert.equal(645 + scheduleDragDelta(20, 53, 132, 15), 660);
+});
+
+test("ボード外へのドロップは無効で、受付停止スタッフへは履歴のみ移動を許可する", () => {
+  const bounds = { left: 100, top: 50, width: 1320, height: 228 };
+  const layouts = [{ row: rows[0], top: 0, height: 76 }, { row: rows[1], top: 76, height: 152 }];
+  const slot = (x: number, y: number, history = false) => scheduleDropSlot(x, y, bounds, layouts, 540, 1140, 132, 30, history);
+  assert.deepEqual(slot(166, 100), { rowIndex: 0, minutes: 570 });
+  assert.equal(slot(166, 180), null);
+  assert.deepEqual(slot(166, 180, true), { rowIndex: 1, minutes: 570 });
+  for (const [x, y] of [[99, 100], [1420, 100], [166, 49], [166, 278]]) assert.equal(slot(x, y, true), null);
+});
+
+test("履歴の表示時間は日付跨ぎを保持し、終了未登録を30分の予約に変えない", () => {
+  assert.equal(historyScheduleDuration({ ...history, startsAt: "2025-10-14T23:30:00+09:00", endsAt: "2025-10-15T01:00:00+09:00" }), 90);
+  assert.equal(historyScheduleDuration({ ...history, endsAt: null, endTime: null }), null);
+  assert.equal(historyScheduleDate("2025-10-13T16:00:00Z"), "2025-10-14");
+});
+
+test("移動プレビューで重なりが解消しても元の行を縮めず、下の担当へ枠が飛ばない", () => {
+  const source = [history, { ...history, id: "overlap", startTime: "10:00", endTime: "11:00" }];
+  const baseline = buildScheduleLayout(rows, [], source, 540, 1200);
+  const moved = source.map((item) => item.id === history.id ? { ...item, startTime: "12:00", endTime: "13:00" } : item);
+  const preview = buildScheduleLayout(rows, [], moved, 540, 1200, new Map(baseline.rows.map((row) => [row.row.id, row.height])));
+  assert.equal(baseline.rows[1].height, 152); assert.equal(preview.rows[1].height, 152);
+  assert.equal(preview.cards.get(scheduleCardKey("history", history.id))?.width, 124);
+  assert.equal(preview.cards.get(scheduleCardKey("history", history.id))?.lane, 0);
+});
+
+test("履歴移動とUndoは専用APIに位置と競合バージョンだけを送り、終了時刻・元状態・会計を変更しない", async (context) => {
+  const calls: { url: string; options: RequestInit }[] = [];
+  const result = { id: history.id, startsAt: "2025-10-14T02:00:00Z", endsAt: "2025-10-14T03:00:00Z", rowId: "active", staffName: "現在の担当", scheduleVersion: 1 };
+  context.mock.method(globalThis, "fetch", async (url: string, options: RequestInit) => { calls.push({ url, options }); return Response.json(result); });
+  const returned = await moveHistorySchedule("missmrs-takamatsu", history.id, { date: "2025-10-14", startTime: "11:00", staffId: "active", expectedVersion: 0 });
+  await moveHistorySchedule("missmrs-takamatsu", history.id, { date: historyScheduleDate(history.startsAt), startTime: history.startTime, staffId: history.rowId, expectedVersion: returned.scheduleVersion });
+  assert.equal(calls[0].url, "/api/missmrs-takamatsu/backend/admin/reservation-history/history%2Funsafe-id/schedule");
+  assert.equal(calls[0].options.method, "PATCH"); assert.equal(calls[0].options.cache, "no-store");
+  assert.deepEqual(JSON.parse(String(calls[0].options.body)), { date: "2025-10-14", startTime: "11:00", staffId: "active", expectedVersion: 0 });
+  assert.deepEqual(JSON.parse(String(calls[1].options.body)), { date: "2025-10-14", startTime: "10:00", staffId: "legacy", expectedVersion: 1 });
+  context.mock.restoreAll();
+  context.mock.method(globalThis, "fetch", async () => Response.json({ message: "ほかの操作で予約枠が変更されました。再読み込みしてください。" }, { status: 409 }));
+  await assert.rejects(moveHistorySchedule("missmrs-takamatsu", history.id, { date: "2025-10-14", startTime: "11:00", staffId: null, expectedVersion: 0 }), (error: unknown) => error instanceof ScheduleUpdateError && error.status === 409);
+});
+
+
+test("移動範囲の端でも元の15分差を維持し、23:59や営業時間外へ丸めない", () => {
+  // Starting at :15/:45 retains that offset against a :00 board boundary.
+  assert.equal(scheduleMoveStart(615, -300, 600, 1140, 30), 615);
+  assert.equal(scheduleMoveStart(615, 900, 600, 1140, 30), 1125);
+  assert.equal(scheduleMoveStart(1395, 600, 0, 1439, 30), 1425);
+  assert.equal(scheduleMoveStart(600, 900, 0, 1439, 30), 1410);
+  assert.equal(scheduleMoveStart(615, 0, 600, 1140, 30), 615);
+  // A slot wider than the board has no valid snapped drop target.
+  assert.equal(scheduleMoveStart(615, 0, 600, 590, 30), null);
+  assert.equal(scheduleMoveStart(615, 30, 600, 610, 30), null);
 });

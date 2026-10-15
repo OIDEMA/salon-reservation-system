@@ -51,7 +51,7 @@ const historySelect = {
   customerName: true, customerKana: true, staffName: true, sourceStatus: true,
   startsAt: true, endsAt: true, menuText: true, reservationAmount: true, nominated: true
 } satisfies Prisma.HistoricalReservationSelect;
-type HistoricalScheduleRecord = Prisma.HistoricalReservationGetPayload<{ select: typeof historySelect }>;
+type HistoricalScheduleRecord = Prisma.HistoricalReservationGetPayload<{ select: typeof historySelect }> & { scheduleVersion?: number };
 
 export function historicalScheduleCard(record: HistoricalScheduleRecord, dayStart: Date) {
   return {
@@ -70,34 +70,48 @@ export function historicalScheduleCard(record: HistoricalScheduleRecord, dayStar
     sourceStatus: record.sourceStatus,
     source: record.source,
     isRequest: record.nominated ?? false,
-    readOnly: true as const
+    readOnly: true as const,
+    scheduleVersion: record.scheduleVersion ?? 0
   };
 }
 export type HistoricalScheduleCard = ReturnType<typeof historicalScheduleCard>;
 
 /** Only selected-day summaries are read. Original charts/notes/financial rows stay in the permission-gated detail route. */
-export async function dashboardHistory(database: Pick<PrismaClient, "historicalReservation">, scope: Scope,
+export async function dashboardHistory(database: Pick<PrismaClient, "$queryRaw">, scope: Scope,
   day: { start: Date; end: Date }, filters: DashboardFilters) {
   // Original SalonBoard states cannot safely be treated as operational reservation states.
   if (filters.status !== "ALL") return { historicalReservations: [], historicalHasMore: false };
-  const records = await database.historicalReservation.findMany({
-    where: {
-      ...scope,
-      startsAt: { gte: day.start, lt: day.end },
-      ...(filters.sourceStatus ? { sourceStatus: filters.sourceStatus } : {}),
-      ...(filters.q ? { OR: [
-        { customerName: { contains: filters.q, mode: "insensitive" } },
-        { customerKana: { contains: filters.q, mode: "insensitive" } },
-        { staffName: { contains: filters.q, mode: "insensitive" } },
-        { staff: { name: { contains: filters.q, mode: "insensitive" } } },
-        { menuText: { contains: filters.q, mode: "insensitive" } },
-        { externalReservationId: { contains: filters.q, mode: "insensitive" } }
-      ] } : {})
-    },
-    select: historySelect,
-    orderBy: [{ startsAt: "asc" }, { id: "asc" }],
-    take: HISTORICAL_DASHBOARD_LIMIT + 1
-  });
+  const pattern = filters.q ? `%${filters.q.replace(/[!%_]/g, (character) => `!${character}`)}%` : null;
+  const records = await database.$queryRaw<HistoricalScheduleRecord[]>(Prisma.sql`
+    WITH candidates AS (
+      SELECT h.id, h."startsAt" FROM "HistoricalReservation" h
+      WHERE h."tenantId" = ${scope.tenantId} AND h."salonId" = ${scope.salonId}
+        AND h."startsAt" >= ${day.start.toISOString()}::timestamp AND h."startsAt" < ${day.end.toISOString()}::timestamp
+        AND NOT EXISTS (SELECT 1 FROM "HistoricalReservationScheduleOverride" s WHERE s."historicalReservationId" = h.id)
+      UNION ALL
+      SELECT s."historicalReservationId" AS id, s."startsAt" FROM "HistoricalReservationScheduleOverride" s
+      WHERE s."tenantId" = ${scope.tenantId} AND s."salonId" = ${scope.salonId}
+        AND s."startsAt" >= ${day.start.toISOString()}::timestamp AND s."startsAt" < ${day.end.toISOString()}::timestamp
+    )
+    SELECT h.id, h."externalReservationId", h.source, h."customerName", h."customerKana", h."sourceStatus",
+      h."menuText", h."reservationAmount", h.nominated,
+      CASE WHEN s.id IS NULL THEN h."staffId" ELSE s."staffId" END AS "staffId",
+      CASE WHEN s.id IS NULL THEN h."staffName" ELSE assigned.name END AS "staffName",
+      c."startsAt", CASE WHEN s.id IS NULL THEN h."endsAt" ELSE s."endsAt" END AS "endsAt",
+      COALESCE(s.version, 0) AS "scheduleVersion"
+    FROM candidates c JOIN "HistoricalReservation" h ON h.id = c.id
+      LEFT JOIN "HistoricalReservationScheduleOverride" s ON s."historicalReservationId" = h.id
+        AND s."tenantId" = ${scope.tenantId} AND s."salonId" = ${scope.salonId}
+      LEFT JOIN "Staff" assigned ON assigned.id = CASE WHEN s.id IS NULL THEN h."staffId" ELSE s."staffId" END
+        AND assigned."tenantId" = ${scope.tenantId} AND assigned."salonId" = ${scope.salonId}
+    WHERE h."tenantId" = ${scope.tenantId} AND h."salonId" = ${scope.salonId}
+      ${filters.sourceStatus ? Prisma.sql`AND h."sourceStatus" = ${filters.sourceStatus}` : Prisma.empty}
+      ${pattern ? Prisma.sql`AND (h."customerName" ILIKE ${pattern} ESCAPE '!' OR h."customerKana" ILIKE ${pattern} ESCAPE '!'
+        OR (CASE WHEN s.id IS NULL THEN h."staffName" ELSE assigned.name END) ILIKE ${pattern} ESCAPE '!'
+        OR assigned.name ILIKE ${pattern} ESCAPE '!' OR h."menuText" ILIKE ${pattern} ESCAPE '!'
+        OR h."externalReservationId" ILIKE ${pattern} ESCAPE '!')` : Prisma.empty}
+    ORDER BY c."startsAt" ASC, h.id ASC LIMIT ${HISTORICAL_DASHBOARD_LIMIT + 1}
+  `);
   return {
     historicalReservations: records.slice(0, HISTORICAL_DASHBOARD_LIMIT).map((record) => historicalScheduleCard(record, day.start)),
     historicalHasMore: records.length > HISTORICAL_DASHBOARD_LIMIT
@@ -154,13 +168,14 @@ export function dashboardDisplayHours(start: string, end: string, cards: Array<{
 }
 
 /** A history-linked staff row must be retained even when it has no live reservations or shifts. */
-export async function staffScheduleDependencyCount(database: Pick<PrismaClient, "reservation" | "shift" | "historicalReservation">,
+export async function staffScheduleDependencyCount(database: Pick<PrismaClient, "reservation" | "shift" | "historicalReservation" | "historicalReservationScheduleOverride">,
   scope: Scope, staffId: string) {
   const where = { ...scope, staffId };
   const counts = await Promise.all([
     database.reservation.count({ where }),
     database.shift.count({ where }),
-    database.historicalReservation.count({ where })
+    database.historicalReservation.count({ where }),
+    database.historicalReservationScheduleOverride.count({ where })
   ]);
   return counts.reduce((total, count) => total + count, 0);
 }

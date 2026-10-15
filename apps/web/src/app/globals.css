@@ -3451,3 +3451,9 @@ a {
 .historicalReservationCard .cardTime { font-size: 10px; line-height: 12px; white-space: nowrap; }
 .historicalReservationCard strong { font-size: 14px; line-height: 16px; }
 .historicalReservationCard small { font-size: 10px; line-height: 11px; }
+
+.historicalReservationCard.isMovable { cursor: grab; touch-action: none; }
+.historicalReservationCard.isDragging { cursor: grabbing; }
+.historicalReservationCard.isInvalidDrop { outline: 2px solid #dc2626; opacity: .6; cursor: not-allowed; }
+.historyMoveUndo { display: flex; justify-content: flex-end; margin: 8px 0; }
+.timelineSaving { margin: 8px 0; color: var(--muted); font-size: 13px; }

@@ -39,16 +39,16 @@ test("history reads one bounded day with a minimal projection and preserves ever
   let query: any;
   const records = statuses.map((sourceStatus, index) => historyRecord({ id: `history-${index}`, sourceStatus }));
   for (const record of records) Object.defineProperty(record, "rawValues", { get: () => { throw new Error("raw notes must not be read"); } });
-  const database = { historicalReservation: { findMany: async (input: any) => { query = input; return records; } } } as any;
+  const database = { $queryRaw: async (input: any) => { query = input; return records; } } as any;
   const result = await dashboardHistory(database, scope, day, { q: "顧客", sourceStatus: "会計済み", status: "ALL" });
-  assert.equal(query.where.tenantId, "tenant-a");
-  assert.equal(query.where.salonId, "salon-a");
-  assert.deepEqual(query.where.startsAt, { gte: day.start, lt: day.end });
-  assert.equal(query.where.sourceStatus, "会計済み");
-  assert.equal(query.take, HISTORICAL_DASHBOARD_LIMIT + 1);
-  assert.deepEqual(query.orderBy, [{ startsAt: "asc" }, { id: "asc" }]);
-  assert.equal(query.where.OR.length, 6);
-  for (const privateField of ["rawHeaders", "rawValues", "customerNumber", "externalCustomerId"]) assert.equal(query.select[privateField], undefined);
+  assert(query.values.includes("tenant-a"));
+  assert(query.values.includes("salon-a"));
+  assert(query.values.includes(day.start.toISOString()));
+  assert(query.values.includes(day.end.toISOString()));
+  assert(query.values.includes("会計済み"));
+  assert(query.values.includes("%顧客%"));
+  assert(query.values.includes(HISTORICAL_DASHBOARD_LIMIT + 1));
+  for (const privateField of ["rawHeaders", "rawValues", "customerNumber", "externalCustomerId"]) assert.equal(query.text.includes(privateField), false);
   assert.deepEqual(result.historicalReservations.map((record) => record.sourceStatus), statuses);
   assert.equal(result.historicalReservations.every((record) => record.readOnly && record.rowId === "legacy-a"), true);
   assert.equal(result.historicalReservations.every((record) => record.reservationAmount === null), true);
@@ -56,13 +56,13 @@ test("history reads one bounded day with a minimal projection and preserves ever
 });
 
 test("a real operational status filter never guesses the equivalent SalonBoard state", async () => {
-  const database = { historicalReservation: { findMany: async () => { throw new Error("must not query source state"); } } } as any;
+  const database = { $queryRaw: async () => { throw new Error("must not query source state"); } } as any;
   assert.deepEqual(await dashboardHistory(database, scope, day, { status: "COMPLETED" }), { historicalReservations: [], historicalHasMore: false });
 });
 
 test("a large day is capped with an explicit truncation flag", async () => {
   const records = Array.from({ length: HISTORICAL_DASHBOARD_LIMIT + 1 }, (_, index) => historyRecord({ id: `history-${index}` }));
-  const database = { historicalReservation: { findMany: async () => records } } as any;
+  const database = { $queryRaw: async () => records } as any;
   const result = await dashboardHistory(database, scope, day, { status: "ALL" });
   assert.equal(result.historicalReservations.length, HISTORICAL_DASHBOARD_LIMIT);
   assert.equal(result.historicalHasMore, true);
@@ -114,8 +114,8 @@ test("the display window includes historic evenings without modifying business h
 test("a history-only staff dependency prevents hard deletion, scoped to its salon", async () => {
   const reads: Array<{ model: string; where: unknown }> = [];
   const count = (model: string, value: number) => ({ count: async ({ where }: any) => { reads.push({ model, where }); return value; } });
-  const database = { reservation: count("reservation", 0), shift: count("shift", 0), historicalReservation: count("history", 7) } as any;
-  assert.equal(await staffScheduleDependencyCount(database, scope, "legacy-a"), 7);
-  assert.equal(reads.length, 3);
+  const database = { reservation: count("reservation", 0), shift: count("shift", 0), historicalReservation: count("history", 7), historicalReservationScheduleOverride: count("override", 2) } as any;
+  assert.equal(await staffScheduleDependencyCount(database, scope, "legacy-a"), 9);
+  assert.equal(reads.length, 4);
   assert.equal(reads.every((read) => JSON.stringify(read.where) === JSON.stringify({ ...scope, staffId: "legacy-a" })), true);
 });

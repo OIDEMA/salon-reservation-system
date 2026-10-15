@@ -49,6 +49,7 @@ export type HistoricalScheduleReservation = {
   source: "SALONBOARD";
   isRequest: boolean;
   readOnly: true;
+  scheduleVersion: number;
 };
 
 export type ScheduleBlock = {

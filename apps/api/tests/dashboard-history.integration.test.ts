@@ -81,7 +81,7 @@ test("the staff board shows scoped historical cards without changing operational
       const board = response.json(); originalSummary = board.summary;
       assert.equal(board.reservations.length, 2);
       assert.deepEqual(new Set(board.reservations.map((record: any) => record.id)), new Set([operation.id, confirmed.id]));
-      assert.equal(board.historicalReservations.length, 5);
+      assert.equal(board.historicalReservations.length, 5, JSON.stringify(board.historicalReservations.map((card: any) => ({ id: card.id, startsAt: card.startsAt, sourceStatus: card.sourceStatus }))));
       assert.deepEqual(board.historicalReservations.map((record: any) => record.sourceStatus), states);
       assert(board.historicalReservations.every((record: any) => record.readOnly && record.rowId === historical.id));
       assert.equal(board.historicalHasMore, false);

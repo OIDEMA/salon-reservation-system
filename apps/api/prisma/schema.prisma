@@ -197,6 +197,7 @@ model Salon {
 model Staff {
   externalRecords StaffExternalRecord[]
   historicalReservations HistoricalReservation[] @relation("HistoricalReservationStaff")
+  historicalScheduleOverrides HistoricalReservationScheduleOverride[] @relation("HistoricalScheduleOverrideStaff")
   treatmentCharts TreatmentChart[]
   id               String        @id @default(cuid())
   tenantId         String
@@ -439,11 +440,35 @@ model HistoricalReservation {
   importedAt            DateTime           @default(now())
   salon                 Salon              @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Cascade)
   staff                 Staff?             @relation("HistoricalReservationStaff", fields: [tenantId, salonId, staffId], references: [tenantId, salonId, id], onDelete: Restrict)
+  scheduleOverride      HistoricalReservationScheduleOverride?
 
+  @@unique([tenantId, salonId, id])
   @@unique([tenantId, salonId, source, sourceStoreId, externalReservationId], map: "HistoricalReservation_source_identity_key")
   @@index([tenantId, salonId, startsAt, id])
   @@index([tenantId, salonId, sourceStatus, startsAt, id])
   @@index([tenantId, salonId, staffId, startsAt])
+}
+
+// Explicit placement corrections are separate from the immutable imported snapshot.
+// They never participate in operational capacity, visits, payments or charts.
+model HistoricalReservationScheduleOverride {
+  id                      String                @id @default(cuid())
+  tenantId                String
+  salonId                 String
+  historicalReservationId String                @unique
+  staffId                 String?
+  startsAt                DateTime
+  endsAt                  DateTime?
+  version                 Int                   @default(1)
+  updatedByUserId         String
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+  historicalReservation   HistoricalReservation @relation(fields: [tenantId, salonId, historicalReservationId], references: [tenantId, salonId, id], onDelete: Cascade)
+  staff                   Staff?                @relation("HistoricalScheduleOverrideStaff", fields: [tenantId, salonId, staffId], references: [tenantId, salonId, id], onDelete: Restrict)
+
+  @@unique([tenantId, salonId, historicalReservationId])
+  @@index([tenantId, salonId, startsAt, historicalReservationId])
+  @@index([tenantId, salonId, staffId])
 }
 
 // Prepared manifests contain hashes and counts only, not original customer notes.
