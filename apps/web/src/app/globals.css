@@ -1042,7 +1042,7 @@ a {
 }
 
 .adminBrand img {
-  width: min(196px, 100%);
+  width: min(176px, 100%);
   height: auto;
   object-fit: contain;
   object-position: left center;
