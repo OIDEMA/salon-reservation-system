@@ -7,10 +7,10 @@ export default function PasswordResetPage() {
       <section className="authCard authResetCard">
         <div className="authLogo">
           <Image
-            src="/brand/beauty-gum-logo.webp"
+            src="/brand/beauty-gum-wordmark.webp"
             alt="株式会社Beauty Gum"
-            width={400}
-            height={100}
+            width={308}
+            height={70}
             preload
           />
         </div>

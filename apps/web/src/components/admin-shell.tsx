@@ -42,7 +42,7 @@ export function AdminSidebar({ active }: { active: string }) {
   return (
     <aside className="adminSidebar">
       <Link className="adminBrand" href={tenantPath(tenantSlug)} title="株式会社Beauty Gum">
-        <Image src="/brand/beauty-gum-logo.webp" alt="株式会社Beauty Gum" width={400} height={100} />
+        <Image src="/brand/beauty-gum-wordmark.webp" alt="株式会社Beauty Gum" width={308} height={70} />
       </Link>
       <nav className="adminNav" aria-label="admin navigation">
         {adminNavigation.filter((item) => can(item.permission)).map((item) => {
