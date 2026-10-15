@@ -12,6 +12,7 @@ import { ReservationDashboard } from "../src/components/reservation-dashboard";
 import { ReservationCreateForm } from "../src/components/reservation-create-form";
 import { ReservationEditForm } from "../src/components/reservation-edit-form";
 import { ReservationStaffTools } from "../src/components/reservation-staff-tools";
+import { TimelineReservationEditor } from "../src/components/timeline-reservation-editor";
 import { ReservationCustomerFields } from "../src/components/reservation-customer-fields";
 import { TenantProvider, type TenantMembership } from "../src/components/tenant-provider";
 import { firstAccessibleAdminPath } from "../src/lib/admin-navigation";
@@ -207,4 +208,18 @@ test("選択した登録済み顧客の情報は解除するまで読み取り�
   assert.match(selected, /value="トウロクズミコキャク"/);
   assert.match(selected, /value="090-1234-5678"/);
   assert.doesNotMatch(selected, /<input[^>]*disabled=""/);
+});
+
+
+test("予約表の登録モーダルも顧客の閲覧権限に従って共通の顧客検索を表示する", () => {
+  const editor = <TimelineReservationEditor
+    value={{ kind: "create", date: "2026-10-20", startTime: "13:00", durationMinutes: 30, rowId: "unassigned" }}
+    menus={[reservationMenu]} rows={[]} onClose={() => {}} onSaved={() => {}}
+  />;
+  const permitted = renderFor(["reservation.read", "reservation.write", "customer.read"], editor);
+  assert.match(permitted, /登録済みのお客様を検索/);
+  assert.match(permitted, /電話番号/);
+  assert.match(permitted, /<input[^>]*placeholder="顧客名"[^>]*autofocus=""/i);
+  const blocked = renderFor(["reservation.read", "reservation.write"], editor);
+  assert.doesNotMatch(blocked, /登録済みのお客様を検索|登録済み顧客の候補/);
 });

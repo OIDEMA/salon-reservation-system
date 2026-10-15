@@ -1,7 +1,7 @@
 "use client";
 
 import { Search, UserCheck, X } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useState, type KeyboardEvent } from "react";
 import { usePermissions, useTenantSlug } from "./tenant-provider";
 import type { ReservationCustomer, ReservationCustomerInput } from "@/lib/reservation-customer";
 import { tenantApiPath } from "@/lib/tenant-routing";
@@ -14,10 +14,11 @@ type SearchResult = {
   message?: string;
 };
 
-export function ReservationCustomerFields({ value, onChange, disabled = false }: {
+export function ReservationCustomerFields({ value, onChange, disabled = false, autoFocus = false }: {
   value: ReservationCustomerInput;
   onChange: (value: ReservationCustomerInput) => void;
   disabled?: boolean;
+  autoFocus?: boolean;
 }) {
   const tenantSlug = useTenantSlug();
   const { can } = usePermissions();
@@ -28,7 +29,7 @@ export function ReservationCustomerFields({ value, onChange, disabled = false }:
   const [composing, setComposing] = useState(false);
   const [result, setResult] = useState<SearchResult | null>(null);
   const searchTerm = query.trim();
-  const searching = canLookup && !value.customerId && !composing && Boolean(searchTerm);
+  const searching = !disabled && canLookup && !value.customerId && !composing && Boolean(searchTerm);
   const currentResult = searching && result?.query === searchTerm ? result : null;
 
   useEffect(() => {
@@ -56,6 +57,12 @@ export function ReservationCustomerFields({ value, onChange, disabled = false }:
     setQuery(text);
   }
 
+  function preventCompositionSubmit(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter" && (composing || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)) {
+      event.preventDefault();
+    }
+  }
+
   function chooseCustomer(customer: ReservationCustomer) {
     onChange({ customerId: customer.id, name: customer.name, kana: customer.kana, phone: customer.phone ?? "" });
     setQuery("");
@@ -68,19 +75,19 @@ export function ReservationCustomerFields({ value, onChange, disabled = false }:
         <label className="createField">
           <span>顧客名</span>
           <input value={value.name} onChange={(event) => updateField("name", event.target.value)} onFocus={() => { if (!value.customerId && value.name.trim()) setQuery(value.name); }}
-            onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)}
-            placeholder="顧客名" required autoComplete="off" disabled={disabled} readOnly={Boolean(value.customerId)} aria-describedby={canLookup ? resultId : undefined} />
+            onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} onKeyDown={preventCompositionSubmit}
+            placeholder="顧客名" required autoFocus={autoFocus} autoComplete="off" disabled={disabled} readOnly={Boolean(value.customerId)} aria-describedby={canLookup ? resultId : undefined} />
         </label>
         <label className="createField">
           <span>カナ</span>
           <input value={value.kana} onChange={(event) => updateField("kana", event.target.value)} onFocus={() => { if (!value.customerId && value.kana.trim()) setQuery(value.kana); }}
-            onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)}
+            onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} onKeyDown={preventCompositionSubmit}
             placeholder="顧客名（カナ）" autoComplete="off" disabled={disabled} readOnly={Boolean(value.customerId)} aria-describedby={canLookup ? resultId : undefined} />
         </label>
         <label className="createField">
           <span>電話番号</span>
           <input value={value.phone} onChange={(event) => updateField("phone", event.target.value)} onFocus={() => { if (!value.customerId && value.phone.trim()) setQuery(value.phone); }}
-            onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)}
+            onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} onKeyDown={preventCompositionSubmit}
             placeholder="090-0000-0000" inputMode="tel" autoComplete="off" disabled={disabled} readOnly={Boolean(value.customerId)} aria-describedby={canLookup ? resultId : undefined} />
         </label>
       </div>

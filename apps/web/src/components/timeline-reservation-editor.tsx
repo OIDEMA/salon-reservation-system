@@ -2,8 +2,10 @@
 
 import { AlertCircle, CalendarCheck, Save, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { ReservationCustomerFields } from "@/components/reservation-customer-fields";
 import { useTenantSlug } from "@/components/tenant-provider";
 import type { AdminMenu } from "@/lib/admin-types";
+import { reservationCustomerPayload, type ReservationCustomerInput } from "@/lib/reservation-customer";
 import { tenantApiPath, tenantPath } from "@/lib/tenant-routing";
 import type { ReservationStatus, ScheduleReservation, ScheduleRow } from "@/lib/types";
 
@@ -57,8 +59,9 @@ export function TimelineReservationEditor({ value, menus, rows, onClose, onSaved
   const tenantSlug = useTenantSlug();
   const activeMenus = useMemo(() => menus.filter((menu) => menu.active), [menus]);
   const reservation = value.reservation;
-  const [customerName, setCustomerName] = useState(reservation?.customerName ?? "");
-  const [customerKana, setCustomerKana] = useState(reservation?.customerKana ?? "");
+  const [customer, setCustomer] = useState<ReservationCustomerInput>({
+    name: reservation?.customerName ?? "", kana: reservation?.customerKana ?? "", phone: ""
+  });
   const [serviceId, setServiceId] = useState(reservation?.serviceId ?? activeMenus[0]?.id ?? "");
   const [startTime, setStartTime] = useState(value.startTime);
   const [durationMinutes, setDurationMinutes] = useState(value.durationMinutes);
@@ -79,7 +82,7 @@ export function TimelineReservationEditor({ value, menus, rows, onClose, onSaved
       setMessage("メニューを選択してください。");
       return;
     }
-    if (value.kind === "create" && !customerName.trim()) {
+    if (value.kind === "create" && !customer.name.trim()) {
       setMessage("顧客名を入力してください。");
       return;
     }
@@ -111,8 +114,7 @@ export function TimelineReservationEditor({ value, menus, rows, onClose, onSaved
                   serviceId: selectedMenu.id,
                   serviceName: selectedMenu.name,
                   staffId: staffId || undefined,
-                  customerName: customerName.trim(),
-                  customerKana: customerKana.trim() || undefined,
+                  ...reservationCustomerPayload(customer),
                   source,
                   status,
                   isRequest: Boolean(staffId),
@@ -173,20 +175,11 @@ export function TimelineReservationEditor({ value, menus, rows, onClose, onSaved
           </div>
 
           {value.kind === "create" ? (
-            <div className="createFieldGrid two">
-              <label className="createField">
-                <span>顧客名</span>
-                <input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="顧客名" autoFocus required />
-              </label>
-              <label className="createField">
-                <span>カナ</span>
-                <input value={customerKana} onChange={(event) => setCustomerKana(event.target.value)} placeholder="顧客名（カナ）" />
-              </label>
-            </div>
+            <ReservationCustomerFields value={customer} onChange={setCustomer} disabled={busy} autoFocus />
           ) : (
             <label className="createField">
               <span>顧客</span>
-              <input value={customerName} readOnly />
+              <input value={customer.name} readOnly />
             </label>
           )}
 
