@@ -613,10 +613,6 @@ export function ReservationDashboard() {
 
             {loadError ? <div className="adminNotice">{loadError}</div> : null}
             {!loadError && !dashboard.salon ? <div className="adminNotice">店舗情報が未登録です。基本設定から店舗を登録してください。</div> : null}
-            {historicalReservations.length ? <div className="historyBoardContext">
-              <span>移行した予約履歴 {historicalReservations.length}件</span>
-              <span>{canWrite ? "履歴はドラッグで移動、クリックで詳細が開きます。" : "履歴を選択すると詳細が開きます。"}</span>
-            </div> : null}
             {dashboard.historicalHasMore ? <div className="adminNotice">この日の移行履歴は表示上限を超えています。<a href={tenantPath(tenantSlug, "/reservations/history")}>予約履歴一覧</a>で検索してください。</div> : null}
             {canWrite && viewMode === "timeline" && dashboard.salon ? (
               <div className="timelineHelp">

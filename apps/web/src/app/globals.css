@@ -3391,15 +3391,6 @@ a {
   gap: 8px;
 }
 .dashboardSearch .searchBox { flex: 1; min-width: 0; }
-.historyBoardContext {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  margin: 8px 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-.historyBoardContext > span:first-child { font-weight: 800; }
 .gridRow.isInactive { background: rgba(148, 163, 184, .12); cursor: default; }
 .resourceCell.isInactive small { color: #e2e8f0; }
 .historicalReservationCard {
