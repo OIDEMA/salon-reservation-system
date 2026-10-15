@@ -35,7 +35,6 @@ export function ReservationHistoryDetail({ history }: { history: HistoryDetail }
   return <div className="historyDetail">
     <div className="adminActions"><TenantLink className="secondaryButton" href={`/?date=${encodeURIComponent(boardDate)}`}>予約表で確認</TenantLink></div>
     <section className="adminPanel masterCreatePanel">
-      <h2>移行元の予約情報</h2>
       <p className="historyContext">サロンボードに記録されていた内容を表示しています。予約時金額は移行元の予約価格です。</p>
       <dl className="historyDetailFields">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
     </section>
