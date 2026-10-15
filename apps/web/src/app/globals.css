@@ -272,17 +272,16 @@ a {
   justify-content: flex-end;
 }
 
-.dateBadge {
-  display: inline-flex;
-  min-width: 292px;
+.dashboardDateInput {
+  width: 180px;
+  min-width: 0;
   height: 44px;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
+  border: 1px solid var(--line);
   border-radius: 8px;
+  padding: 0 12px;
+  color: var(--ink);
   background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--line);
-  font-size: 20px;
+  font-size: 16px;
 }
 
 .secondaryButton,
@@ -3436,17 +3435,6 @@ a {
 .historyStaffLinkCounts dt { color: var(--muted); font-size: 13px; }
 .historyStaffLinkCounts dd { margin: 6px 0 0; font-size: 22px; font-weight: 800; }
 .historyStaffLinkActions { margin-top: 20px; }
-
-.dateBadge input[type="date"] {
-  min-width: 145px;
-  min-height: 32px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  padding: 4px 6px;
-  color: var(--ink);
-  background: var(--surface);
-  font-size: 13px;
-}
 
 .historicalReservationCard .cardTime { font-size: 10px; line-height: 12px; white-space: nowrap; }
 .historicalReservationCard strong { font-size: 14px; line-height: 16px; }

@@ -19,7 +19,6 @@ import {
   XCircle
 } from "lucide-react";
 import { format, isValid, parseISO } from "date-fns";
-import { ja } from "date-fns/locale";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DismissibleMessage } from "@/components/dismissible-message";
@@ -109,10 +108,6 @@ function clamp(value: number, minimum: number, maximum: number) {
 async function responseError(response: Response) {
   const body = (await response.json().catch(() => null)) as { message?: string } | null;
   return body?.message ?? `処理に失敗しました (${response.status})`;
-}
-
-function formatDisplayDate(date: string) {
-  return format(parseISO(`${date}T00:00:00`), "yyyy年MM月dd日 (EEE)", { locale: ja });
 }
 
 function addDays(date: string, days: number) {
@@ -562,10 +557,7 @@ export function ReservationDashboard() {
                 <button className="secondaryButton" type="button" onClick={() => changeDate(addDays(date, -1))}>
                   {iconButtonLabel("前日", <ChevronLeft size={18} />)}
                 </button>
-                <div className="dateBadge">
-                  <strong>{formatDisplayDate(date)}</strong>
-                  <input aria-label="予約表の日付" type="date" value={date} onChange={(event) => { const selectedDate = validDateParam(event.target.value); if (selectedDate) changeDate(selectedDate); }} />
-                </div>
+                <input className="dashboardDateInput" aria-label="予約表の日付" type="date" value={date} onChange={(event) => { const selectedDate = validDateParam(event.target.value); if (selectedDate) changeDate(selectedDate); }} />
                 <button className="secondaryButton" type="button" onClick={() => changeDate(today)}>
                   本日
                 </button>
