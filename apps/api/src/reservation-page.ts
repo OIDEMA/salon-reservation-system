@@ -1,5 +1,6 @@
 import { Prisma, ReservationStatus, type PrismaClient } from "@prisma/client";
 import { z } from "zod";
+import { reservationPrice } from "./reservation-price.js";
 
 export const listPageQuerySchema = z.object({
   q: z.string().trim().max(100).optional(),
@@ -21,7 +22,8 @@ const summarySelect = {
   id: true, startsAt: true, endsAt: true, status: true, source: true,
   customer: { select: { id: true, name: true, kana: true, phone: true } },
   service: { select: { id: true, name: true, price: true } },
-  staff: { select: { id: true, name: true } }
+  staff: { select: { id: true, name: true } },
+  memberBookingRequest: { select: { price: true } }
 } satisfies Prisma.ReservationSelect;
 type Summary = Prisma.ReservationGetPayload<{ select: typeof summarySelect }>;
 const japanDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" });
@@ -30,7 +32,7 @@ const japanTime = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Tokyo", hou
 export function reservationListSummary(row: Summary) {
   return { id: row.id, date: japanDate.format(row.startsAt), startTime: japanTime.format(row.startsAt),
     endTime: japanTime.format(row.endsAt), status: row.status, source: row.source,
-    customer: row.customer, service: row.service, staff: row.staff };
+    customer: row.customer, service: { ...row.service, price: reservationPrice(row) }, staff: row.staff };
 }
 
 function whereFor(scope: Scope, query: Query | z.infer<typeof reservationOptionsQuerySchema>, options = false): Prisma.ReservationWhereInput {

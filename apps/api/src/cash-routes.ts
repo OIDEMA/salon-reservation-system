@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "./database.js";
 import { requireOperationContext, operationAudit, runSerializable, lockOperation } from "./operations-support.js";
 import { refreshCustomerAccounting } from "./accounting-stats.js";
+import { reservationPrice } from "./reservation-price.js";
 import { checkoutPage, checkoutPageQuerySchema } from "./checkout-page.js";
 import { registerPage, registerPageQuerySchema, openRegisterOptions } from "./register-page.js";
 import { assertCashSettlement, assertCashVersion, businessDateAt, calculateCashDraft, cashAssert,
@@ -122,12 +123,12 @@ export function registerCashRoutes(server: FastifyInstance) {
       const existing = await tx.cashCheckout.findFirst({ where: { ...scope(context), reservationId: input.reservationId, status: { not: "REVERSED" } }, include: checkoutInclude });
       if (existing) return existing;
       const previous = await tx.cashCheckout.findFirst({ where: { ...scope(context), reservationId: input.reservationId, status: "REVERSED" }, orderBy: { createdAt: "desc" } });
-      const reservation = await tx.reservation.findFirst({ where: { ...scope(context), id: input.reservationId }, include: { customer: true, service: true, staff: true } });
+      const reservation = await tx.reservation.findFirst({ where: { ...scope(context), id: input.reservationId }, include: { customer: true, service: true, staff: true, memberBookingRequest: { select: { price: true } } } });
       cashAssert(reservation, "RESERVATION_NOT_FOUND", "予約が見つかりません。", 404);
       cashAssert(!["CANCELLED", "NO_SHOW"].includes(reservation.status), "CASH_RESERVATION_CANCELLED", "取消・無断キャンセルの予約は会計できません。", 409);
       cashAssert(reservation.paymentStatus !== "REFUNDED" || previous, "CASH_RESERVATION_REFUNDED", "返金済み予約には訂正元の会計記録が必要です。", 409);
       const draft = cashDraftSchema.parse({ version: 1, items: [{ label: reservation.service.name, quantity: 1,
-        unitPriceYen: reservation.service.price, discountYen: 0, taxRate: 10 }], payments: [], legacyPaidAcknowledged: false, notes: "" });
+        unitPriceYen: reservationPrice(reservation), discountYen: 0, taxRate: 10 }], payments: [], legacyPaidAcknowledged: false, notes: "" });
       const totals = calculateCashDraft(draft);
       const checkout = await tx.cashCheckout.create({ data: { ...scope(context), reservationId: reservation.id,
         createRequestId: input.requestId, createdByUserId: context.user.id, legacyPaymentStatus: reservation.paymentStatus,
@@ -252,11 +253,11 @@ export function registerCashRoutes(server: FastifyInstance) {
       const checkout = await checkoutFor(tx, context, id);
       assertCashVersion(checkout, input.version, "DRAFT");
       await tx.$queryRaw`SELECT id FROM "Reservation" WHERE "tenantId"=${context.tenant.id} AND "salonId"=${context.salon.id} AND id=${checkout.reservationId} FOR UPDATE`;
-      const reservation = await tx.reservation.findFirst({ where: { ...scope(context), id: checkout.reservationId }, include: { customer: true, service: true, staff: true } });
+      const reservation = await tx.reservation.findFirst({ where: { ...scope(context), id: checkout.reservationId }, include: { customer: true, service: true, staff: true, memberBookingRequest: { select: { price: true } } } });
       cashAssert(reservation, "RESERVATION_NOT_FOUND", "予約が見つかりません。", 404);
       cashAssert(!["CANCELLED", "NO_SHOW"].includes(reservation.status), "CASH_RESERVATION_CANCELLED", "取消・無断キャンセルの予約は会計できません。", 409);
       const draft = cashDraftSchema.parse({ version: input.version, items: [{ label: reservation.service.name, quantity: 1,
-        unitPriceYen: reservation.service.price, discountYen: 0, taxRate: 10 }], payments: [], legacyPaidAcknowledged: false, notes: checkout.notes });
+        unitPriceYen: reservationPrice(reservation), discountYen: 0, taxRate: 10 }], payments: [], legacyPaidAcknowledged: false, notes: checkout.notes });
       const totals = calculateCashDraft(draft);
       await tx.cashCheckout.updateMany({ where: { ...scope(context), id, status: "DRAFT", version: input.version }, data: {
         version: { increment: 1 }, legacyPaymentStatus: reservation.paymentStatus, legacyPaidAcknowledged: false,

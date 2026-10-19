@@ -1,4 +1,6 @@
 import cors from "@fastify/cors";
+import { reservationPrice } from "./reservation-price.js";
+import { registerMemberBookingRoutes } from "./member-booking-routes.js";
 import {
   CategoryType,
   LineMessageStatus,
@@ -12,6 +14,7 @@ import {
 import Fastify, { type FastifyRequest } from "fastify";
 import { requirePermission, effectivePermissions, hasPermission } from "./permissions.js";
 import { runSerializable, lockOperation, operationAudit, operationError } from "./operations-support.js";
+import { assertReservationCapacity, ReservationCapacityError } from "./reservation-capacity.js";
 import { legacyPermission } from "./legacy-permissions.js";
 import { registerCashRoutes } from "./cash-routes.js";
 import { registerChartRoutes } from "./chart-routes.js";
@@ -35,6 +38,7 @@ import { requestedSalonId, requireAuthenticatedUser, requireTenantContext, type 
 
 export const server = Fastify({
   logger: {
+    redact: ["req.headers.authorization", "req.headers.cookie", 'res.headers["set-cookie"]'],
     transport:
       process.env.NODE_ENV === "production"
         ? undefined
@@ -267,7 +271,8 @@ async function buildDashboardFromDatabase(date: string, tenantId: string, salonI
       include: {
         customer: true,
         service: true,
-        staff: true
+        staff: true,
+        memberBookingRequest: { select: { price: true } }
       },
       orderBy: [{ startsAt: "asc" }, { id: "asc" }]
     }),
@@ -286,7 +291,7 @@ async function buildDashboardFromDatabase(date: string, tenantId: string, salonI
     prisma.reservation.findMany({
       where: { ...scope, startsAt: { gte: start, lt: end } },
       select: { startsAt: true, endsAt: true, status: true, riskScore: true, lineMessageStatus: true,
-        service: { select: { price: true } } }
+        service: { select: { price: true } }, memberBookingRequest: { select: { price: true } } }
     })
   ]);
 
@@ -302,7 +307,7 @@ async function buildDashboardFromDatabase(date: string, tenantId: string, salonI
     customerKana: reservation.customer.kana,
     serviceName: reservation.service.name,
     category: reservation.service.category,
-    price: reservation.service.price,
+    price: reservationPrice(reservation),
     status: reservation.status,
     source: reservation.source,
     isRequest: reservation.isRequest,
@@ -315,7 +320,7 @@ async function buildDashboardFromDatabase(date: string, tenantId: string, salonI
   }));
 
   const pendingCount = operationalMetrics.filter((reservation) => reservation.status === "PENDING").length;
-  const revenue = operationalMetrics.reduce((total, reservation) => total + reservation.service.price, 0);
+  const revenue = operationalMetrics.reduce((total, reservation) => total + reservationPrice(reservation), 0);
   const openTime = salon.settings?.openTime ?? "09:00";
   const closeTime = salon.settings?.closeTime ?? "20:00";
   const toMinutes = (time: string) => {
@@ -370,7 +375,7 @@ async function buildDashboardFromDatabase(date: string, tenantId: string, salonI
         messageReservations.length > 0
           ? Math.round((messageReservations.filter((reservation) => reservation.lineMessageStatus === "READ").length / messageReservations.length) * 100)
           : 0,
-      averageTicket: Math.round(revenue / Math.max(1, operationalMetrics.filter((reservation) => reservation.service.price > 0).length))
+      averageTicket: Math.round(revenue / Math.max(1, operationalMetrics.filter((reservation) => reservationPrice(reservation) > 0).length))
     }
   };
 }
@@ -417,83 +422,6 @@ async function findScopedSalon(context: TenantContext, request: Parameters<typeo
   return getTenantSalon(context.tenant.id, requestedSalonId(request));
 }
 
-async function ensureReservationSlot(
-  reply: Parameters<typeof requireTenantContext>[1],
-  tenantId: string,
-  salonId: string,
-  startsAt: Date,
-  endsAt: Date,
-  staffId?: string | null,
-  excludeReservationId?: string
-) {
-  const settings = await prisma.salonSettings.findUnique({ where: { tenantId_salonId: { tenantId, salonId } } });
-  if (settings && !settings.acceptingReservations) {
-    reply.code(409).send({ code: "RESERVATIONS_SUSPENDED", message: "現在、予約受付を停止しています。" });
-    return false;
-  }
-
-  const activeStatuses: ReservationStatus[] = ["PENDING", "CONFIRMED", "ARRIVED"];
-  const overlapWhere = {
-    tenantId,
-    salonId,
-    status: { in: activeStatuses },
-    startsAt: { lt: endsAt },
-    endsAt: { gt: startsAt },
-    ...(excludeReservationId ? { id: { not: excludeReservationId } } : {})
-  };
-  const [salonOverlapCount, salonUnavailableShift] = await Promise.all([
-    prisma.reservation.count({ where: overlapWhere }),
-    prisma.shift.findFirst({
-      where: {
-        tenantId,
-        salonId,
-        staffId: null,
-        type: { in: ["OFF", "BREAK", "SALES_STOP"] },
-        startsAt: { lt: endsAt },
-        endsAt: { gt: startsAt }
-      }
-    })
-  ]);
-  if (salonUnavailableShift) {
-    reply.code(409).send({ code: "SALON_UNAVAILABLE", message: "店舗は指定時間に予約を受け付けていません。" });
-    return false;
-  }
-  if (settings && salonOverlapCount >= settings.maxConcurrentReservations) {
-    reply.code(409).send({ code: "SALON_CAPACITY_EXCEEDED", message: "店舗の同時受付上限に達しています。" });
-    return false;
-  }
-
-  if (!staffId) return true;
-  const staff = await prisma.staff.findFirst({ where: { id: staffId, tenantId, salonId, active: true } });
-  if (!staff) {
-    reply.code(400).send({ code: "INVALID_STAFF", message: "担当スタッフが見つかりません。" });
-    return false;
-  }
-
-  const [staffOverlapCount, unavailableShift] = await Promise.all([
-    prisma.reservation.count({ where: { ...overlapWhere, staffId } }),
-    prisma.shift.findFirst({
-      where: {
-        tenantId,
-        salonId,
-        staffId,
-        type: { in: ["OFF", "BREAK", "SALES_STOP"] },
-        startsAt: { lt: endsAt },
-        endsAt: { gt: startsAt }
-      }
-    })
-  ]);
-  if (staffOverlapCount >= staff.parallelCapacity) {
-    reply.code(409).send({ code: "STAFF_CONFLICT", message: "担当スタッフの同時間帯の受付上限に達しています。" });
-    return false;
-  }
-  if (unavailableShift) {
-    reply.code(409).send({ code: "STAFF_UNAVAILABLE", message: "担当スタッフは指定時間に受付できません。" });
-    return false;
-  }
-  return true;
-}
-
 async function recalculateCustomerStats(tenantId: string, salonId: string, customerId: string) {
   await runSerializable(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Salon" WHERE id=${salonId} AND "tenantId"=${tenantId} FOR UPDATE`;
@@ -524,6 +452,7 @@ function reservationResponse(reservation: {
   customer: { id: string; name: string; kana: string; phone: string | null; visitCount: number; tags: string[] };
   service: { id: string; name: string; category: string; durationMinutes: number; price: number };
   staff: { id: string; name: string } | null;
+  memberBookingRequest?: { price: number } | null;
 }) {
   return {
     id: reservation.id,
@@ -539,7 +468,7 @@ function reservationResponse(reservation: {
     lineMessageStatus: reservation.lineMessageStatus,
     updatedAt: reservation.updatedAt.toISOString(),
     customer: { id: reservation.customer.id, name: reservation.customer.name, kana: reservation.customer.kana, phone: reservation.customer.phone, visitCount: reservation.customer.visitCount, tags: reservation.customer.tags },
-    service: reservation.service,
+    service: { ...reservation.service, price: reservationPrice(reservation) },
     staff: reservation.staff
   };
 }
@@ -557,6 +486,7 @@ await server.register(cors, {
 const legacyAccess = new WeakMap<FastifyRequest, TenantContext>();
 server.addHook("preHandler", async (request, reply) => {
   const route = request.routeOptions.url ?? "";
+  if (route.startsWith("/api/member/")) return;
   const permission = legacyPermission(request.method, route);
   if (!permission) return;
   const context = await requirePermission(request, reply, permission);
@@ -592,7 +522,7 @@ server.setErrorHandler((error, request, reply) => {
   const statusCode = typeof error === "object" && error !== null && "statusCode" in error ? Number(error.statusCode) : 500;
   const safeStatusCode = Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500 ? statusCode : 500;
   return reply.code(safeStatusCode).send({
-    code: "REQUEST_FAILED",
+    code: error instanceof ReservationCapacityError ? error.code : "REQUEST_FAILED",
     message: safeStatusCode < 500 && error instanceof Error ? error.message : "処理中にエラーが発生しました。"
   });
 });
@@ -995,7 +925,7 @@ server.get("/api/admin/customers/:id", async (request, reply) => {
     include: {
       externalRecords: true,
       reservations: {
-        include: { service: true, staff: true },
+        include: { service: true, staff: true, memberBookingRequest: { select: { price: true } } },
         orderBy: { startsAt: "desc" },
         take: 100
       }
@@ -1007,7 +937,7 @@ server.get("/api/admin/customers/:id", async (request, reply) => {
     id: customer.id, name: customer.name, kana: customer.kana, phone: customer.phone,
     lineDisplayName: customer.lineDisplayName, tags: customer.tags, visitCount: customer.visitCount,
     totalSpent: totals.get(customer.id) ?? 0, lastVisitAt: customer.lastVisitAt, memo: customer.memo,
-    createdAt: customer.createdAt, updatedAt: customer.updatedAt, reservations: customer.reservations,
+    createdAt: customer.createdAt, updatedAt: customer.updatedAt, reservations: customer.reservations.map(({ memberBookingRequest, ...reservation }) => ({ ...reservation, service: { ...reservation.service, price: reservationPrice({ ...reservation, memberBookingRequest }) } })),
     importedProfiles: customer.externalRecords.map((record) => customerExternalDetail(record, hasPermission(context, "chart.read")))
   };
 });
@@ -1151,7 +1081,7 @@ server.get("/api/reservations", async (request, reply) => {
           }
         : {})
     },
-    include: { customer: true, service: true, staff: true },
+    include: { customer: true, service: true, staff: true, memberBookingRequest: { select: { price: true } } },
     orderBy: { startsAt: "desc" },
     take: 1000
   });
@@ -1188,7 +1118,7 @@ server.get("/api/reservations/:id", async (request, reply) => {
   const { id } = idParamsSchema.parse(request.params);
   const reservation = await prisma.reservation.findFirst({
     where: { id, tenantId: context.tenant.id, salonId: salon.id },
-    include: { customer: true, service: true, staff: true }
+    include: { customer: true, service: true, staff: true, memberBookingRequest: { select: { price: true } } }
   });
   if (!reservation) return reply.code(404).send({ code: "RESERVATION_NOT_FOUND", message: "予約が見つかりません。" });
   return {
@@ -1207,12 +1137,11 @@ server.post("/api/reservations", async (request, reply) => {
 
   const startsAt = reservationDateTime(input.date, input.startTime);
   const endsAt = new Date(startsAt.getTime() + input.durationMinutes * 60_000);
-  if (!["CANCELLED", "NO_SHOW"].includes(input.status)) {
-    const slotAvailable = await ensureReservationSlot(reply, context.tenant.id, salon.id, startsAt, endsAt, input.staffId);
-    if (!slotAvailable) return;
-  }
   const reservation = await runSerializable(async (transaction) => {
     await lockOperation(transaction, context, "reservation.write", salon.id);
+    if (!["CANCELLED", "NO_SHOW"].includes(input.status)) {
+      await assertReservationCapacity(transaction, { tenantId: context.tenant.id, salonId: salon.id, startsAt, endsAt, staffId: input.staffId });
+    }
     let customer = input.customerId
       ? await transaction.customer.findFirst({ where: { id: input.customerId, tenantId: context.tenant.id, salonId: salon.id } })
       : input.customerPhone
@@ -1259,7 +1188,7 @@ server.post("/api/reservations", async (request, reply) => {
         paymentStatus: input.paymentStatus,
         lineMessageStatus: input.lineMessageStatus
       },
-      include: { customer: true, service: true, staff: true }
+      include: { customer: true, service: true, staff: true, memberBookingRequest: { select: { price: true } } }
     });
     await transaction.auditLog.create({
       data: {
@@ -1300,27 +1229,25 @@ server.patch("/api/reservations/:id", async (request, reply) => {
   const staffId = input.staffId === undefined ? existing.staffId : input.staffId;
   const status = input.status ?? existing.status;
 
-  if (input.customerId) {
-    const customer = await prisma.customer.findFirst({ where: { id: input.customerId, tenantId: context.tenant.id, salonId: salon.id } });
-    if (!customer) return reply.code(400).send({ code: "INVALID_CUSTOMER", message: "顧客が見つかりません。" });
-  }
-  if (input.serviceId) {
-    const service = await prisma.service.findFirst({ where: { id: input.serviceId, tenantId: context.tenant.id, salonId: salon.id, active: true } });
-    if (!service) return reply.code(400).send({ code: "INVALID_SERVICE", message: "メニューが見つかりません。" });
-  }
-  if (!["CANCELLED", "NO_SHOW"].includes(status)) {
-    const slotAvailable = await ensureReservationSlot(reply, context.tenant.id, salon.id, startsAt, endsAt, staffId, id);
-    if (!slotAvailable) return;
-  }
-
   if (input.paymentStatus !== undefined && input.paymentStatus !== existing.paymentStatus) {
     return reply.code(409).send({ code: "CHECKOUT_REQUIRED", message: "支払状況は会計画面から記録してください。" });
   }
   const updated = await runSerializable(async (tx) => {
-    await tx.$queryRaw`SELECT "id" FROM "Salon" WHERE "id" = ${salon.id} AND "tenantId" = ${context.tenant.id} FOR UPDATE`;
+    await lockOperation(tx, context, "reservation.write", salon.id);
     const current = await tx.reservation.findFirst({ where: { id, tenantId: context.tenant.id, salonId: salon.id } });
     if (!current) throw operationError(404, "予約が見つかりません。");
     if (current.updatedAt.getTime() !== existing.updatedAt.getTime()) throw operationError(409, "予約が更新されています。読み込み直して確認してください。");
+    if (input.customerId) {
+      const customer = await tx.customer.findFirst({ where: { id: input.customerId, tenantId: context.tenant.id, salonId: salon.id } });
+      if (!customer) throw operationError(400, "顧客が見つかりません。");
+    }
+    if (input.serviceId) {
+      const service = await tx.service.findFirst({ where: { id: input.serviceId, tenantId: context.tenant.id, salonId: salon.id, active: true } });
+      if (!service) throw operationError(400, "メニューが見つかりません。");
+    }
+    if (!["CANCELLED", "NO_SHOW"].includes(status)) {
+      await assertReservationCapacity(tx, { tenantId: context.tenant.id, salonId: salon.id, startsAt, endsAt, staffId, excludeReservationId: id });
+    }
     const changesContext = startsAt.getTime() !== current.startsAt.getTime() || endsAt.getTime() !== current.endsAt.getTime() || staffId !== current.staffId ||
       (input.customerId !== undefined && input.customerId !== current.customerId) || (input.serviceId !== undefined && input.serviceId !== current.serviceId);
     if (changesContext) {
@@ -1343,7 +1270,7 @@ server.patch("/api/reservations/:id", async (request, reply) => {
       ...(input.memo !== undefined ? { memo: input.memo } : {}),
       ...(input.isRequest !== undefined ? { isRequest: input.isRequest } : {})
     },
-      include: { customer: true, service: true, staff: true }
+      include: { customer: true, service: true, staff: true, memberBookingRequest: { select: { price: true } } }
     });
     await operationAudit(tx, context, request, { action: "reservation.update", resource: "reservation", resourceId: id });
     return result;
@@ -1362,26 +1289,18 @@ server.patch("/api/reservations/:id/status", async (request, reply) => {
   const input = updateStatusSchema.parse(request.body);
   const existing = await prisma.reservation.findFirst({ where: { id: params.id, tenantId: context.tenant.id, salonId: salon.id } });
   if (!existing) return reply.code(404).send({ code: "RESERVATION_NOT_FOUND", message: "予約が見つかりません。" });
-  if (!["CANCELLED", "NO_SHOW"].includes(input.status)) {
-    const slotAvailable = await ensureReservationSlot(
-      reply,
-      context.tenant.id,
-      salon.id,
-      existing.startsAt,
-      existing.endsAt,
-      existing.staffId,
-      existing.id
-    );
-    if (!slotAvailable) return;
-  }
   const result = await runSerializable(async (tx) => {
     await lockOperation(tx, context, "reservation.write", salon.id);
     const current = await tx.reservation.findFirst({ where: { id: params.id, tenantId: context.tenant.id, salonId: salon.id } });
     if (!current) throw operationError(404, "予約が見つかりません。");
     if (current.updatedAt.getTime() !== existing.updatedAt.getTime()) throw operationError(409, "予約が更新されています。再読み込みしてから変更してください。");
+    if (!["CANCELLED", "NO_SHOW"].includes(input.status)) {
+      await assertReservationCapacity(tx, { tenantId: context.tenant.id, salonId: salon.id,
+        startsAt: current.startsAt, endsAt: current.endsAt, staffId: current.staffId, excludeReservationId: current.id });
+    }
     const updated = await tx.reservation.update({
       where: { tenantId_salonId_id: { tenantId: context.tenant.id, salonId: salon.id, id: params.id } },
-      data: { status: input.status }, include: { customer: true, service: true, staff: true }
+      data: { status: input.status }, include: { customer: true, service: true, staff: true, memberBookingRequest: { select: { price: true } } }
     });
     await operationAudit(tx, context, request, { action: "reservation.status.update", resource: "reservation", resourceId: params.id });
     return updated;
@@ -1390,6 +1309,7 @@ server.patch("/api/reservations/:id/status", async (request, reply) => {
   return reservationResponse(result);
 });
 
+registerMemberBookingRoutes(server);
 await registerCashRoutes(server);
 await registerChartRoutes(server);
 await registerStaffImportRoutes(server);

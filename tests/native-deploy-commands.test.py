@@ -189,6 +189,9 @@ class NativeDeploymentTests(unittest.TestCase):
         self.assertIn('--wait', mutations[1])
         self.assertIn(f"--image={ENV['API_IMAGE']}", mutations[2])
         self.assertIn(f'--labels=native-deploy-build={BUILD}', mutations[2])
+        api_environment = next(value for value in mutations[2] if value.startswith("--set-env-vars="))
+        self.assertIn("MEMBER_BOOKING_TENANTS=mens-gentle:gentle;missmrs-takamatsu:missmrs", api_environment)
+        self.assertNotIn("FIREBASE_AUTH_EMULATOR_HOST", api_environment)
         writes = [data for method, url, data in self.requests if method == 'POST' and 'validateOnly=true' not in url]
         self.assertEqual(writes, [{'source': {'codebase': {'commit': SHA}}}, {'build': BUILD_PATH}])
 

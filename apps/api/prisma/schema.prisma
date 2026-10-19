@@ -346,6 +346,7 @@ model SalonSettings {
 }
 
 model Customer {
+  memberLinks MemberCustomerLink[]
   externalRecords CustomerExternalRecord[]
   treatmentCharts TreatmentChart[]
   id              String        @id @default(cuid())
@@ -499,6 +500,7 @@ model HistoricalReservationImportRun {
 }
 
 model Reservation {
+  memberBookingRequest MemberReservationRequest?
   treatmentCharts TreatmentChart[]
   cashCheckouts CashCheckout[]
   @@unique([tenantId, salonId, id])
@@ -848,4 +850,50 @@ model TreatmentChartRevisionPhoto {
 
   @@id([tenantId, salonId, chartId, revisionId, photoId])
   @@index([tenantId, salonId, chartId, photoId])
+}
+
+// Verified Firebase identity links are explicit and never inferred from contact information.
+model MemberCustomerLink {
+  id String @id @default(cuid())
+  projectId String
+  uid String
+  tenantId String
+  salonId String
+  customerId String
+  createdAt DateTime @default(now())
+  customer Customer @relation(fields: [tenantId, salonId, customerId], references: [tenantId, salonId, id], onDelete: Cascade)
+
+  @@unique([projectId, uid, tenantId, salonId])
+  @@unique([tenantId, salonId, customerId])
+  @@index([projectId, uid])
+}
+
+// The owner-scoped request key and immutable amount make network retries safe.
+model MemberReservationRequest {
+  id String @id @default(cuid())
+  projectId String
+  uid String
+  idempotencyKey String
+  payloadHash String
+  tenantId String
+  salonId String
+  reservationId String
+  price Int
+  createdAt DateTime @default(now())
+  reservation Reservation @relation(fields: [tenantId, salonId, reservationId], references: [tenantId, salonId, id], onDelete: Restrict)
+
+  @@unique([projectId, uid, idempotencyKey])
+  @@unique([tenantId, salonId, reservationId])
+  @@index([projectId, uid, createdAt])
+}
+
+// Counts rejected requests too; it is committed separately from booking transactions.
+model MemberBookingRateLimit {
+  projectId String
+  uid String
+  windowStartsAt DateTime
+  attempts Int @default(1)
+
+  @@id([projectId, uid, windowStartsAt])
+  @@index([windowStartsAt])
 }

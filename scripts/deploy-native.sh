@@ -255,7 +255,7 @@ gcloud(
     f"--labels=native-deploy-build={build_id}",
     "--allow-unauthenticated", f"--network={expected['VPC_NETWORK']}", f"--subnet={expected['VPC_SUBNET']}",
     "--vpc-egress=private-ranges-only", "--set-secrets=DATABASE_URL=reservation-database-url:latest",
-    f"--set-env-vars=NODE_ENV=production,DB_CONNECTIVITY=private-ip,CHART_PHOTOS_BUCKET={expected['CHART_PHOTOS_BUCKET']},CORS_ORIGINS={frontend_url}",
+    f"--set-env-vars=NODE_ENV=production,DB_CONNECTIVITY=private-ip,CHART_PHOTOS_BUCKET={expected['CHART_PHOTOS_BUCKET']},CORS_ORIGINS={frontend_url},MEMBER_BOOKING_TENANTS=mens-gentle:gentle;missmrs-takamatsu:missmrs",
     "--cpu=1", "--memory=512Mi", "--min-instances=0", "--max-instances=1", "--concurrency=40",
     "--timeout=60", "--port=8080",
     "--startup-probe=httpGet.path=/ready,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=5,failureThreshold=24",
