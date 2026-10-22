@@ -41,36 +41,36 @@ The trigger's event configuration references this new event link. Its `_GIT_REPO
 
 The Developer Connect GitHub installation can read code, issues, and pull requests and write checks and commit statuses for that repository.
 
-App Hosting uses its existing link when Cloud Build requests a frontend build from a specific SHA. The deployment script verifies that link against the backend and Developer Connect clone URI. An empty `_GIT_REPOSITORY_LINK` default fails preflight rather than choosing a repository implicitly.
+Cloud Build builds the frontend container from its triggering Git SHA. The deployment script still verifies the existing App Hosting link against the backend and Developer Connect clone URI. An empty `_GIT_REPOSITORY_LINK` default fails preflight rather than choosing a repository implicitly.
 
-App Hosting's automatic rollout policy stays **disabled**. Cloud Build performs the database and API steps first, then requests an App Hosting build from the same Git SHA. This gives one deployment sequence and prevents a separate frontend rollout from overtaking the API/schema update. Preflight requires `traffic.rolloutPolicy.disabled === true`.
+App Hosting's automatic rollout policy stays **disabled**. Cloud Build performs the database and API steps first, then supplies the frontend container built from the same Git SHA to App Hosting. This gives one deployment sequence and prevents a separate frontend rollout from overtaking the API/schema update. Preflight requires `traffic.rolloutPolicy.disabled === true`.
 
 ## Pipeline
 
 1. Verify the approved project/repository, App Hosting root and policy, private Cloud SQL network, and photo-storage public-access prevention.
 2. Under Node.js 22.23.4, install dependencies, audit all three dependency lock files, generate Prisma, run type checks and application tests, and build the API and web app.
-3. Build and push `asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-api:${COMMIT_SHA}-${BUILD_ID}`. Each Cloud Build has a unique tag, including repeated builds of one commit.
+3. Build and push `reservation-api:${COMMIT_SHA}-${BUILD_ID}` and `reservation-web:${COMMIT_SHA}-${BUILD_ID}` in `asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy`. Smoke-test the web container before deployment. Each Cloud Build has unique tags, including repeated builds of one commit.
 4. Run deployment tests, acquire the production lease, and verify current `main`. Skip a triggering commit that has become obsolete before deployment starts.
 5. Record intent, update the private-VPC schema job, record execution intent, and wait for the schema operation.
 6. Record intent, deploy the same image to the API with `native-deploy-build=BUILD_ID`, and verify VPC configuration and `/ready`.
-7. Record intent and request App Hosting `source.codebase.commit = COMMIT_SHA`. Wait for compiled source (`BUILT` or `READY`) and verify the resolved repository/hash, then validate the rollout request.
+7. Resolve the web image tag to its immutable digest, record intent and request App Hosting `source.container.image` with that digest and the checked-in container configuration. Wait for `BUILT` or `READY`, verify the container source, then validate the rollout request.
 8. Record rollout intent, create the rollout, wait for both operations, require build `READY` and rollout `SUCCEEDED`, verify frontend routing, and release the lease after its child operations settle.
 
 App Hosting build and rollout IDs are both `native-` followed by the first 23 hexadecimal characters of SHA256 of the Cloud Build UUID encoded as UTF-8. This deterministic 30-character ID meets App Hosting's length limit and is shared by creation and lease recovery.
 
-The resolved source hash must match the triggering SHA; a returned `commit` must also match. A returned `repository` field must equal the approved link, including rejecting empty/null values. If that optional field is omitted, require the exact approved GitHub commit URI and freshly verify the backend's link/root and the Developer Connect clone URI. Repeat source verification after the build reaches `READY`.
+The web tag must identify the triggering SHA and Cloud Build UUID in the approved registry. Its resolved digest must match the App Hosting container source before rollout and again after the build reaches `READY`. The backend's repository/root and Developer Connect clone URI are checked independently. App Hosting container-source builds do not populate Git source metadata; retain the Cloud Build source SHA, image digest and rollout ID together as release evidence.
 
 The job and API keep their existing runtime identity, private network, Secret Manager database reference, limits, and startup checks. Build workers do not connect directly to the production database.
 
 ### Build environments and budgets
 
-The API Docker image and Cloud Build validation image are pinned to Node.js `22.23.4`, the [2026-10-21 security release](https://nodejs.org/en/blog/release/v22.23.4). Docker builds use `--pull` to refresh the base image for that version. `npm run audit:security` checks the repository, standalone API, and standalone web lock files and stops the pipeline on any reported vulnerability. The API image also runs the schema job, so its Prisma CLI must remain available; do not remove development dependencies without separating or preserving that job's runtime requirements.
+The API, web Docker images and Cloud Build validation image are pinned to Node.js `22.23.4`, the [2026-10-21 security release](https://nodejs.org/en/blog/release/v22.23.4). Docker builds use `--pull` to refresh the base image for that version. `npm run audit:security` checks the repository, standalone API, and standalone web lock files and stops the pipeline on any reported vulnerability. The API image also runs the schema job, so its Prisma CLI must remain available; do not remove development dependencies without separating or preserving that job's runtime requirements.
 
-Firebase App Hosting builds the frontend separately. Its [supported runtimes](https://firebase.google.com/docs/app-hosting/frameworks-tooling#runtimes-for-app-hosting) include Node.js 22 and 24; the backend runtime must match the package's `engines.node` range. A package version range or backend runtime label alone does not establish the deployed patch version. Before declaring a frontend runtime fix complete, verify the backend runtime and Automatic Base Image Updates setting, the generated image's Node.js version (at least `22.23.4` or `24.22.1` within those major lines), and the image digest of the revision receiving traffic. If Google has not yet supplied a matching patched runtime, record the frontend rollout as pending.
+The frontend uses App Hosting's [container source API](https://firebase.google.com/docs/reference/apphosting/rest/v1/projects.locations.backends.builds#BuildSource.ContainerSource). On 2026-10-22 Google's managed buildpack did not yet provide patched Node.js `22.23.4` or `24.22.1`; a source build with the required engines range failed. Building the standalone Next.js image with the official Node.js base avoids that dependency. The backend uses versionless `runtime.value=nodejs`, which disables Automatic Base Image Updates. Maintain the pinned Docker versions and rebuild to deliver future runtime fixes; automatic runtime patching must not be assumed. Before declaring a runtime fix complete, verify the generated image's Node.js version and the digest of the revision receiving traffic.
 
 Both Google Cloud CLI steps use `gcr.io/google.com/cloudsdktool/google-cloud-cli:slim`, which supplies the required `python3` and `git`. Verify both executables before changing the image; the deployment scripts use Python's standard library and do not require jq or curl.
 
-Native App Hosting builds set `APP_HOSTING_BUILD=1` for build time only. The web prebuild installs its own dependencies with `npm ci --workspaces=false`; Next.js then uses the app directory for tracing and Turbopack roots so its standalone `server.js` matches the App Hosting adapter. Regular workspace builds retain the repository root behavior.
+The web Docker build sets `APP_HOSTING_BUILD=1` for build time only. The web prebuild installs its own dependencies with `npm ci --workspaces=false`; Next.js uses the app directory for tracing and Turbopack roots. The final non-root container includes standalone `server.js`, public files and Next.js static assets. Runtime configuration comes from `scripts/apphosting-container-config.json`; keep public build-time Firebase configuration consistent with `cloudbuild.yaml` and `apps/web/apphosting.yaml`. Regular workspace builds retain the repository root behavior.
 
 The whole Cloud Build timeout is `10800s` (three hours), including validation, image construction, a lease wait of up to `3600s` (one hour), API/schema work, and App Hosting checks. Uncontended deployments acquire the lease immediately. A timed-out parent can leave asynchronous work active; do not treat timeout as proof of completion.
 
@@ -144,7 +144,7 @@ Unknown, paused, unreadable, mismatched, or missing-after-intent resources retai
 
 ## Local verification
 
-The deployment suites passed 74 mocked tests (46 lease/helper and 28 command tests), including the shared 30-character App Hosting ID, optional source metadata checks, and compiled-source/rollout sequence. The native-source Next.js fixture also passed App Hosting adapter `14.0.21` and its standalone-output check.
+The deployment suites cover lease ownership/recovery, the shared 30-character App Hosting ID, container source verification and the ordered build/rollout sequence. Cloud Build additionally starts the actual web container and checks its runtime and public routes before deployment.
 
 ```bash
 python3 tests/native-deploy.test.py

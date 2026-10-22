@@ -1,0 +1,19 @@
+{
+  "runConfig": {
+    "minInstances": 0,
+    "maxInstances": 1,
+    "concurrency": 80,
+    "cpu": 1,
+    "memoryMib": 512
+  },
+  "env": [
+    { "variable": "APP_HOSTING_BUILD", "value": "1", "availability": ["BUILD"] },
+    { "variable": "APP_PUBLIC_ORIGIN", "value": "https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app", "availability": ["RUNTIME"] },
+    { "variable": "NEXT_PUBLIC_API_BASE_URL", "value": "https://reservation-api-42401528382.asia-east1.run.app", "availability": ["BUILD", "RUNTIME"] },
+    { "variable": "NEXT_PUBLIC_FIREBASE_API_KEY", "value": "AIzaSyDbFdE8AqI9DrTHtQdkKEN92TZ57lmv-rw", "availability": ["BUILD", "RUNTIME"] },
+    { "variable": "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN", "value": "salon-reserve-bg.firebaseapp.com", "availability": ["BUILD", "RUNTIME"] },
+    { "variable": "NEXT_PUBLIC_FIREBASE_PROJECT_ID", "value": "salon-reserve-bg", "availability": ["BUILD", "RUNTIME"] },
+    { "variable": "NEXT_PUBLIC_FIREBASE_APP_ID", "value": "1:42401528382:web:593b5bb1e23940f3052f6f", "availability": ["BUILD", "RUNTIME"] },
+    { "variable": "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID", "value": "42401528382", "availability": ["BUILD", "RUNTIME"] }
+  ]
+}

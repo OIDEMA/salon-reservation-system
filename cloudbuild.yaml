@@ -31,6 +31,64 @@ steps:
     args:
       - push
       - asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-api:${COMMIT_SHA}-${BUILD_ID}
+  - id: build-web
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --pull
+      - --tag
+      - asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-web:${COMMIT_SHA}-${BUILD_ID}
+      - --build-arg
+      - NEXT_PUBLIC_API_BASE_URL=https://reservation-api-42401528382.asia-east1.run.app
+      - --build-arg
+      - NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyDbFdE8AqI9DrTHtQdkKEN92TZ57lmv-rw
+      - --build-arg
+      - NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=salon-reserve-bg.firebaseapp.com
+      - --build-arg
+      - NEXT_PUBLIC_FIREBASE_PROJECT_ID=salon-reserve-bg
+      - --build-arg
+      - NEXT_PUBLIC_FIREBASE_APP_ID=1:42401528382:web:593b5bb1e23940f3052f6f
+      - --build-arg
+      - NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=42401528382
+      - apps/web
+  - id: verify-web-image
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -euc
+      - |
+        docker run --detach --name reservation-web-smoke "$$WEB_IMAGE"
+        trap 'docker logs reservation-web-smoke; docker rm --force reservation-web-smoke >/dev/null' EXIT
+        docker exec reservation-web-smoke node --input-type=module -e '
+          import { setTimeout } from "node:timers/promises";
+          if (process.version !== "v22.23.4") throw new Error(`Unexpected Node version: $${process.version}`);
+          if (process.getuid() === 0) throw new Error("Web container must run as a non-root user");
+          let page;
+          for (let attempt = 0; attempt < 45; attempt++) {
+            try {
+              const response = await fetch("http://127.0.0.1:8080/login", { signal: AbortSignal.timeout(5000) });
+              if (!response.ok) throw new Error(`Login returned $${response.status}`);
+              page = await response.text();
+              break;
+            } catch (error) {
+              if (attempt === 44) throw error;
+              await setTimeout(1000);
+            }
+          }
+          if (!page.includes("サロン管理へログイン")) throw new Error("Login page content is missing");
+          const assets = [...new Set([...page.matchAll(/(?:src|href)="([^"]*\/_next\/static\/[^"]+)"/g)].map((match) => match[1]))];
+          if (!assets.length) throw new Error("Login page has no Next.js static asset");
+          for (const path of [...assets, "/brand/beauty-gum-wordmark.webp"]) {
+            const response = await fetch(new URL(path, "http://127.0.0.1:8080"), { signal: AbortSignal.timeout(5000) });
+            if (!response.ok) throw new Error(`Static asset $${path} returned $${response.status}`);
+          }
+          console.log("Web image passed: patched Node, non-root runtime, login page, and static assets");
+        '
+  - id: push-web
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-web:${COMMIT_SHA}-${BUILD_ID}
   - id: deploy-production
     name: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
     entrypoint: bash
@@ -70,4 +128,5 @@ options:
     - COMMIT_SHA=$COMMIT_SHA
     - BUILD_ID=$BUILD_ID
     - API_IMAGE=asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-api:${COMMIT_SHA}-${BUILD_ID}
+    - WEB_IMAGE=asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-web:${COMMIT_SHA}-${BUILD_ID}
 timeout: 10800s

@@ -10,11 +10,12 @@ elif [[ $# -ne 0 ]]; then
 fi
 
 # native-deploy.py must hold the production lease before invoking this script.
-# The image and App Hosting source always use the triggering commit, not branch HEAD.
+# Both images use the triggering commit and build; App Hosting receives a fixed digest.
 python3 - <<'PY'
 import hashlib
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import time
@@ -63,8 +64,34 @@ region = expected["REGION"]
 image = f"{region}-docker.pkg.dev/{project}/cloud-run-source-deploy/reservation-api:{commit}-{build_id}"
 if required("API_IMAGE") != image:
     raise SystemExit("API_IMAGE must identify the triggering commit and build in the approved registry.")
+web_image_repository = f"{region}-docker.pkg.dev/{project}/cloud-run-source-deploy/reservation-web"
+web_image = f"{web_image_repository}:{commit}-{build_id}"
+if required("WEB_IMAGE") != web_image:
+    raise SystemExit("WEB_IMAGE must identify the triggering commit and build in the approved registry.")
 if os.environ.get("DEPLOY_PREFLIGHT_ONLY") != "1" and not re.fullmatch(r"[1-9][0-9]*", os.environ.get("NATIVE_DEPLOY_LOCK_GENERATION", "")):
     raise SystemExit("A production deployment lease generation is required; invoke native-deploy.py.")
+
+web_config = json.loads(Path("scripts/apphosting-container-config.json").read_text())
+approved_env = {
+    "APP_HOSTING_BUILD", "APP_PUBLIC_ORIGIN", "NEXT_PUBLIC_API_BASE_URL",
+    "NEXT_PUBLIC_FIREBASE_API_KEY", "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN",
+    "NEXT_PUBLIC_FIREBASE_PROJECT_ID", "NEXT_PUBLIC_FIREBASE_APP_ID",
+    "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
+}
+if not isinstance(web_config, dict) or set(web_config) != {"runConfig", "env"} or web_config["runConfig"] != {
+    "minInstances": 0, "maxInstances": 1, "concurrency": 80, "cpu": 1, "memoryMib": 512,
+}:
+    raise SystemExit("App Hosting container configuration must use the approved runtime limits.")
+web_env = web_config["env"]
+if not isinstance(web_env, list) or len(web_env) != len(approved_env) or any(
+    not isinstance(entry, dict) or set(entry) != {"variable", "value", "availability"}
+    or not isinstance(entry["variable"], str) or entry["variable"] not in approved_env
+    or not isinstance(entry["value"], str) or not entry["value"]
+    or entry["availability"] != (["BUILD"] if entry["variable"] == "APP_HOSTING_BUILD"
+        else ["RUNTIME"] if entry["variable"] == "APP_PUBLIC_ORIGIN" else ["BUILD", "RUNTIME"])
+    for entry in web_env
+) or {entry["variable"] for entry in web_env} != approved_env:
+    raise SystemExit("App Hosting container environment must contain only the approved public settings.")
 
 
 def gcloud(*args, capture=False):
@@ -146,23 +173,18 @@ def resource_name(name):
 
 
 def validate_source(resource):
-    container = resource.get("source")
-    source = container.get("codebase") if isinstance(container, dict) else None
-    if not isinstance(source, dict) or source.get("hash") != commit or ("commit" in source and source["commit"] != commit):
-        raise RuntimeError("App Hosting source must resolve to the triggering commit.")
-    if "repository" in source:
-        # An explicit field must match, including rejecting empty/null values.
-        if resource_name(source["repository"]) != resource_name(repository_link):
-            raise RuntimeError("App Hosting source must use the approved repository link.")
-        return
-    # Some Git builds omit this optional output field. Authenticate their source
-    # using the exact commit URI and a fresh check of both connection resources.
-    if source.get("uri") != f"https://github.com/OIDEMA/salon-reservation-system/commit/{commit}":
-        raise RuntimeError("App Hosting source without a repository field must have the exact approved commit URI.")
+    source = resource.get("source")
+    container = source.get("container") if isinstance(source, dict) else None
+    if not isinstance(container, dict) or container.get("image") != web_image_digest or "codebase" in source:
+        raise RuntimeError("App Hosting source must use the verified container digest from the triggering commit and build.")
+    # Keep the original repository connection protected even though the build
+    # source is now the immutable image produced by this Cloud Build run.
     fresh_backend = api_request("GET", f"{app_hosting_api}/{backend_path}")
     fresh_codebase = fresh_backend.get("codebase")
     if not isinstance(fresh_codebase, dict) or resource_name(fresh_codebase.get("repository")) != resource_name(repository_link) or fresh_codebase.get("rootDirectory") != "apps/web":
         raise RuntimeError("App Hosting source connection changed since deployment preflight.")
+    if fresh_backend.get("runtime", {}).get("value") != "nodejs":
+        raise RuntimeError("App Hosting container builds require the nodejs backend runtime.")
     fresh_link = api_request("GET", f"https://developerconnect.googleapis.com/v1/{repository_link}")
     if fresh_link.get("cloneUri") not in (
         "https://github.com/OIDEMA/salon-reservation-system.git",
@@ -175,6 +197,8 @@ backend = api_request("GET", f"{app_hosting_api}/{backend_path}")
 codebase = backend.get("codebase", {})
 if resource_name(codebase.get("repository")) != resource_name(repository_link) or codebase.get("rootDirectory") != "apps/web":
     raise SystemExit("App Hosting must be connected to the approved repository link at apps/web.")
+if backend.get("runtime", {}).get("value") != "nodejs":
+    raise SystemExit("App Hosting container builds require the nodejs backend runtime.")
 traffic = api_request("GET", f"{app_hosting_api}/{backend_path}/traffic")
 if traffic.get("rolloutPolicy", {}).get("disabled") is not True:
     raise SystemExit("App Hosting automatic rollouts must be disabled for the ordered production deployment.")
@@ -196,6 +220,17 @@ if bucket.get("uniform_bucket_level_access") is not True or bucket.get("public_a
 if os.environ.get("DEPLOY_PREFLIGHT_ONLY") == "1":
     print("Production deployment target, repository, private database and photo storage verified.")
     raise SystemExit(0)
+
+# Preflight runs before images exist. Resolve the exact pushed tag only inside
+# the deployment lease and before any migration or service mutation.
+web_image_metadata = gcloud_json("artifacts", "docker", "images", "describe", web_image, f"--project={project}")
+web_image_summary = web_image_metadata.get("image_summary", {})
+web_digest = web_image_summary.get("digest")
+if not isinstance(web_digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", web_digest):
+    raise RuntimeError("Artifact Registry must provide the web image SHA-256 digest.")
+web_image_digest = f"{web_image_repository}@{web_digest}"
+if web_image_summary.get("fully_qualified_digest") != web_image_digest:
+    raise RuntimeError("Artifact Registry must resolve the web image inside the approved repository.")
 
 
 def mark_intent(phase, baseline=None):
@@ -331,9 +366,9 @@ build_path = f"{backend_path}/builds/{app_build_id}"
 mark_intent("appBuildRequested")
 build_operation = api_request(
     "POST", f"{app_hosting_api}/{backend_path}/builds?buildId={app_build_id}",
-    {"source": {"codebase": {"commit": commit}}},
+    {"source": {"container": {"image": web_image_digest}}, "config": web_config},
 )
-built = wait_state(build_path, {"BUILT", "READY"}, "App Hosting compiled source", attempts=150, delay=10)
+built = wait_state(build_path, {"BUILT", "READY"}, "App Hosting container build", attempts=150, delay=10)
 validate_source(built)
 
 rollout_path = f"{backend_path}/rollouts/{app_build_id}"

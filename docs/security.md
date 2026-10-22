@@ -4,7 +4,7 @@
 
 Run `npm run audit:security` from the repository root. This checks all three lock files: the development workspace, standalone API container, and standalone App Hosting frontend. Cloud Build runs the same check before deployment and fails on reported vulnerabilities of any severity. Review upstream advisories as well: the npm advisory feed may lag the framework publisher.
 
-The 2026-10-22 update uses Next.js 16.4.2, Fastify 5.12.7, Firebase 12.19.0 and Firebase Admin 14.5.0. Next.js includes the fixes described in its [October security update](https://nextjs.org/blog/nextjs-security-update-october-14-2026). The API and validation images use Node.js 22.23.4; see [deployment verification](native-deployment.md) for the independent App Hosting runtime check.
+The 2026-10-22 update uses Next.js 16.4.2, Fastify 5.12.7, Firebase 12.19.0 and Firebase Admin 14.5.0. Next.js includes the fixes described in its [October security update](https://nextjs.org/blog/nextjs-security-update-october-14-2026). The API, web and validation images use Node.js 22.23.4. App Hosting receives the prebuilt web container because Google's buildpack had not yet published that Node.js patch. Automatic Base Image Updates are disabled; future runtime fixes require a base-image update and rebuild. See [deployment verification](native-deployment.md) for the runtime and image checks.
 
 The following overrides are intentional and must remain consistent between workspace and standalone manifests:
 
