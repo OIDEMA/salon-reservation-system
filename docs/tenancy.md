@@ -27,6 +27,14 @@ Tenant creation and the first `OWNER` assignment are not self-service. An operat
 
 The web application exchanges a recently issued Firebase ID token for an HttpOnly, Secure, SameSite session cookie. Server-side requests forward that credential to Cloud Run. The Cloud Run API verifies the credential again and performs the membership check; the Next.js proxy is only an optimistic navigation guard.
 
+### Password setup and account recovery
+
+Initial password setup and forgotten-password recovery both use `/password-reset` and the existing Firebase password reset email/action flow. The login page links to this shared flow. A failed login does not query whether an email address is registered or automatically send a recovery email.
+
+`POST /api/auth/password-status` remains only for compatibility with already-loaded clients. For every valid email address it returns the same uncached `{ "needsPasswordSetup": false }` response without querying Firebase user records. Recovery feedback is also identical for successful requests, unknown accounts, and disabled accounts.
+
+This closes the application's former Admin SDK account-enumeration endpoint. Firebase's own public authentication and password reset responses depend on the project's [Email Enumeration Protection](https://docs.cloud.google.com/identity-platform/docs/admin/email-enumeration-protection) setting. Its production setting was not inspected or changed as part of this code fix; verify that setting separately before claiming protection of the Firebase endpoints themselves. UI feedback alone does not change Firebase network responses.
+
 ## Tenant URL and salon selection
 
 After login, `/api/me/tenants` returns only memberships belonging to the authenticated user. Tenant-scoped screens use URLs such as `/{tenantSlug}`, `/{tenantSlug}/calendar`, and `/{tenantSlug}/reservations`. The Next.js server forwards the URL slug as `X-Tenant-Slug`, and the API resolves it through an active membership before accessing business data.

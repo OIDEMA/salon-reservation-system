@@ -1,10 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { backendFetch } from "@/lib/backend";
 import { isTenantSlug } from "@/lib/tenant-routing";
+import { rejectCrossOriginMutation } from "@/lib/request-security";
 
 type RouteContext = { params: Promise<{ tenantSlug: string; path: string[] }> };
 
 async function proxy(request: NextRequest, context: RouteContext) {
+  const rejected = rejectCrossOriginMutation(request);
+  if (rejected) return rejected;
   const { tenantSlug, path } = await context.params;
   if (!isTenantSlug(tenantSlug)) return NextResponse.json({ message: "Tenant not found" }, { status: 404 });
 

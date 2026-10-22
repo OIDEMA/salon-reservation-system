@@ -48,7 +48,7 @@ App Hosting's automatic rollout policy stays **disabled**. Cloud Build performs 
 ## Pipeline
 
 1. Verify the approved project/repository, App Hosting root and policy, private Cloud SQL network, and photo-storage public-access prevention.
-2. Under Node.js 22, install dependencies, generate Prisma, run type checks and application tests, and build the API and web app.
+2. Under Node.js 22.23.4, install dependencies, audit all three dependency lock files, generate Prisma, run type checks and application tests, and build the API and web app.
 3. Build and push `asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-api:${COMMIT_SHA}-${BUILD_ID}`. Each Cloud Build has a unique tag, including repeated builds of one commit.
 4. Run deployment tests, acquire the production lease, and verify current `main`. Skip a triggering commit that has become obsolete before deployment starts.
 5. Record intent, update the private-VPC schema job, record execution intent, and wait for the schema operation.
@@ -63,6 +63,10 @@ The resolved source hash must match the triggering SHA; a returned `commit` must
 The job and API keep their existing runtime identity, private network, Secret Manager database reference, limits, and startup checks. Build workers do not connect directly to the production database.
 
 ### Build environments and budgets
+
+The API Docker image and Cloud Build validation image are pinned to Node.js `22.23.4`, the [2026-10-21 security release](https://nodejs.org/en/blog/release/v22.23.4). Docker builds use `--pull` to refresh the base image for that version. `npm run audit:security` checks the repository, standalone API, and standalone web lock files and stops the pipeline on any reported vulnerability. The API image also runs the schema job, so its Prisma CLI must remain available; do not remove development dependencies without separating or preserving that job's runtime requirements.
+
+Firebase App Hosting builds the frontend separately. Its [supported runtimes](https://firebase.google.com/docs/app-hosting/frameworks-tooling#runtimes-for-app-hosting) include Node.js 22 and 24; the backend runtime must match the package's `engines.node` range. A package version range or backend runtime label alone does not establish the deployed patch version. Before declaring a frontend runtime fix complete, verify the backend runtime and Automatic Base Image Updates setting, the generated image's Node.js version (at least `22.23.4` or `24.22.1` within those major lines), and the image digest of the revision receiving traffic. If Google has not yet supplied a matching patched runtime, record the frontend rollout as pending.
 
 Both Google Cloud CLI steps use `gcr.io/google.com/cloudsdktool/google-cloud-cli:slim`, which supplies the required `python3` and `git`. Verify both executables before changing the image; the deployment scripts use Python's standard library and do not require jq or curl.
 
