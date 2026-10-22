@@ -18,6 +18,7 @@ steps:
         npm run typecheck
         npm run test:operations
         npm run build
+        node --test apps/redirect/*.test.mjs
   - id: build-api
     name: gcr.io/cloud-builders/docker
     args:
@@ -89,6 +90,48 @@ steps:
     args:
       - push
       - asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-web:${COMMIT_SHA}-${BUILD_ID}
+  - id: build-redirect
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --pull
+      - --tag
+      - asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-redirect:${COMMIT_SHA}-${BUILD_ID}
+      - apps/redirect
+  - id: verify-redirect-image
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -euc
+      - |
+        docker run --detach --name reservation-redirect-smoke --env REDIRECT_ORIGIN=https://salon-reserve-web-42401528382.asia-northeast1.run.app "$$REDIRECT_IMAGE"
+        trap 'docker logs reservation-redirect-smoke; docker rm --force reservation-redirect-smoke >/dev/null' EXIT
+        docker exec reservation-redirect-smoke node --input-type=module -e '
+          import { setTimeout } from "node:timers/promises";
+          if (process.version !== "v22.23.4") throw new Error(`Unexpected Node version: $${process.version}`);
+          if (process.getuid() === 0) throw new Error("Redirect container must run as a non-root user");
+          for (let attempt = 0; attempt < 45; attempt++) {
+            try {
+              const response = await fetch("http://127.0.0.1:8080/healthz", { signal: AbortSignal.timeout(5000) });
+              if (!response.ok) throw new Error(`Health returned $${response.status}`);
+              break;
+            } catch (error) {
+              if (attempt === 44) throw error;
+              await setTimeout(1000);
+            }
+          }
+          const path = "/mens-gentle/reservations?view=week";
+          const response = await fetch("http://127.0.0.1:8080" + path, { redirect: "manual" });
+          if (response.status !== 302 || response.headers.get("location") !== process.env.REDIRECT_ORIGIN + path || !response.headers.get("cache-control")?.includes("no-store")) throw new Error("Redirect did not preserve the destination path and query");
+          const mutation = await fetch("http://127.0.0.1:8080/api/session", { method: "POST", body: "{}", redirect: "manual" });
+          if (mutation.status !== 409 || mutation.headers.has("location")) throw new Error("Redirect must not forward mutation bodies");
+          console.log("Redirect image passed: patched Node, non-root runtime, health, path/query, and mutation isolation");
+        '
+  - id: push-redirect
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-redirect:${COMMIT_SHA}-${BUILD_ID}
   - id: deploy-production
     name: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
     entrypoint: bash
@@ -102,6 +145,9 @@ substitutions:
   _PROJECT_NUMBER: "42401528382"
   _REGION: asia-east1
   _API_SERVICE: reservation-api
+  _WEB_REGION: asia-northeast1
+  _WEB_SERVICE: salon-reserve-web
+  _WEB_RUNTIME_SERVICE_ACCOUNT: firebase-app-hosting-compute@salon-reserve-bg.iam.gserviceaccount.com
   _CHART_PHOTOS_BUCKET: salon-reserve-bg-chart-photos
   _API_RUNTIME_SERVICE_ACCOUNT: reservation-api-runtime@salon-reserve-bg.iam.gserviceaccount.com
   _DB_INSTANCE: salon-reserve-db
@@ -118,6 +164,9 @@ options:
     - PROJECT_NUMBER=$_PROJECT_NUMBER
     - REGION=$_REGION
     - API_SERVICE=$_API_SERVICE
+    - WEB_REGION=$_WEB_REGION
+    - WEB_SERVICE=$_WEB_SERVICE
+    - WEB_RUNTIME_SERVICE_ACCOUNT=$_WEB_RUNTIME_SERVICE_ACCOUNT
     - CHART_PHOTOS_BUCKET=$_CHART_PHOTOS_BUCKET
     - API_RUNTIME_SERVICE_ACCOUNT=$_API_RUNTIME_SERVICE_ACCOUNT
     - DB_INSTANCE=$_DB_INSTANCE
@@ -129,4 +178,5 @@ options:
     - BUILD_ID=$BUILD_ID
     - API_IMAGE=asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-api:${COMMIT_SHA}-${BUILD_ID}
     - WEB_IMAGE=asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-web:${COMMIT_SHA}-${BUILD_ID}
+    - REDIRECT_IMAGE=asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-redirect:${COMMIT_SHA}-${BUILD_ID}
 timeout: 10800s

@@ -27,6 +27,16 @@ Tenant creation and the first `OWNER` assignment are not self-service. An operat
 
 The web application exchanges a recently issued Firebase ID token for an HttpOnly, Secure, SameSite session cookie. Server-side requests forward that credential to Cloud Run. The Cloud Run API verifies the credential again and performs the membership check; the Next.js proxy is only an optimistic navigation guard.
 
+### Frontend hostname changes
+
+The production web origin is `https://salon-reserve-web-42401528382.asia-northeast1.run.app`. Session and tenant-selection cookies have no `Domain` attribute, so users sign in again after following the previous App Hosting URL to this hostname. Do not copy cookies between hosts or weaken their Secure, HttpOnly, or SameSite settings to avoid that sign-in.
+
+Keep the new hostname in Firebase Authentication's authorized domains while retaining the previous domains for existing links. `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` remains `salon-reserve-bg.firebaseapp.com`; the Firebase project and user identities do not change. The existing email action callback is `https://salon-reserve-bg.firebaseapp.com/__/auth/action` and is independent of the frontend hostname. Preserve that callback during this migration. `sendPasswordResetEmail` currently supplies no custom continuation URL.
+
+Set the Tokyo frontend's `APP_PUBLIC_ORIGIN` to its public HTTPS origin so session creation, tenant selection, and mutation proxies accept same-origin requests behind Cloud Run. The API's `CORS_ORIGINS` includes the Tokyo and previous App Hosting origins during the transition. Explicit origins remain required; do not replace the allowlist with a wildcard.
+
+Navigation and API-proxy links are relative to the frontend origin. New staff invitations construct their URL from `window.location.origin`. The old App Hosting redirect preserves page paths and query parameters, and leaves fragments unset so browsers retain an existing `/accept-invitation#token=...` token. After signing in on the new host, reopen the invitation link to accept it. No token belongs in server redirect logs or query parameters.
+
 ### Password setup and account recovery
 
 Initial password setup and forgotten-password recovery both use `/password-reset` and the existing Firebase password reset email/action flow. The login page links to this shared flow. A failed login does not query whether an email address is registered or automatically send a recovery email.

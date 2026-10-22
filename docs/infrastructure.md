@@ -1,11 +1,21 @@
 # Production infrastructure
 
+## Web delivery
+
+The web application runs on Cloud Run service `salon-reserve-web` in Tokyo (`asia-northeast1`). Its public origin is `https://salon-reserve-web-42401528382.asia-northeast1.run.app`. It uses `firebase-app-hosting-compute@salon-reserve-bg.iam.gserviceaccount.com` for Firebase Admin authentication, with one CPU, 512 MiB memory, a minimum of zero and a maximum of one instance. Zero minimum instances permits cold starts; compare both warm requests and first requests after an idle period when measuring latency.
+
+The API (`reservation-api`), Cloud SQL, private VPC subnet, Artifact Registry images, Cloud Build trigger, and production deployment lease remain in `asia-east1`. The Tokyo frontend calls the existing HTTPS API and does not connect directly to Cloud SQL or receive its database secret. API-backed page latency includes the Tokyo-to-`asia-east1` round trip; frontend placement alone does not establish a measured improvement for every operation.
+
+The previous origin, `https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app`, remains on the App Hosting backend `salon-reserve-web` in `asia-east1` with a small redirect container. GET and HEAD page requests receive a non-cacheable 302 to the Tokyo origin, preserving the path and query. Browser fragments, including invitation tokens, are inherited because the redirect target does not set a fragment. Other methods receive 409 `SERVICE_MOVED`, so an already-open old page must be reloaded before retrying an operation. `/healthz` checks the redirect process without following a redirect.
+
+The two Cloud Run services share a name but have different regions. Always specify the region when inspecting or changing a service. Keep the App Hosting redirect available for existing bookmarks and invitation links. See [native-deployment.md](native-deployment.md) for the ordered rollout and recovery checks and [tenancy.md](tenancy.md) for hostname-dependent authentication settings.
+
 ## Database networking
 
 The production Cloud SQL instance `salon-reserve-db` must not have a public IP address.
 
 - Cloud SQL uses Private Service Access on `salon-reserve-vpc`.
-- Cloud Run services and jobs use Direct VPC egress through `salon-reserve-run-asia-east1`.
+- The API service and schema/provisioning jobs use Direct VPC egress through `salon-reserve-run-asia-east1`.
 - Only private address ranges are routed through the VPC.
 - `DATABASE_URL` points directly to the Cloud SQL private IP over TCP and requires TLS.
 - Cloud SQL socket mounts are deliberately cleared from the Cloud Run service and migration job.

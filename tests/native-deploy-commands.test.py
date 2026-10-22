@@ -20,8 +20,15 @@ APP_ID = 'native-666ff6ccaa5b3c07feaa3a9'
 BUILD_PATH = f'{BACKEND}/builds/{APP_ID}'
 WEB_REPOSITORY = 'asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-web'
 WEB_DIGEST = f'{WEB_REPOSITORY}@sha256:{"c" * 64}'
+REDIRECT_REPOSITORY = WEB_REPOSITORY.replace('/reservation-web', '/reservation-redirect')
+REDIRECT_DIGEST = f'{REDIRECT_REPOSITORY}@sha256:{"d" * 64}'
+WEB_URL = 'https://salon-reserve-web-42401528382.asia-northeast1.run.app'
+LEGACY_URL = 'https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app'
+WEB_RESOURCE = 'projects/salon-reserve-bg/locations/asia-northeast1/services/salon-reserve-web'
+WEB_REVISION = WEB_RESOURCE + '/revisions/salon-reserve-web-00002-new'
 ROOT = Path(__file__).resolve().parents[1]
-WEB_CONFIG = json.loads((ROOT / 'scripts/apphosting-container-config.json').read_text())
+REDIRECT_CONFIG = json.loads((ROOT / 'scripts/apphosting-redirect-config.json').read_text())
+WEB_ENV = json.loads((ROOT / 'scripts/web-runtime-env.json').read_text())
 ENV = {
     'PROJECT_ID': 'salon-reserve-bg', 'PROJECT_NUMBER': '42401528382', 'REGION': 'asia-east1',
     'API_SERVICE': 'reservation-api', 'CHART_PHOTOS_BUCKET': 'salon-reserve-bg-chart-photos',
@@ -32,6 +39,9 @@ ENV = {
     'NATIVE_DEPLOY_LOCK_GENERATION': '123456789',
     'API_IMAGE': f'asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-api:{SHA}-{BUILD}',
     'WEB_IMAGE': f'{WEB_REPOSITORY}:{SHA}-{BUILD}',
+    'REDIRECT_IMAGE': f'{REDIRECT_REPOSITORY}:{SHA}-{BUILD}',
+    'WEB_REGION': 'asia-northeast1', 'WEB_SERVICE': 'salon-reserve-web',
+    'WEB_RUNTIME_SERVICE_ACCOUNT': 'firebase-app-hosting-compute@salon-reserve-bg.iam.gserviceaccount.com',
 }
 
 
@@ -50,6 +60,7 @@ class NativeDeploymentTests(unittest.TestCase):
         self.build_reads = 0
         self.backend_reads = 0
         self.link_reads = 0
+        self.web_deployed = False
         env = dict(ENV, **(changes or {}))
         active_app_id = 'native-' + hashlib.sha256(env['BUILD_ID'].encode('utf-8')).hexdigest()[:23]
         active_build_path = f'{BACKEND}/builds/{active_app_id}'
@@ -57,6 +68,8 @@ class NativeDeploymentTests(unittest.TestCase):
             self.commands.append(command)
             self.events.append(('command', command))
             output = ''
+            if command[1:4] == ['run', 'deploy', 'salon-reserve-web']:
+                self.web_deployed = True
             if command[:3] == ['python3', 'scripts/native-deploy.py', 'mark-intent']:
                 phase = command[command.index('--phase') + 1]
                 if bad == 'intent-' + phase:
@@ -71,7 +84,8 @@ class NativeDeploymentTests(unittest.TestCase):
             elif command[1:4] == ['storage', 'buckets', 'describe']:
                 output = json.dumps({'uniform_bucket_level_access': True, 'public_access_prevention': 'inherited' if bad == 'public-storage' else 'enforced'})
             elif command[1:5] == ['artifacts', 'docker', 'images', 'describe']:
-                summary = {'digest': 'sha256:' + 'c' * 64, 'fully_qualified_digest': WEB_DIGEST}
+                full_digest = REDIRECT_DIGEST if '/reservation-redirect:' in command[5] else WEB_DIGEST
+                summary = {'digest': full_digest.split('@')[1], 'fully_qualified_digest': full_digest}
                 if bad == 'registry-missing-digest':
                     summary.pop('digest')
                 if bad == 'registry-invalid-digest':
@@ -121,6 +135,27 @@ class NativeDeploymentTests(unittest.TestCase):
                 })
             if url.endswith('/services/reservation-api'):
                 return Response({'generation': '20'})
+            if url.endswith('/services/salon-reserve-web'):
+                if not self.web_deployed and bad in ('new-web', 'web-forbidden'):
+                    raise urllib.error.HTTPError(url, 404 if bad == 'new-web' else 403, 'unavailable', {}, Response({}))
+                generation = ('31' if self.web_deployed else '30')
+                if bad == 'web-generation-missing':
+                    generation = None
+                if self.web_deployed and bad == 'web-generation-stale':
+                    generation = '30'
+                return Response({
+                    'generation': generation,
+                    'observedGeneration': '29' if bad == 'web-unobserved' else generation,
+                    'labels': {'native-deploy-build': 'wrong' if bad == 'web-owner' else env['BUILD_ID']},
+                    'template': {'containers': [{'image': 'wrong' if bad == 'web-image' else WEB_DIGEST}], 'serviceAccount': ENV['WEB_RUNTIME_SERVICE_ACCOUNT']},
+                    'reconciling': bad == 'web-reconciling',
+                    'terminalCondition': {'state': 'CONDITION_FAILED' if bad == 'web-failed' else 'CONDITION_SUCCEEDED'},
+                    'latestReadyRevision': WEB_REVISION.replace('salon-reserve-bg', '42401528382') if bad == 'web-canonical' else WEB_REVISION,
+                    'latestCreatedRevision': WEB_REVISION + '-wrong' if bad == 'web-not-ready' else WEB_REVISION,
+                    'trafficStatuses': [{'revision': WEB_REVISION.split('/')[-1] if bad == 'web-canonical' else WEB_REVISION, 'percent': 99 if bad == 'web-traffic' else 100}],
+                })
+            if url.endswith('/revisions/salon-reserve-web-00002-new'):
+                return Response({'containers': [{'image': 'wrong' if bad == 'web-revision-image' else WEB_DIGEST}]})
             if method == 'POST':
                 if '/builds?' in url and 'validateOnly=true' not in url and bad == 'build-id-error':
                     body = {'error': {'code': 400, 'message': 'build_id must have length between 3 and 30.\nAuthorization: Bearer test-token\nHeaders: {"Cookie":"top-secret"}', 'details': [{'headers': {'secret': 'hidden-detail'}}]}}
@@ -148,13 +183,13 @@ class NativeDeploymentTests(unittest.TestCase):
                 state = 'READY' if self.real_rollout_created else 'BUILT'
                 if bad == 'build-pending' and self.build_reads == 1:
                     state = 'BUILDING'
-                source = {'container': {'image': WEB_DIGEST}}
+                source = {'container': {'image': REDIRECT_DIGEST}}
                 if bad == 'wrong-build' or (bad == 'source-final-digest-changed' and self.real_rollout_created):
-                    source['container']['image'] = f'{WEB_REPOSITORY}@sha256:{"d" * 64}'
+                    source['container']['image'] = f'{REDIRECT_REPOSITORY}@sha256:{"e" * 64}'
                 if bad == 'source-tag':
-                    source['container']['image'] = env['WEB_IMAGE']
+                    source['container']['image'] = env['REDIRECT_IMAGE']
                 if bad == 'source-wrong-repository':
-                    source['container']['image'] = WEB_DIGEST.replace('/reservation-web@', '/other-web@')
+                    source['container']['image'] = REDIRECT_DIGEST.replace('/reservation-redirect@', '/other-web@')
                 if bad == 'source-missing-image':
                     source['container'].pop('image')
                 if bad == 'source-null-image':
@@ -176,7 +211,8 @@ class NativeDeploymentTests(unittest.TestCase):
 
         class Opener:
             def open(self, url, timeout=None):
-                raise urllib.error.HTTPError(url, 307, 'redirect', {'Location': '/login'}, None)
+                location = WEB_URL + url.removeprefix(LEGACY_URL) if url.startswith(LEGACY_URL) else '/login'
+                raise urllib.error.HTTPError(url, 302, 'redirect', {'Location': location, 'Cache-Control': 'no-store'}, None)
 
         with patch.dict(os.environ, env, clear=True), patch('subprocess.run', side_effect=run), patch('urllib.request.urlopen', side_effect=open_url), patch('urllib.request.build_opener', return_value=Opener()), patch('time.sleep'), contextlib.redirect_stdout(io.StringIO()):
             exec(compile(SOURCE, 'deploy-native', 'exec'), {})
@@ -195,19 +231,15 @@ class NativeDeploymentTests(unittest.TestCase):
         self.assertFalse(any(command[1:2] == ['run'] for command in self.commands))
         self.assertFalse(any(method == 'POST' and 'validateOnly=true' not in url for method, url, _ in self.requests))
 
-    def test_container_configuration_matches_apphosting_yaml(self):
-        source = (ROOT / 'apps/web/apphosting.yaml').read_text()
-        run_block = source.split('env:', 1)[0]
-        run_config = {key.replace('memoryMiB', 'memoryMib'): int(value) for key, value in re.findall(r'^  (\w+): (\d+)$', run_block, re.M)}
-        self.assertEqual(WEB_CONFIG['runConfig'], run_config)
-        entries = re.findall(r'  - variable: (\w+)\n    value: ([^\n]+)\n    availability:\n((?:      - (?:BUILD|RUNTIME)\n?)+)', source)
-        env = [{'variable': key, 'value': value.strip('"'), 'availability': ['RUNTIME']} for key, value, availability in entries if 'RUNTIME' in availability]
-        self.assertEqual(WEB_CONFIG['env'], env)
+    def test_web_configuration_retains_public_firebase_settings(self):
+        self.assertEqual(WEB_ENV['APP_PUBLIC_ORIGIN'], WEB_URL)
+        self.assertEqual(WEB_ENV['NEXT_PUBLIC_FIREBASE_PROJECT_ID'], ENV['PROJECT_ID'])
+        self.assertEqual(REDIRECT_CONFIG['env'], [{'variable': 'REDIRECT_ORIGIN', 'value': WEB_URL, 'availability': ['RUNTIME']}])
 
     def test_unapproved_runtime_limits_or_environment_are_rejected_before_cloud_access(self):
         for change in ('memory', 'secret', 'extra-variable', 'duplicate-variable', 'runtime-build-flag'):
             with self.subTest(change=change):
-                config = json.loads(json.dumps(WEB_CONFIG))
+                config = json.loads(json.dumps(REDIRECT_CONFIG))
                 if change == 'memory':
                     config['runConfig']['memoryMib'] = 2048
                 elif change == 'secret':
@@ -215,7 +247,7 @@ class NativeDeploymentTests(unittest.TestCase):
                 elif change == 'extra-variable':
                     config['env'].append({'variable': 'FIREBASE_AUTH_EMULATOR_HOST', 'value': 'localhost:9099', 'availability': ['RUNTIME']})
                 elif change == 'duplicate-variable':
-                    config['env'][-1] = config['env'][0]
+                    config['env'].append(config['env'][0])
                 else:
                     config['env'][0]['availability'] = ['BUILD', 'RUNTIME']
                 with patch.object(Path, 'read_text', return_value=json.dumps(config)), self.assertRaises(SystemExit):
@@ -242,7 +274,7 @@ class NativeDeploymentTests(unittest.TestCase):
     def test_production_commands_and_rollout_use_one_commit(self):
         self.run_deploy()
         mutations = [command for command in self.commands if command[1:2] == ['run'] and (command[2] == 'deploy' or command[3] in ('deploy', 'execute'))]
-        self.assertEqual([command[1:4] for command in mutations], [['run', 'jobs', 'deploy'], ['run', 'jobs', 'execute'], ['run', 'deploy', 'reservation-api']])
+        self.assertEqual([command[1:4] for command in mutations], [['run', 'jobs', 'deploy'], ['run', 'jobs', 'execute'], ['run', 'deploy', 'reservation-api'], ['run', 'deploy', 'salon-reserve-web']])
         self.assertIn(f"--image={ENV['API_IMAGE']}", mutations[0])
         self.assertIn('--set-secrets=DATABASE_URL=reservation-database-url:latest', mutations[0])
         self.assertIn('--max-retries=0', mutations[0])
@@ -254,7 +286,7 @@ class NativeDeploymentTests(unittest.TestCase):
         self.assertIn("MEMBER_BOOKING_TENANTS=mens-gentle:gentle;missmrs-takamatsu:missmrs", api_environment)
         self.assertNotIn("FIREBASE_AUTH_EMULATOR_HOST", api_environment)
         writes = [data for method, url, data in self.requests if method == 'POST' and 'validateOnly=true' not in url]
-        self.assertEqual(writes, [{'source': {'container': {'image': WEB_DIGEST}}, 'config': WEB_CONFIG}, {'build': BUILD_PATH}])
+        self.assertEqual(writes, [{'source': {'container': {'image': REDIRECT_DIGEST}}, 'config': REDIRECT_CONFIG}, {'build': BUILD_PATH}])
 
     def test_each_mutation_has_an_intent_written_immediately_before_it(self):
         self.run_deploy()
@@ -262,6 +294,7 @@ class NativeDeploymentTests(unittest.TestCase):
             ('jobDeployRequested', '10'),
             ('jobExecutionRequested', 'projects/salon-reserve-bg/locations/asia-east1/jobs/reservation-db-migrate/executions/previous'),
             ('apiDeployRequested', '20'),
+            ('webDeployRequested', '30'),
             ('appBuildRequested', None),
             ('appRolloutRequested', None),
         ]
@@ -287,7 +320,7 @@ class NativeDeploymentTests(unittest.TestCase):
                 self.assertEqual(following[1][0:2], ['gcloud', 'run'])
 
     def test_failed_intent_record_never_runs_its_mutation(self):
-        phases = ['jobDeployRequested', 'jobExecutionRequested', 'apiDeployRequested', 'appBuildRequested', 'appRolloutRequested']
+        phases = ['jobDeployRequested', 'jobExecutionRequested', 'apiDeployRequested', 'webDeployRequested', 'appBuildRequested', 'appRolloutRequested']
         for completed, phase in enumerate(phases):
             with self.subTest(phase=phase):
                 with self.assertRaises(subprocess.CalledProcessError):
@@ -419,7 +452,7 @@ class NativeDeploymentTests(unittest.TestCase):
         )
         for build, expected_id in cases:
             with self.subTest(build=build):
-                self.run_deploy({'BUILD_ID': build, 'API_IMAGE': f'asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-api:{SHA}-{build}', 'WEB_IMAGE': f'{WEB_REPOSITORY}:{SHA}-{build}'})
+                self.run_deploy({'BUILD_ID': build, 'API_IMAGE': f'asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-api:{SHA}-{build}', 'WEB_IMAGE': f'{WEB_REPOSITORY}:{SHA}-{build}', 'REDIRECT_IMAGE': f'{REDIRECT_REPOSITORY}:{SHA}-{build}'})
                 self.assertEqual(len(expected_id), 30)
                 self.assertEqual(expected_id, 'native-' + hashlib.sha256(build.encode('utf-8')).hexdigest()[:23])
                 create_build = next(url for method, url, _ in self.requests if method == 'POST' and '/builds?' in url and 'validateOnly=true' not in url)
@@ -455,6 +488,40 @@ class NativeDeploymentTests(unittest.TestCase):
                 self.assertEqual(self.validation_attempts, attempts)
                 self.assertFalse(self.real_rollout_created)
                 self.assertFalse(any('appRolloutRequested' in command for command in self.commands))
+
+    def test_tokyo_deploy_uses_fixed_digest_identity_and_public_origin(self):
+        self.run_deploy()
+        command = next(command for command in self.commands if command[1:4] == ['run', 'deploy', 'salon-reserve-web'])
+        for value in ('--region=asia-northeast1', f'--image={WEB_DIGEST}', '--allow-unauthenticated', '--port=8080', '--min-instances=0', '--max-instances=1', f"--service-account={ENV['WEB_RUNTIME_SERVICE_ACCOUNT']}"):
+            self.assertIn(value, command)
+        environment = next(value for value in command if value.startswith('--set-env-vars='))
+        self.assertIn('APP_PUBLIC_ORIGIN=' + WEB_URL, environment)
+        self.assertFalse(any('secret' in value.lower() for value in command))
+        api = next(command for command in self.commands if command[1:4] == ['run', 'deploy', 'reservation-api'])
+        self.assertTrue(any('CORS_ORIGINS=' + LEGACY_URL + ',' + WEB_URL in value for value in api))
+
+    def test_tokyo_revisions_accept_canonical_project_and_short_traffic_name(self):
+        self.run_deploy(bad='web-canonical')
+        self.assertTrue(self.real_rollout_created)
+
+    def test_new_tokyo_service_uses_zero_generation_baseline(self):
+        self.run_deploy(bad='new-web')
+        intent = next(command for command in self.commands if 'webDeployRequested' in command)
+        self.assertEqual(intent[intent.index('--baseline') + 1], '0')
+
+    def test_invalid_tokyo_configuration_prevents_cloud_access(self):
+        for key in ('WEB_REGION', 'WEB_SERVICE', 'WEB_RUNTIME_SERVICE_ACCOUNT', 'REDIRECT_IMAGE'):
+            with self.subTest(key=key), self.assertRaises(SystemExit):
+                self.run_deploy({key: 'unapproved'})
+            self.assertEqual(self.commands, [])
+            self.assertEqual(self.requests, [])
+
+    def test_failed_tokyo_verification_never_redirects_existing_users(self):
+        for bad in ('web-forbidden', 'web-generation-missing', 'web-generation-stale', 'web-owner', 'web-image', 'web-reconciling', 'web-failed', 'web-not-ready', 'web-traffic', 'web-revision-image', 'web-unobserved'):
+            with self.subTest(bad=bad), self.assertRaises(RuntimeError):
+                self.run_deploy(bad=bad)
+            self.assertFalse(self.real_rollout_created)
+            self.assertFalse(any('appBuildRequested' in command for command in self.commands))
 
     def test_http_diagnostics_include_safe_message_without_tokens_headers_or_details(self):
         with self.assertRaises(RuntimeError) as error:

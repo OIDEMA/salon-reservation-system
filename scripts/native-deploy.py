@@ -19,6 +19,8 @@ import urllib.request
 
 PROJECT = "salon-reserve-bg"
 REGION = "asia-east1"
+WEB_REGION = "asia-northeast1"
+WEB_SERVICE = "salon-reserve-web"
 BUCKET = "salon-reserve-bg-deployment-locks"
 LOCK_NAME = "deployment-locks/reservation-production.json"
 REPOSITORY = "https://github.com/OIDEMA/salon-reservation-system.git"
@@ -31,6 +33,7 @@ INTENT_PHASES = {
     "jobDeployRequested": "baselineGeneration",
     "jobExecutionRequested": "baselineExecution",
     "apiDeployRequested": "baselineGeneration",
+    "webDeployRequested": "baselineGeneration",
     "appBuildRequested": None,
     "appRolloutRequested": None,
 }
@@ -99,6 +102,8 @@ def read_intents(metadata, require_execution_digest=True):
         field = INTENT_PHASES[phase]
         if field == "baselineGeneration" and not re.fullmatch(r"[0-9]+", str(intent.get(field, ""))):
             raise RuntimeError("The deployment lease has an invalid generation baseline.")
+        if phase == "webDeployRequested" and require_execution_digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", intent.get("expectedWebDigest", "")):
+            raise RuntimeError("The deployment lease has an invalid web image digest.")
         if field == "baselineExecution":
             baseline = intent.get(field)
             if not isinstance(baseline, str) or (baseline and not execution_resource(baseline)):
@@ -130,10 +135,11 @@ def mark_deployment_intent(api, generation, phase, baseline=None):
         # After an ambiguous response, repeating the cloud mutation could create
         # two executions. A new build/lease or operator review is required.
         raise RuntimeError("A deployment phase has already been requested and cannot be repeated.")
-    if phase == "jobExecutionRequested":
+    if phase in ("jobExecutionRequested", "webDeployRequested"):
         # Execution.image is digest-pinned by Cloud Run even when Job.image uses
         # a tag. Record the expected digest before starting the asynchronous run.
-        image = f"{REGION}-docker.pkg.dev/{PROJECT}/cloud-run-source-deploy/reservation-api:{owner['commitSha']}-{owner['buildId']}"
+        image_name = "reservation-api" if phase == "jobExecutionRequested" else "reservation-web"
+        image = f"{REGION}-docker.pkg.dev/{PROJECT}/cloud-run-source-deploy/{image_name}:{owner['commitSha']}-{owner['buildId']}"
         try:
             digest = subprocess.check_output(
                 ["gcloud", "artifacts", "docker", "images", "describe", image,
@@ -144,7 +150,7 @@ def mark_deployment_intent(api, generation, phase, baseline=None):
             raise RuntimeError("Unable to verify the migration image digest.") from None
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
             raise RuntimeError("The migration image returned an invalid digest.")
-        intent["expectedExecutionDigest"] = digest
+        intent["expectedExecutionDigest" if phase == "jobExecutionRequested" else "expectedWebDigest"] = digest
     intents[phase] = intent
     custom_metadata = dict(metadata.get("metadata", {}))
     custom_metadata[INTENT_METADATA_KEY] = json.dumps(intents, sort_keys=True, separators=(",", ":"))
@@ -239,10 +245,25 @@ def deployment_children_finished(api, build_id, commit=None, intents=None):
         service, build_id, commit, intents["apiDeployRequested"]["baselineGeneration"]
     ):
         return False
-    return (
-        service.get("reconciling", False) is False
-        and service.get("terminalCondition", {}).get("state") in TERMINAL_RUN_CONDITIONS
-    )
+    if service.get("reconciling", False) is not False or service.get("terminalCondition", {}).get("state") not in TERMINAL_RUN_CONDITIONS:
+        return False
+    # Legacy leases have no web intent; retain their App Hosting recovery path.
+    if "webDeployRequested" in intents:
+        intent = intents["webDeployRequested"]
+        try:
+            web = api.request("GET", f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/{WEB_REGION}/services/{WEB_SERVICE}")
+        except ApiError as error:
+            if error.status == 404:
+                return False
+            raise
+        generation = str(web.get("generation", ""))
+        containers = web.get("template", {}).get("containers", [])
+        image = f"{REGION}-docker.pkg.dev/{PROJECT}/cloud-run-source-deploy/reservation-web@{intent['expectedWebDigest']}"
+        if not re.fullmatch(r"[0-9]+", generation) or int(generation) <= int(intent["baselineGeneration"]) or web.get("labels", {}).get("native-deploy-build") != build_id or len(containers) != 1 or containers[0].get("image") != image:
+            return False
+        if web.get("reconciling", False) is not False or web.get("terminalCondition", {}).get("state") not in TERMINAL_RUN_CONDITIONS:
+            return False
+    return True
 
 
 class ProductionLease:

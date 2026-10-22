@@ -1,0 +1,16 @@
+{
+  "runConfig": {
+    "minInstances": 0,
+    "maxInstances": 1,
+    "concurrency": 80,
+    "cpu": 1,
+    "memoryMib": 512
+  },
+  "env": [
+    {
+      "variable": "REDIRECT_ORIGIN",
+      "value": "https://salon-reserve-web-42401528382.asia-northeast1.run.app",
+      "availability": ["RUNTIME"]
+    }
+  ]
+}

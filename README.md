@@ -52,10 +52,12 @@ External acquisition and publishing integrations are intentionally out of scope 
 
 ## Deploy Notes
 
-The native deployment pipeline in [docs/native-deployment.md](docs/native-deployment.md) validates the application, builds a unique API image, applies the schema and API under a production lease, and releases the App Hosting frontend from the same Git SHA. Production GitHub Actions deployment has been removed.
+The frontend runs on Cloud Run in Tokyo (`asia-northeast1`) at [the production login](https://salon-reserve-web-42401528382.asia-northeast1.run.app/login). The API and private Cloud SQL remain in `asia-east1`. The previous App Hosting URL redirects page visits to the Tokyo frontend; users sign in again because session cookies belong to each hostname.
+
+The native deployment pipeline in [docs/native-deployment.md](docs/native-deployment.md) validates the application, builds unique container images, and applies the schema, API, Tokyo frontend, and App Hosting redirect under a production lease from the same Git SHA. Production GitHub Actions deployment has been removed.
 
 Every push to `main` invokes the enabled trigger through a Developer Connect GitHub event connection, separate from the existing Firebase App Hosting Git source connection. The deployment guide records the configuration and completed native pipeline validation.
 
-App Hosting uses root directory `apps/web`; its independent automatic rollouts remain disabled to preserve database/API/frontend ordering. The deployment guide also covers required identities, manual re-runs, and lease recovery conditions.
+App Hosting retains its existing backend and source connection to serve the redirect container. Its independent automatic rollouts remain disabled to preserve deployment ordering. The deployment guide also covers required identities, manual re-runs, and lease recovery conditions.
 
 Tenant provisioning remains a separate, manually invoked administrative workflow; see [docs/provisioning.md](docs/provisioning.md).

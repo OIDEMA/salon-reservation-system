@@ -37,6 +37,8 @@ EXECUTION_NAME = (
 IMAGE = "asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-api:" + COMMIT + "-" + BUILD_ID
 DIGEST = "sha256:" + "c" * 64
 EXECUTION_IMAGE = IMAGE.rsplit(":", 1)[0] + "@" + DIGEST
+WEB_IMAGE = IMAGE.replace("/reservation-api:", "/reservation-web:")
+WEB_DIGEST_IMAGE = WEB_IMAGE.rsplit(":", 1)[0] + "@" + DIGEST
 
 
 class FakeClock:
@@ -81,6 +83,12 @@ class FakeGoogleApi:
             "completionTime": "2026-10-13T00:00:00Z",
             "template": {"containers": [{"image": EXECUTION_IMAGE}]},
         }
+        self.web = {
+            "generation": "10",
+            "labels": {"native-deploy-build": (owner or {}).get("buildId", BUILD_ID)},
+            "template": {"containers": [{"image": WEB_DIGEST_IMAGE}]},
+            "terminalCondition": {"state": "CONDITION_SUCCEEDED"},
+        }
         self.service = {
             "generation": "10",
             "labels": {"native-deploy-build": (owner or {}).get("buildId", BUILD_ID)},
@@ -120,6 +128,10 @@ class FakeGoogleApi:
 
         if parsed.netloc == "run.googleapis.com":
             assert method == "GET", (method, url)
+            if parsed.path == "/v2/projects/salon-reserve-bg/locations/asia-northeast1/services/salon-reserve-web":
+                if isinstance(self.web, Exception):
+                    raise self.web
+                return self.web
             run_base = f"/v2/projects/{native_deploy.PROJECT}/locations/{native_deploy.REGION}"
             if parsed.path.startswith(run_base + "/jobs/reservation-db-migrate/executions/"):
                 resource = self.execution
@@ -224,7 +236,7 @@ class ProductionLeaseTests(unittest.TestCase):
             ))
         def image_digest(command, **kwargs):
             self.assertEqual(command, [
-                "gcloud", "artifacts", "docker", "images", "describe", IMAGE,
+                "gcloud", "artifacts", "docker", "images", "describe", WEB_IMAGE if command[5] == WEB_IMAGE else IMAGE,
                 "--project=salon-reserve-bg", "--format=value(image_summary.digest)",
             ])
             self.assertEqual(kwargs, {"text": True, "stderr": native_deploy.subprocess.PIPE, "timeout": 60})
@@ -858,6 +870,80 @@ class ProductionLeaseTests(unittest.TestCase):
         native_deploy.mark_deployment_intent(api, "41", "jobExecutionRequested", "")
         self.assertEqual(self.digest_lookup.call_args.args[0][5], IMAGE.replace(BUILD_ID, OLD_BUILD_ID))
         self.assertEqual(api.intents()["jobExecutionRequested"]["expectedExecutionDigest"], DIGEST)
+
+    def test_tokyo_web_intent_records_owner_digest_before_deploy(self):
+        api = FakeGoogleApi()
+        lease = self.lease(api)
+        lease.acquire()
+        native_deploy.mark_deployment_intent(api, lease.generation, "webDeployRequested", "9")
+        intent = api.intents()["webDeployRequested"]
+        self.assertEqual(intent, {"baselineGeneration": "9", "expectedWebDigest": DIGEST})
+        self.assertEqual(self.digest_lookup.call_args.args[0][5], WEB_IMAGE)
+        lease.release()
+        self.assertIsNone(api.owner)
+
+    def test_tokyo_first_creation_can_use_zero_generation_baseline(self):
+        api = FakeGoogleApi()
+        lease = self.lease(api)
+        lease.acquire()
+        native_deploy.mark_deployment_intent(api, lease.generation, "webDeployRequested", "0")
+        api.web["generation"] = "1"
+        lease.release()
+        self.assertIsNone(api.owner)
+
+    def test_tokyo_web_intent_keeps_lease_until_owned_generation_settles(self):
+        cases = ("missing", "forbidden", "stale", "wrong-owner", "wrong-image", "tag-image", "reconciling", "pending", "unknown")
+        for case in cases:
+            with self.subTest(case=case):
+                api = FakeGoogleApi()
+                lease = self.lease(api)
+                lease.acquire()
+                native_deploy.mark_deployment_intent(api, lease.generation, "webDeployRequested", "9")
+                if case == "missing":
+                    api.web = native_deploy.ApiError(404)
+                elif case == "forbidden":
+                    api.web = native_deploy.ApiError(403)
+                elif case == "stale":
+                    api.web["generation"] = "9"
+                elif case == "wrong-owner":
+                    api.web["labels"]["native-deploy-build"] = OLD_BUILD_ID
+                elif case in ("wrong-image", "tag-image"):
+                    api.web["template"]["containers"][0]["image"] = IMAGE if case == "wrong-image" else WEB_IMAGE
+                elif case == "reconciling":
+                    api.web["reconciling"] = True
+                else:
+                    api.web["terminalCondition"]["state"] = "CONDITION_RECONCILING" if case == "pending" else "UNKNOWN"
+                lease.release()
+                self.assertEqual(api.deletes(), [])
+                self.assertIsNotNone(api.owner)
+
+    def test_tokyo_failed_owned_revision_allows_recovery_without_hiding_failure(self):
+        api = FakeGoogleApi()
+        lease = self.lease(api)
+        lease.acquire()
+        native_deploy.mark_deployment_intent(api, lease.generation, "webDeployRequested", "9")
+        api.web["terminalCondition"]["state"] = "CONDITION_FAILED"
+        lease.release()
+        self.assertIsNone(api.owner)
+
+    def test_tokyo_unknown_digest_metadata_never_releases_lease(self):
+        for digest in (None, "", "sha256:invalid"):
+            with self.subTest(digest=digest):
+                api = FakeGoogleApi()
+                lease = self.lease(api)
+                lease.acquire()
+                api.custom_metadata[native_deploy.INTENT_METADATA_KEY] = json.dumps({"webDeployRequested": {"baselineGeneration": "9", "expectedWebDigest": digest}})
+                lease.release()
+                self.assertEqual(api.deletes(), [])
+
+    def test_legacy_lease_does_not_require_new_tokyo_service(self):
+        api = FakeGoogleApi()
+        api.web = native_deploy.ApiError(404)
+        lease = self.lease(api)
+        lease.acquire()
+        lease.release()
+        self.assertIsNone(api.owner)
+        self.assertFalse(any("asia-northeast1" in url for method, url, payload in api.calls))
 
     def test_app_hosting_ids_are_deterministic_distinct_and_30_characters(self):
         actual = []

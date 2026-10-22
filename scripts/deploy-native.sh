@@ -10,7 +10,7 @@ elif [[ $# -ne 0 ]]; then
 fi
 
 # native-deploy.py must hold the production lease before invoking this script.
-# Both images use the triggering commit and build; App Hosting receives a fixed digest.
+# All images use the triggering commit and build; services receive fixed digests.
 python3 - <<'PY'
 import hashlib
 import json
@@ -41,6 +41,9 @@ expected = {
     "VPC_NETWORK": "salon-reserve-vpc",
     "VPC_SUBNET": "salon-reserve-run-asia-east1",
     "APP_HOSTING_BACKEND": "salon-reserve-web",
+    "WEB_REGION": "asia-northeast1",
+    "WEB_SERVICE": "salon-reserve-web",
+    "WEB_RUNTIME_SERVICE_ACCOUNT": "firebase-app-hosting-compute@salon-reserve-bg.iam.gserviceaccount.com",
 }
 for key, value in expected.items():
     if required(key) != value:
@@ -68,29 +71,31 @@ web_image_repository = f"{region}-docker.pkg.dev/{project}/cloud-run-source-depl
 web_image = f"{web_image_repository}:{commit}-{build_id}"
 if required("WEB_IMAGE") != web_image:
     raise SystemExit("WEB_IMAGE must identify the triggering commit and build in the approved registry.")
+redirect_image_repository = f"{region}-docker.pkg.dev/{project}/cloud-run-source-deploy/reservation-redirect"
+redirect_image = f"{redirect_image_repository}:{commit}-{build_id}"
+if required("REDIRECT_IMAGE") != redirect_image:
+    raise SystemExit("REDIRECT_IMAGE must identify the triggering commit and build in the approved registry.")
+frontend_url = "https://salon-reserve-web-42401528382.asia-northeast1.run.app"
+legacy_url = "https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app"
 if os.environ.get("DEPLOY_PREFLIGHT_ONLY") != "1" and not re.fullmatch(r"[1-9][0-9]*", os.environ.get("NATIVE_DEPLOY_LOCK_GENERATION", "")):
     raise SystemExit("A production deployment lease generation is required; invoke native-deploy.py.")
 
-web_config = json.loads(Path("scripts/apphosting-container-config.json").read_text())
-approved_env = {
-    "APP_PUBLIC_ORIGIN", "NEXT_PUBLIC_API_BASE_URL",
-    "NEXT_PUBLIC_FIREBASE_API_KEY", "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN",
-    "NEXT_PUBLIC_FIREBASE_PROJECT_ID", "NEXT_PUBLIC_FIREBASE_APP_ID",
-    "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
-}
-if not isinstance(web_config, dict) or set(web_config) != {"runConfig", "env"} or web_config["runConfig"] != {
-    "minInstances": 0, "maxInstances": 1, "concurrency": 80, "cpu": 1, "memoryMib": 512,
+redirect_config = json.loads(Path("scripts/apphosting-redirect-config.json").read_text())
+if redirect_config != {
+    "runConfig": {"minInstances": 0, "maxInstances": 1, "concurrency": 80, "cpu": 1, "memoryMib": 512},
+    "env": [{"variable": "REDIRECT_ORIGIN", "value": frontend_url, "availability": ["RUNTIME"]}],
 }:
-    raise SystemExit("App Hosting container configuration must use the approved runtime limits.")
-web_env = web_config["env"]
-if not isinstance(web_env, list) or len(web_env) != len(approved_env) or any(
-    not isinstance(entry, dict) or set(entry) != {"variable", "value", "availability"}
-    or not isinstance(entry["variable"], str) or entry["variable"] not in approved_env
-    or not isinstance(entry["value"], str) or not entry["value"]
-    or entry["availability"] != ["RUNTIME"]
-    for entry in web_env
-) or {entry["variable"] for entry in web_env} != approved_env:
-    raise SystemExit("App Hosting container environment must contain only the approved public settings.")
+    raise SystemExit("App Hosting redirect configuration must use the approved destination and runtime limits.")
+web_env = json.loads(Path("scripts/web-runtime-env.json").read_text())
+approved_env = {
+    "APP_PUBLIC_ORIGIN", "NEXT_PUBLIC_API_BASE_URL", "NEXT_PUBLIC_FIREBASE_API_KEY",
+    "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN", "NEXT_PUBLIC_FIREBASE_PROJECT_ID",
+    "NEXT_PUBLIC_FIREBASE_APP_ID", "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
+}
+if not isinstance(web_env, dict) or set(web_env) != approved_env or any(
+    not isinstance(value, str) or not value or "|" in value for value in web_env.values()
+) or web_env["APP_PUBLIC_ORIGIN"] != frontend_url or web_env["NEXT_PUBLIC_API_BASE_URL"] != "https://reservation-api-42401528382.asia-east1.run.app" or web_env["NEXT_PUBLIC_FIREBASE_PROJECT_ID"] != project:
+    raise SystemExit("Cloud Run web environment must contain only approved public settings and origins.")
 
 
 def gcloud(*args, capture=False):
@@ -174,7 +179,7 @@ def resource_name(name):
 def validate_source(resource):
     source = resource.get("source")
     container = source.get("container") if isinstance(source, dict) else None
-    if not isinstance(container, dict) or container.get("image") != web_image_digest or "codebase" in source:
+    if not isinstance(container, dict) or container.get("image") != redirect_image_digest or "codebase" in source:
         raise RuntimeError("App Hosting source must use the verified container digest from the triggering commit and build.")
     # Keep the original repository connection protected even though the build
     # source is now the immutable image produced by this Cloud Build run.
@@ -222,20 +227,25 @@ if os.environ.get("DEPLOY_PREFLIGHT_ONLY") == "1":
 
 # Preflight runs before images exist. Resolve the exact pushed tag only inside
 # the deployment lease and before any migration or service mutation.
-web_image_metadata = gcloud_json("artifacts", "docker", "images", "describe", web_image, f"--project={project}")
-web_image_summary = web_image_metadata.get("image_summary", {})
-web_digest = web_image_summary.get("digest")
-if not isinstance(web_digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", web_digest):
-    raise RuntimeError("Artifact Registry must provide the web image SHA-256 digest.")
-web_image_digest = f"{web_image_repository}@{web_digest}"
-if web_image_summary.get("fully_qualified_digest") != web_image_digest:
-    raise RuntimeError("Artifact Registry must resolve the web image inside the approved repository.")
+def resolve_image(tag, repository):
+    metadata = gcloud_json("artifacts", "docker", "images", "describe", tag, f"--project={project}")
+    summary = metadata.get("image_summary", {})
+    digest = summary.get("digest")
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise RuntimeError("Artifact Registry must provide the image SHA-256 digest.")
+    full_digest = f"{repository}@{digest}"
+    if summary.get("fully_qualified_digest") != full_digest:
+        raise RuntimeError("Artifact Registry must resolve the image inside the approved repository.")
+    return full_digest
 
 
+web_image_digest = resolve_image(web_image, web_image_repository)
+redirect_image_digest = resolve_image(redirect_image, redirect_image_repository)
 app_build_id = "native-" + hashlib.sha256(build_id.encode("utf-8")).hexdigest()[:23]
-container_build_payload = {"source": {"container": {"image": web_image_digest}}, "config": web_config}
-# Validate the prebuilt image and runtime configuration before any production mutation.
+container_build_payload = {"source": {"container": {"image": redirect_image_digest}}, "config": redirect_config}
+# Validate the legacy-host redirect before any production mutation.
 api_request("POST", f"{app_hosting_api}/{backend_path}/builds?buildId={app_build_id}&validateOnly=true", container_build_payload)
+
 
 def mark_intent(phase, baseline=None):
     command = [
@@ -285,7 +295,6 @@ if execution_baseline and not (
 mark_intent("jobExecutionRequested", execution_baseline)
 gcloud("run", "jobs", "execute", "reservation-db-migrate", f"--project={project}", f"--region={region}", "--wait")
 
-frontend_url = "https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app"
 api_before_deploy = api_request("GET", f"{run_api}/services/{expected['API_SERVICE']}")
 mark_intent("apiDeployRequested", resource_generation(api_before_deploy))
 gcloud(
@@ -294,7 +303,7 @@ gcloud(
     f"--labels=native-deploy-build={build_id}",
     "--allow-unauthenticated", f"--network={expected['VPC_NETWORK']}", f"--subnet={expected['VPC_SUBNET']}",
     "--vpc-egress=private-ranges-only", "--set-secrets=DATABASE_URL=reservation-database-url:latest",
-    f"--set-env-vars=NODE_ENV=production,DB_CONNECTIVITY=private-ip,CHART_PHOTOS_BUCKET={expected['CHART_PHOTOS_BUCKET']},CORS_ORIGINS={frontend_url},MEMBER_BOOKING_TENANTS=mens-gentle:gentle;missmrs-takamatsu:missmrs",
+    f"--set-env-vars=^|^NODE_ENV=production|DB_CONNECTIVITY=private-ip|CHART_PHOTOS_BUCKET={expected['CHART_PHOTOS_BUCKET']}|CORS_ORIGINS={legacy_url},{frontend_url}|MEMBER_BOOKING_TENANTS=mens-gentle:gentle;missmrs-takamatsu:missmrs",
     "--cpu=1", "--memory=512Mi", "--min-instances=0", "--max-instances=1", "--concurrency=40",
     "--timeout=60", "--port=8080",
     "--startup-probe=httpGet.path=/ready,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=5,failureThreshold=24",
@@ -365,6 +374,91 @@ def wait_state(path, state, label, attempts=120, delay=5):
     raise RuntimeError(f"Timed out waiting for {label} to reach {' or '.join(sorted(wanted))}.")
 
 
+web_resource = f"projects/{project}/locations/{expected['WEB_REGION']}/services/{expected['WEB_SERVICE']}"
+try:
+    web_before = api_request("GET", f"https://run.googleapis.com/v2/{web_resource}")
+    web_baseline = resource_generation(web_before)
+except DeploymentApiError as error:
+    if error.status != 404:
+        raise
+    web_baseline = "0"
+mark_intent("webDeployRequested", web_baseline)
+gcloud(
+    "run", "deploy", expected["WEB_SERVICE"], f"--project={project}", f"--region={expected['WEB_REGION']}",
+    "--platform=managed", f"--image={web_image_digest}",
+    f"--service-account={expected['WEB_RUNTIME_SERVICE_ACCOUNT']}",
+    f"--labels=native-deploy-build={build_id}", "--allow-unauthenticated", "--ingress=all",
+    "--set-env-vars=^|^" + "|".join(f"{key}={value}" for key, value in web_env.items()),
+    "--cpu=1", "--memory=512Mi", "--min-instances=0", "--max-instances=1", "--concurrency=80",
+    "--timeout=60", "--port=8080",
+    "--startup-probe=httpGet.path=/login,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=5,failureThreshold=24",
+    "--quiet",
+)
+
+
+def web_revision_name(name):
+    if not isinstance(name, str):
+        return ""
+    if re.fullmatch(re.escape(expected["WEB_SERVICE"]) + r"-[a-z0-9-]+", name):
+        return f"{web_resource}/revisions/{name}"
+    canonical = resource_name(name)
+    if re.fullmatch(re.escape(web_resource) + r"/revisions/" + re.escape(expected["WEB_SERVICE"]) + r"-[a-z0-9-]+", canonical):
+        return canonical
+    return ""
+
+
+def verify_web_revision():
+    service = api_request("GET", f"https://run.googleapis.com/v2/{web_resource}")
+    template = service.get("template", {})
+    containers = template.get("containers", [])
+    if int(resource_generation(service)) <= int(web_baseline) or service.get("labels", {}).get("native-deploy-build") != build_id or len(containers) != 1 or containers[0].get("image") != web_image_digest:
+        raise RuntimeError("Tokyo Cloud Run must use this build's exact web image and generation.")
+    if service.get("reconciling", False) is not False or service.get("terminalCondition", {}).get("state") != "CONDITION_SUCCEEDED":
+        raise RuntimeError("Tokyo Cloud Run must finish its rollout successfully.")
+    if str(service.get("observedGeneration", "")) != str(service.get("generation", "")):
+        raise RuntimeError("Tokyo Cloud Run must observe the deployed generation.")
+    ready = web_revision_name(service.get("latestReadyRevision"))
+    if not ready or ready != web_revision_name(service.get("latestCreatedRevision")):
+        raise RuntimeError("Tokyo Cloud Run must serve its latest ready revision.")
+    traffic = service.get("trafficStatuses", [])
+    if sum(item.get("percent", 0) for item in traffic if web_revision_name(item.get("revision")) == ready) != 100 or sum(item.get("percent", 0) for item in traffic) != 100:
+        raise RuntimeError("Tokyo Cloud Run must route all traffic to the verified revision.")
+    if template.get("serviceAccount") != expected["WEB_RUNTIME_SERVICE_ACCOUNT"]:
+        raise RuntimeError("Tokyo Cloud Run must use the approved Firebase runtime identity.")
+    revision = api_request("GET", f"https://run.googleapis.com/v2/{ready}")
+    actual = revision.get("containers", [])
+    if len(actual) != 1 or actual[0].get("image") != web_image_digest:
+        raise RuntimeError("Tokyo Cloud Run ready revision has an unexpected image digest.")
+    return ready
+
+
+web_ready_revision = verify_web_revision()
+
+if "サロン管理へログイン" not in read_url(f"{frontend_url}/login"):
+    raise RuntimeError("Frontend login page health check failed.")
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, new_url):
+        return None
+
+
+opener = urllib.request.build_opener(NoRedirect())
+try:
+    with opener.open(f"{frontend_url}/routing-check", timeout=60):
+        raise RuntimeError("The tenant routing check must redirect to login.")
+except urllib.error.HTTPError as error:
+    if error.code not in (301, 302, 303, 307, 308) or error.headers.get("Location") not in (f"{frontend_url}/login", "/login"):
+        raise RuntimeError("The tenant routing check must redirect to login.") from None
+
+try:
+    with urllib.request.urlopen(f"{frontend_url}/api/calendar/backend/dashboard", timeout=60):
+        raise RuntimeError("The reserved calendar backend path must remain inaccessible.")
+except urllib.error.HTTPError as error:
+    if error.code != 404:
+        raise RuntimeError("The reserved calendar backend path must return 404.") from None
+
+# Redirect existing bookmarks only after the Tokyo frontend passes acceptance.
 build_path = f"{backend_path}/builds/{app_build_id}"
 mark_intent("appBuildRequested")
 build_operation = api_request(
@@ -401,30 +495,16 @@ rolled_out = wait_state(rollout_path, "SUCCEEDED", "App Hosting rollout")
 if resource_name(rolled_out.get("build")) != resource_name(build_path):
     raise RuntimeError("App Hosting rollout must point to the verified build.")
 
-if "サロン管理へログイン" not in read_url(f"{frontend_url}/login"):
-    raise RuntimeError("Frontend login page health check failed.")
-
-
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, request, fp, code, msg, headers, new_url):
-        return None
-
-
-opener = urllib.request.build_opener(NoRedirect())
-try:
-    with opener.open(f"{frontend_url}/routing-check", timeout=60):
-        raise RuntimeError("The tenant routing check must redirect to login.")
-except urllib.error.HTTPError as error:
-    if error.code not in (301, 302, 303, 307, 308) or error.headers.get("Location") not in (f"{frontend_url}/login", "/login"):
-        raise RuntimeError("The tenant routing check must redirect to login.") from None
-
-try:
-    with urllib.request.urlopen(f"{frontend_url}/api/calendar/backend/dashboard", timeout=60):
-        raise RuntimeError("The reserved calendar backend path must remain inaccessible.")
-except urllib.error.HTTPError as error:
-    if error.code != 404:
-        raise RuntimeError("The reserved calendar backend path must return 404.") from None
+verify_web_revision()
+for path in ("/login", "/mens-gentle/reservations?view=week"):
+    try:
+        with opener.open(legacy_url + path, timeout=60):
+            raise RuntimeError("The legacy frontend must redirect to Tokyo Cloud Run.")
+    except urllib.error.HTTPError as error:
+        if error.code != 302 or error.headers.get("Location") != frontend_url + path or "no-store" not in error.headers.get("Cache-Control", ""):
+            raise RuntimeError("The legacy frontend must preserve paths and query strings when redirecting to Tokyo.") from None
 
 print(f"Native production deployment succeeded for {commit} ({build_id}).")
+print(f"Tokyo Cloud Run ready revision: {web_ready_revision}")
 print(f"App Hosting build logs: {built.get('buildLogsUri', '')}")
 PY

@@ -2,9 +2,9 @@
 
 ## Dependency and runtime updates
 
-Run `npm run audit:security` from the repository root. This checks all three lock files: the development workspace, standalone API container, and standalone App Hosting frontend. Cloud Build runs the same check before deployment and fails on reported vulnerabilities of any severity. Review upstream advisories as well: the npm advisory feed may lag the framework publisher.
+Run `npm run audit:security` from the repository root. This checks all three lock files: the development workspace, standalone API container, and standalone web container. Cloud Build runs the same check before deployment and fails on reported vulnerabilities of any severity. Review upstream advisories as well: the npm advisory feed may lag the framework publisher.
 
-The 2026-10-22 update uses Next.js 16.4.2, Fastify 5.12.7, Firebase 12.19.0 and Firebase Admin 14.5.0. Next.js includes the fixes described in its [October security update](https://nextjs.org/blog/nextjs-security-update-october-14-2026). The API, web and validation images use Node.js 22.23.4. App Hosting receives the prebuilt web container because Google's buildpack had not yet published that Node.js patch. Automatic Base Image Updates are disabled; future runtime fixes require a base-image update and rebuild. See [deployment verification](native-deployment.md) for the runtime and image checks.
+The 2026-10-22 update uses Next.js 16.4.2, Fastify 5.12.7, Firebase 12.19.0 and Firebase Admin 14.5.0. Next.js includes the fixes described in its [October security update](https://nextjs.org/blog/nextjs-security-update-october-14-2026). The API, web, redirect and validation images use Node.js 22.23.4. The web container runs on Tokyo Cloud Run, while App Hosting receives only the redirect container. Automatic Base Image Updates are disabled; future runtime fixes require a base-image update and rebuild. See [deployment verification](native-deployment.md) for the runtime and image checks.
 
 The following overrides are intentional and must remain consistent between workspace and standalone manifests:
 
@@ -15,6 +15,8 @@ The following overrides are intentional and must remain consistent between works
 ## Request protection
 
 Cookie-authenticated backend proxies validate the request origin before reading or forwarding mutation bodies. An explicit Origin must match the request origin or configured public origins. If Origin is absent, a same-origin Referer or Fetch Metadata indication is required. Cross-site, opaque, and unproven requests are rejected with HTTP 403. Read methods keep their existing authentication behavior.
+
+Keep `APP_PUBLIC_ORIGIN`, API `CORS_ORIGINS`, and Firebase authorized domains aligned with the production hostname; see [frontend hostname changes](tenancy.md#frontend-hostname-changes). The old App Hosting service redirects GET/HEAD page visits to a fixed origin and rejects other methods with 409 rather than forwarding their bodies or credentials. Its target must not come from a Host header or request parameter. Verify the redirect with nested paths, query strings, and an invitation fragment in a browser.
 
 The legacy password-status endpoint returns the same uncached response for all valid email inputs, without querying account records. Initial password setup and recovery use the shared `/password-reset` flow. See [tenant authentication](tenancy.md) for provider-level email enumeration protection.
 
