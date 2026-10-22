@@ -122,9 +122,13 @@ class NativeDeploymentTests(unittest.TestCase):
             if url.endswith('/services/reservation-api'):
                 return Response({'generation': '20'})
             if method == 'POST':
-                if '/builds?' in url and bad == 'build-id-error':
+                if '/builds?' in url and 'validateOnly=true' not in url and bad == 'build-id-error':
                     body = {'error': {'code': 400, 'message': 'build_id must have length between 3 and 30.\nAuthorization: Bearer test-token\nHeaders: {"Cookie":"top-secret"}', 'details': [{'headers': {'secret': 'hidden-detail'}}]}}
                     raise urllib.error.HTTPError(url, 400, 'bad request', {'Authorization': 'private-header'}, Response(body))
+                if '/builds?' in url and 'validateOnly=true' in url:
+                    if bad == 'container-validation':
+                        raise urllib.error.HTTPError(url, 400, 'invalid container config', {}, Response({'error': {'message': 'Invalid runtime settings.'}}))
+                    return Response({'name': 'projects/42401528382/locations/asia-east1/operations/validation'})
                 if 'validateOnly=true' in url:
                     self.validation_attempts += 1
                     status = 403 if bad == 'validation-fatal' else 400
@@ -185,13 +189,19 @@ class NativeDeploymentTests(unittest.TestCase):
         self.assertFalse(any(method == 'POST' for method, _, _ in self.requests))
         self.assertFalse(any(command[1:5] == ['artifacts', 'docker', 'images', 'describe'] for command in self.commands))
 
+    def test_invalid_container_config_prevents_production_mutations(self):
+        with self.assertRaisesRegex(RuntimeError, 'Invalid runtime settings'):
+            self.run_deploy(bad='container-validation')
+        self.assertFalse(any(command[1:2] == ['run'] for command in self.commands))
+        self.assertFalse(any(method == 'POST' and 'validateOnly=true' not in url for method, url, _ in self.requests))
+
     def test_container_configuration_matches_apphosting_yaml(self):
         source = (ROOT / 'apps/web/apphosting.yaml').read_text()
         run_block = source.split('env:', 1)[0]
         run_config = {key.replace('memoryMiB', 'memoryMib'): int(value) for key, value in re.findall(r'^  (\w+): (\d+)$', run_block, re.M)}
         self.assertEqual(WEB_CONFIG['runConfig'], run_config)
         entries = re.findall(r'  - variable: (\w+)\n    value: ([^\n]+)\n    availability:\n((?:      - (?:BUILD|RUNTIME)\n?)+)', source)
-        env = [{'variable': key, 'value': value.strip('"'), 'availability': re.findall(r'- (BUILD|RUNTIME)', availability)} for key, value, availability in entries]
+        env = [{'variable': key, 'value': value.strip('"'), 'availability': ['RUNTIME']} for key, value, availability in entries if 'RUNTIME' in availability]
         self.assertEqual(WEB_CONFIG['env'], env)
 
     def test_unapproved_runtime_limits_or_environment_are_rejected_before_cloud_access(self):
@@ -412,7 +422,7 @@ class NativeDeploymentTests(unittest.TestCase):
                 self.run_deploy({'BUILD_ID': build, 'API_IMAGE': f'asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-api:{SHA}-{build}', 'WEB_IMAGE': f'{WEB_REPOSITORY}:{SHA}-{build}'})
                 self.assertEqual(len(expected_id), 30)
                 self.assertEqual(expected_id, 'native-' + hashlib.sha256(build.encode('utf-8')).hexdigest()[:23])
-                create_build = next(url for method, url, _ in self.requests if method == 'POST' and '/builds?' in url)
+                create_build = next(url for method, url, _ in self.requests if method == 'POST' and '/builds?' in url and 'validateOnly=true' not in url)
                 rollout = next((url, payload) for method, url, payload in self.requests if method == 'POST' and '/rollouts?' in url and 'validateOnly=true' not in url)
                 self.assertTrue(create_build.endswith('buildId=' + expected_id))
                 self.assertTrue(rollout[0].endswith('rolloutId=' + expected_id))

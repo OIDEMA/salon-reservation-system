@@ -73,7 +73,7 @@ if os.environ.get("DEPLOY_PREFLIGHT_ONLY") != "1" and not re.fullmatch(r"[1-9][0
 
 web_config = json.loads(Path("scripts/apphosting-container-config.json").read_text())
 approved_env = {
-    "APP_HOSTING_BUILD", "APP_PUBLIC_ORIGIN", "NEXT_PUBLIC_API_BASE_URL",
+    "APP_PUBLIC_ORIGIN", "NEXT_PUBLIC_API_BASE_URL",
     "NEXT_PUBLIC_FIREBASE_API_KEY", "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN",
     "NEXT_PUBLIC_FIREBASE_PROJECT_ID", "NEXT_PUBLIC_FIREBASE_APP_ID",
     "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
@@ -87,8 +87,7 @@ if not isinstance(web_env, list) or len(web_env) != len(approved_env) or any(
     not isinstance(entry, dict) or set(entry) != {"variable", "value", "availability"}
     or not isinstance(entry["variable"], str) or entry["variable"] not in approved_env
     or not isinstance(entry["value"], str) or not entry["value"]
-    or entry["availability"] != (["BUILD"] if entry["variable"] == "APP_HOSTING_BUILD"
-        else ["RUNTIME"] if entry["variable"] == "APP_PUBLIC_ORIGIN" else ["BUILD", "RUNTIME"])
+    or entry["availability"] != ["RUNTIME"]
     for entry in web_env
 ) or {entry["variable"] for entry in web_env} != approved_env:
     raise SystemExit("App Hosting container environment must contain only the approved public settings.")
@@ -233,6 +232,11 @@ if web_image_summary.get("fully_qualified_digest") != web_image_digest:
     raise RuntimeError("Artifact Registry must resolve the web image inside the approved repository.")
 
 
+app_build_id = "native-" + hashlib.sha256(build_id.encode("utf-8")).hexdigest()[:23]
+container_build_payload = {"source": {"container": {"image": web_image_digest}}, "config": web_config}
+# Validate the prebuilt image and runtime configuration before any production mutation.
+api_request("POST", f"{app_hosting_api}/{backend_path}/builds?buildId={app_build_id}&validateOnly=true", container_build_payload)
+
 def mark_intent(phase, baseline=None):
     command = [
         "python3", "scripts/native-deploy.py", "mark-intent",
@@ -361,12 +365,11 @@ def wait_state(path, state, label, attempts=120, delay=5):
     raise RuntimeError(f"Timed out waiting for {label} to reach {' or '.join(sorted(wanted))}.")
 
 
-app_build_id = "native-" + hashlib.sha256(build_id.encode("utf-8")).hexdigest()[:23]
 build_path = f"{backend_path}/builds/{app_build_id}"
 mark_intent("appBuildRequested")
 build_operation = api_request(
     "POST", f"{app_hosting_api}/{backend_path}/builds?buildId={app_build_id}",
-    {"source": {"container": {"image": web_image_digest}}, "config": web_config},
+    container_build_payload,
 )
 built = wait_state(build_path, {"BUILT", "READY"}, "App Hosting container build", attempts=150, delay=10)
 validate_source(built)
