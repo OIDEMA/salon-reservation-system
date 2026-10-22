@@ -8,14 +8,14 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:operations": "node --import tsx --test tests/admin-permissions.test.tsx src/components/chart-types.test.tsx src/components/chart-permissions.test.tsx src/lib/reservation-menu-catalog.test.ts src/lib/reservation-customer.test.ts tests/customer-import-permissions.test.tsx tests/staff-import-permissions.test.tsx tests/reservation-history.test.tsx tests/history-calendar.test.tsx"
+    "test:operations": "node --import tsx --test tests/admin-permissions.test.tsx src/components/chart-types.test.tsx src/components/chart-permissions.test.tsx src/lib/reservation-menu-catalog.test.ts src/lib/reservation-customer.test.ts tests/customer-import-permissions.test.tsx tests/staff-import-permissions.test.tsx tests/reservation-history.test.tsx tests/history-calendar.test.tsx tests/request-security.test.ts tests/password-recovery.test.ts"
   },
   "dependencies": {
     "date-fns": "^4.1.0",
-    "firebase": "^12.18.0",
-    "firebase-admin": "^14.3.0",
+    "firebase": "^12.19.0",
+    "firebase-admin": "^14.5.0",
     "lucide-react": "^0.468.0",
-    "next": "^16.3.4",
+    "next": "^16.4.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zod": "^3.25.76"
@@ -25,5 +25,14 @@
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": "^22.23.4 || ^24.22.1"
+  },
+  "overrides": {
+    "@firebase/app": "0.16.2",
+    "@firebase/firestore": {
+      "@grpc/grpc-js": "^1.14.6"
+    }
   }
 }

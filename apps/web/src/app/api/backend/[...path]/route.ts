@@ -1,9 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { backendFetch } from "@/lib/backend";
+import { rejectCrossOriginMutation } from "@/lib/request-security";
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 
 async function proxy(request: NextRequest, context: RouteContext) {
+  const rejected = rejectCrossOriginMutation(request);
+  if (rejected) return rejected;
   const { path } = await context.params;
   const query = request.nextUrl.search;
   const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer();

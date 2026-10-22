@@ -14,8 +14,8 @@ export default function PasswordResetPage() {
             preload
           />
         </div>
-        <h1>パスワードリセット</h1>
-        <p>登録済みのメールアドレスに、パスワード再設定用のメールを送信します。</p>
+        <h1>パスワードの初回設定・再設定</h1>
+        <p>初めて利用する方も、パスワードをお忘れの方も、登録済みのメールアドレスを入力してください。メール内のリンクからパスワードを設定できます。</p>
         <PasswordResetRequestForm />
       </section>
     </main>

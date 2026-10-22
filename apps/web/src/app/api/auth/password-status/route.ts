@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { firebaseAdminAuth } from "@/lib/firebase-admin";
 import { sameOrigin } from "@/lib/request-security";
 
 const inputSchema = z.object({
@@ -23,19 +22,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  try {
-    const user = await firebaseAdminAuth.getUserByEmail(parsed.data.email);
-    return NextResponse.json({ needsPasswordSetup: !user.passwordHash });
-  } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "auth/user-not-found") {
-      // Keep unknown accounts indistinguishable from accounts that already have a password.
-      return NextResponse.json({ needsPasswordSetup: false });
-    }
-
-    console.error("Unable to determine password setup status", error);
-    return NextResponse.json(
-      { code: "AUTH_STATUS_UNAVAILABLE", message: "アカウントの状態を確認できませんでした。" },
-      { status: 503 }
-    );
-  }
+  // Retain the old response shape for already-loaded clients without looking up
+  // accounts. Initial password setup and recovery share /password-reset.
+  return NextResponse.json(
+    { needsPasswordSetup: false },
+    { headers: { "Cache-Control": "private, no-store" } }
+  );
 }

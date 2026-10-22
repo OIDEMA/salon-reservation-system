@@ -1,6 +1,6 @@
 "use client";
 
-import { sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -89,28 +89,6 @@ export function LoginForm() {
       }
       window.location.assign("/select-tenant");
     } catch (error) {
-      const code = firebaseErrorCode(error);
-      if (["auth/invalid-credential", "auth/wrong-password", "auth/missing-password"].includes(code)) {
-        try {
-          const statusResponse = await fetch("/api/auth/password-status", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email })
-          });
-          const status = (await statusResponse.json().catch(() => null)) as { needsPasswordSetup?: boolean } | null;
-          if (statusResponse.ok && status?.needsPasswordSetup) {
-            await firebaseAuthReady;
-            await sendPasswordResetEmail(firebaseAuth, email);
-            setFeedback({
-              tone: "success",
-              text: "パスワード設定メールを送信しました。メールをご確認ください。"
-            });
-            return;
-          }
-        } catch {
-          // Fall through to the regular localized login error when status lookup fails.
-        }
-      }
       setFeedback({
         tone: "error",
         text: error instanceof Error && !firebaseErrorCode(error) ? error.message : localizedFirebaseError(error)
@@ -129,7 +107,7 @@ export function LoginForm() {
       <label>
         <span>パスワード</span>
         <div className="passwordInput">
-          <input type={showPassword ? "text" : "password"} autoComplete="current-password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} />
+          <input type={showPassword ? "text" : "password"} autoComplete="current-password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} required />
           <button
             className="passwordToggle"
             type="button"
@@ -146,7 +124,7 @@ export function LoginForm() {
         {submitting ? "処理中…" : "ログイン"}
       </button>
       <Link className="authResetLink" href="/password-reset">
-        パスワードをお忘れですか？
+        初めて利用する方・パスワードをお忘れの方
       </Link>
     </form>
   );

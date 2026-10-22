@@ -1,17 +1,20 @@
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
+
+function httpOrigin(value: string) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
 
 function configuredOrigins() {
   return (process.env.APP_PUBLIC_ORIGINS ?? process.env.APP_PUBLIC_ORIGIN ?? "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean)
-    .flatMap((value) => {
-      try {
-        return [new URL(value).origin];
-      } catch {
-        return [];
-      }
-    });
+    .flatMap((value) => httpOrigin(value) ?? []);
 }
 
 /**
@@ -20,8 +23,28 @@ function configuredOrigins() {
  * request-derived origin for local development and other trusted deployments.
  */
 export function sameOrigin(request: NextRequest) {
+  const allowed = new Set([request.nextUrl.origin, ...configuredOrigins()]);
   const origin = request.headers.get("origin");
-  if (!origin) return true;
+  // A supplied Origin is authoritative, including the opaque "null" origin.
+  if (origin !== null) return origin !== "null" && allowed.has(origin);
 
-  return new Set([request.nextUrl.origin, ...configuredOrigins()]).has(origin);
+  // Some same-origin clients omit Origin. Require browser evidence instead of
+  // accepting a missing header; SameSite cookies alone do not isolate subdomains.
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (fetchSite && fetchSite !== "same-origin") return false;
+  const referer = request.headers.get("referer");
+  if (referer !== null) {
+    const refererOrigin = httpOrigin(referer);
+    return refererOrigin !== null && allowed.has(refererOrigin);
+  }
+  return fetchSite === "same-origin";
+}
+
+/** Apply before reading or forwarding the body of a cookie-authenticated proxy. */
+export function rejectCrossOriginMutation(request: NextRequest) {
+  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || sameOrigin(request)) return null;
+  return NextResponse.json(
+    { code: "INVALID_ORIGIN", message: "アクセス元が正しくありません。" },
+    { status: 403 }
+  );
 }

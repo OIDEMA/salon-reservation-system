@@ -6,13 +6,14 @@ steps:
       - scripts/deploy-native.sh
       - --check
   - id: validate
-    name: node:22-bookworm
+    name: node:22.23.4-bookworm
     entrypoint: bash
     args:
       - -euc
       - |
         npm ci
         npm ci --workspaces=false --prefix apps/web
+        npm run audit:security
         npm run db:generate
         npm run typecheck
         npm run test:operations
@@ -21,6 +22,7 @@ steps:
     name: gcr.io/cloud-builders/docker
     args:
       - build
+      - --pull
       - --tag
       - asia-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/reservation-api:${COMMIT_SHA}-${BUILD_ID}
       - apps/api
