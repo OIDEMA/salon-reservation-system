@@ -192,6 +192,10 @@ class NativeDeploymentTests(unittest.TestCase):
         api_environment = next(value for value in mutations[2] if value.startswith("--set-env-vars="))
         self.assertIn("MEMBER_BOOKING_TENANTS=mens-gentle:gentle;missmrs-takamatsu:missmrs", api_environment)
         self.assertNotIn("FIREBASE_AUTH_EMULATOR_HOST", api_environment)
+        self.assertIn("INVITATION_EMAIL_FROM=noreply@beauty-gum.jp", api_environment)
+        self.assertIn("APP_PUBLIC_ORIGIN=https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app", api_environment)
+        self.assertIn("--update-secrets=DATABASE_URL=reservation-database-url:latest", mutations[2])
+        self.assertFalse(any(value.startswith("--set-secrets=") for value in mutations[2]))
         writes = [data for method, url, data in self.requests if method == 'POST' and 'validateOnly=true' not in url]
         self.assertEqual(writes, [{'source': {'codebase': {'commit': SHA}}}, {'build': BUILD_PATH}])
 

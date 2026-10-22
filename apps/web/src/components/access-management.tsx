@@ -73,7 +73,7 @@ export function AccessAssignmentForm({ data, member }: { data: AccessData; membe
   const [permissions, setPermissions] = useState(member?.permissions ?? defaults.STAFF);
   const [salonIds, setSalonIds] = useState<string[]>(member?.salonIds ?? data.actorSalonIds);
   const [email, setEmail] = useState(""); const [days, setDays] = useState(7);
-  const [busy, setBusy] = useState(false); const [message, setMessage] = useState(""); const [inviteLink, setInviteLink] = useState("");
+  const [busy, setBusy] = useState(false); const [message, setMessage] = useState(""); const [sentEmail, setSentEmail] = useState("");
   const self = member?.userId === data.actorUserId;
   const basePermissions = role === "OWNER" ? defaults.OWNER : custom ? permissions : defaults[role];
   const permitted = role === "VIEWER" ? basePermissions.filter((permission)=>permission.endsWith(".read")) : basePermissions;
@@ -81,7 +81,7 @@ export function AccessAssignmentForm({ data, member }: { data: AccessData; membe
     permission.endsWith(".write") ? permission.replace(/\.write$/, ".read") : permission==="checkout.refund" ? "checkout.read" : permission==="register.close" ? "register.read" : permission]))];
   function toggle(values: string[], value: string) { return values.includes(value) ? values.filter((item) => item !== value) : [...values, value]; }
   async function save(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (busy || self || inviteLink) return; setBusy(true); setMessage("");
+    event.preventDefault(); if (busy || self || sentEmail) return; setBusy(true); setMessage("");
     try {
       const assignment = { role, useCustomPermissions: role === "OWNER" ? false : custom, permissions: custom ? permissions : [], salonIds: role === "OWNER" ? [] : salonIds };
       const body = await responseBody(await fetch(tenantApiPath(tenantSlug, member ? `/access/members/${encodeURIComponent(member.userId)}` : "/access/invitations"), {
@@ -89,16 +89,18 @@ export function AccessAssignmentForm({ data, member }: { data: AccessData; membe
         body: JSON.stringify(member ? { ...assignment, status } : { ...assignment, email, expiresInDays: days })
       }));
       if (member) { router.push(tenantPath(tenantSlug, "/access")); router.refresh(); }
-      else setInviteLink(new URL(body.acceptPath, window.location.origin).href);
+      else {
+        if (!body.emailSent) throw new Error("招待メールの送信を確認できませんでした。管理者にお問い合わせください。");
+        setSentEmail(body.invitation.email);
+      }
     } catch (error) { setMessage(error instanceof Error ? error.message : "保存に失敗しました。"); }
     finally { setBusy(false); }
   }
-  async function copyLink() { try { await navigator.clipboard.writeText(inviteLink); setMessage("招待リンクをコピーしました。"); } catch { setMessage("リンクを選択してコピーしてください。"); } }
   return <form className="masterCreateForm" onSubmit={save}>
     {message ? <p role="status">{message}</p> : null}
     {self ? <p className={styles.error}>自分の権限は変更できません。他のオーナーに依頼してください。</p> : null}
-    <fieldset disabled={busy || self || !!inviteLink} className={styles.fieldset}>
-      {!member ? <><label className={styles.field}><span>招待先メールアドレス</span><input type="email" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+    <fieldset disabled={busy || self || !!sentEmail} className={styles.fieldset}>
+      {!member ? <><p className={styles.muted}>招待先にメールを自動送信します。本人がメール内のボタンから招待を承諾すると利用できます。</p><label className={styles.field}><span>招待先メールアドレス</span><input type="email" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
         <label className={styles.field}><span>招待の有効期間</span><select value={days} onChange={(event) => setDays(Number(event.target.value))}>{[1,3,7].map((value) => <option key={value} value={value}>{value}日間</option>)}</select></label></> : <p>{member.user.displayName || member.user.email}</p>}
       <label className={styles.field}><span>役割</span><select value={role} onChange={(event) => { setRole(event.target.value); setCustom(false); setPermissions(defaults[event.target.value]); }}>
         {Object.entries(roleLabels).filter(([value]) => data.actorRole === "OWNER" || value !== "OWNER").map(([value,label]) => <option key={value} value={value}>{label}</option>)}
@@ -115,10 +117,9 @@ export function AccessAssignmentForm({ data, member }: { data: AccessData; membe
           onChange={() => setPermissions(toggle(permissions,permission))} />{label}</label>)}</div>
         <p className={styles.muted}>変更・返金・レジ締めを許可すると、同じ機能の閲覧も許可されます。オーナーは常にすべての権限を持ちます。</p></div>
     </fieldset>
-    {inviteLink ? <div className={styles.linkBox}><strong>招待リンクを発行しました</strong><p className={styles.muted}>このリンクを招待先の本人に渡してください。同じ確認済みメールアドレスでログインすると一度だけ承諾できます。</p>
-      <label className={styles.field}><span>招待リンク</span><textarea readOnly rows={3} value={inviteLink} onFocus={(event) => event.target.select()} /></label><button className="secondaryButton" type="button" onClick={() => void copyLink()}>リンクをコピー</button></div> : null}
-    <div className="masterCreateActions"><TenantLink className="secondaryButton" href="/access" onClick={(event) => { if (busy) event.preventDefault(); }}>{inviteLink ? "一覧へ戻る" : "キャンセル"}</TenantLink>
-      {!inviteLink ? <button className="primaryButton" type="submit" disabled={busy || self}>{busy ? "保存中..." : member ? "権限を保存" : "招待リンクを発行"}</button> : null}</div>
+    {sentEmail ? <div className={styles.linkBox} role="status"><strong>招待メールを送信しました</strong><p>{sentEmail} 宛てに招待メールを送信しました。</p><p className={styles.muted}>本人がメール内のボタンから招待を承諾すると利用できます。届かない場合は迷惑メールフォルダーもご確認ください。</p></div> : null}
+    <div className="masterCreateActions"><TenantLink className="secondaryButton" href="/access" onClick={(event) => { if (busy) event.preventDefault(); }}>{sentEmail ? "一覧へ戻る" : "キャンセル"}</TenantLink>
+      {!sentEmail ? <button className="primaryButton" type="submit" disabled={busy || self}>{busy ? member ? "保存中..." : "送信中..." : member ? "権限を保存" : "招待メールを送信"}</button> : null}</div>
   </form>;
 }
 

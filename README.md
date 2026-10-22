@@ -48,7 +48,7 @@ PostgreSQL is the source of truth. When no store has been registered, the applic
 
 See [docs/operations.md](docs/operations.md) for the Japanese operating guide, schema introduction, and database test instructions.
 
-External acquisition and publishing integrations are intentionally out of scope for now. The application does not publish to HOT PEPPER Beauty, manage external reviews or coupons, send LINE/email messages, or process external payments.
+Staff invitation emails are sent automatically through Amazon SES; see [docs/invitation-email.md](docs/invitation-email.md) for sender and runtime configuration. External acquisition and publishing integrations are intentionally out of scope for now. The application does not publish to HOT PEPPER Beauty, manage external reviews or coupons, send LINE or general marketing emails, or process external payments.
 
 ## Deploy Notes
 

@@ -12,12 +12,13 @@
     "prisma:push": "prisma db push",
     "prisma:deploy": "node dist/src/scripts/deploy-schema.js",
     "tenant:provision": "node dist/src/scripts/provision-tenant.js",
-    "test:operations": "node --import tsx --test tests/cash-domain.test.ts tests/access.test.ts tests/customer-lookup.test.ts src/chart-domain.test.ts src/chart-photo-storage.test.ts src/scripts/audit-chart-photo-storage.test.ts tests/customer-import.test.ts tests/master-page.test.ts tests/staff-import.test.ts tests/history-import.test.ts tests/dashboard-history.test.ts tests/history-staff-links.test.ts tests/history-schedule.test.ts tests/reservation-capacity.test.ts tests/member-auth.test.ts tests/member-booking-domain.test.ts",
+    "test:operations": "node --import tsx --test tests/cash-domain.test.ts tests/access.test.ts tests/invitation-email.test.ts tests/customer-lookup.test.ts src/chart-domain.test.ts src/chart-photo-storage.test.ts src/scripts/audit-chart-photo-storage.test.ts tests/customer-import.test.ts tests/master-page.test.ts tests/staff-import.test.ts tests/history-import.test.ts tests/dashboard-history.test.ts tests/history-staff-links.test.ts tests/history-schedule.test.ts tests/reservation-capacity.test.ts tests/member-auth.test.ts tests/member-booking-domain.test.ts",
     "test:operations:db": "node --import tsx --test src/chart-routes.integration.test.ts tests/*.integration.test.ts",
     "chart:photos:audit": "node dist/src/scripts/audit-chart-photo-storage.js",
     "test:history:db": "node --import tsx --test tests/history-import.integration.test.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-sesv2": "^3.1152.0",
     "@fastify/cors": "^10.0.2",
     "@prisma/client": "^6.1.0",
     "fastify": "^5.2.0",

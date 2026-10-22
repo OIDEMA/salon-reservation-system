@@ -5,6 +5,7 @@ import { z } from "zod";
 import { prisma } from "./database.js";
 import { requireAuthenticatedUser, requestedSalonId, type TenantContext } from "./tenant-context.js";
 import { AccessPolicyError, assertAccessAssignment, canManageMember, effectivePermissions, hasPermission, PERMISSIONS, requirePermission } from "./permissions.js";
+import { InvitationEmailError, sendInvitationEmail } from "./invitation-email.js";
 
 const assignmentSchema = z.object({
   role: z.enum(["OWNER", "ADMIN", "MANAGER", "STAFF", "VIEWER"]),
@@ -58,12 +59,14 @@ type AccessDependencies = {
   database?: PrismaClient;
   authorize?: typeof requirePermission;
   authenticate?: typeof requireAuthenticatedUser;
+  sendInvitation?: typeof sendInvitationEmail;
 };
 
 export function registerAccessRoutes(server: FastifyInstance, dependencies: AccessDependencies = {}) {
   const db = dependencies.database ?? prisma;
   const authorize = dependencies.authorize ?? requirePermission;
   const authenticate = dependencies.authenticate ?? requireAuthenticatedUser;
+  const sendInvitation = dependencies.sendInvitation ?? sendInvitationEmail;
 
   server.get("/api/access/members", async (request, reply) => {
     const context = await authorize(request, reply, "access.manage");
@@ -114,22 +117,33 @@ export function registerAccessRoutes(server: FastifyInstance, dependencies: Acce
     if (!context) return;
     const input = inviteSchema.parse(request.body);
     const token = randomBytes(32).toString("base64url");
-    const invitation = await db.$transaction(async (transaction) => {
-      await lockTenant(transaction, context.tenant.id);
-      const actor = await currentActor(transaction, context);
-      const salons = await transaction.salon.findMany({ where: { tenantId: context.tenant.id }, select: { id: true } });
-      assertAccessAssignment(actor, undefined, undefined, input, salons.map((salon) => salon.id));
-      const email = input.email.toLowerCase();
-      const existing = await transaction.tenantMembership.findFirst({ where: { tenantId: context.tenant.id, user: { email } } });
-      if (existing) throw new AccessPolicyError("MEMBER_ALREADY_EXISTS", "このメールアドレスは登録済みです。既存メンバーを編集してください。", 409);
-      await transaction.tenantInvitation.updateMany({ where: { tenantId: context.tenant.id, email, acceptedAt: null, revokedAt: null }, data: { revokedAt: new Date() } });
-      const created = await transaction.tenantInvitation.create({ data: { tenantId: context.tenant.id, email, role: input.role,
-        useCustomPermissions: input.useCustomPermissions, permissions: [...new Set(input.permissions)], salonIds: input.role === "OWNER" ? [] : [...new Set(input.salonIds)],
-        tokenHash: hashInvitationToken(token), expiresAt: new Date(Date.now() + input.expiresInDays * 86_400_000), invitedByUserId: context.user.id } });
-      await transaction.auditLog.create({ data: auditData(request, context, "access.invitation.create", "tenantInvitation", created.id) });
-      return created;
-    });
-    return reply.code(201).send({ invitation: publicInvitation(invitation), acceptPath: `/accept-invitation#token=${token}` });
+    try {
+      const invitation = await db.$transaction(async (transaction) => {
+        await lockTenant(transaction, context.tenant.id);
+        const actor = await currentActor(transaction, context);
+        const salons = await transaction.salon.findMany({ where: { tenantId: context.tenant.id }, select: { id: true } });
+        assertAccessAssignment(actor, undefined, undefined, input, salons.map((salon) => salon.id));
+        const email = input.email.toLowerCase();
+        const existing = await transaction.tenantMembership.findFirst({ where: { tenantId: context.tenant.id, user: { email } } });
+        if (existing) throw new AccessPolicyError("MEMBER_ALREADY_EXISTS", "このメールアドレスは登録済みです。既存メンバーを編集してください。", 409);
+        await transaction.tenantInvitation.updateMany({ where: { tenantId: context.tenant.id, email, acceptedAt: null, revokedAt: null }, data: { revokedAt: new Date() } });
+        const created = await transaction.tenantInvitation.create({ data: { tenantId: context.tenant.id, email, role: input.role,
+          useCustomPermissions: input.useCustomPermissions, permissions: [...new Set(input.permissions)], salonIds: input.role === "OWNER" ? [] : [...new Set(input.salonIds)],
+          tokenHash: hashInvitationToken(token), expiresAt: new Date(Date.now() + input.expiresInDays * 86_400_000), invitedByUserId: context.user.id } });
+        await transaction.auditLog.create({ data: auditData(request, context, "access.invitation.create", "tenantInvitation", created.id) });
+        // Roll back the new invitation and preserve the previous link if sending fails.
+        // Send last so database validation/audit failures cannot trigger a mail.
+        await sendInvitation({ email, tenantName: context.tenant.name, role: created.role, expiresAt: created.expiresAt, token });
+        return created;
+      }, { timeout: 20_000 });
+      return reply.code(201).send({ invitation: publicInvitation(invitation), emailSent: true });
+    } catch (error) {
+      if (error instanceof InvitationEmailError) {
+        request.log.warn({ code: error.code }, "invitation email failed");
+        return reply.code(503).send({ code: error.code, message: error.message });
+      }
+      throw error;
+    }
   });
 
   server.delete("/api/access/invitations/:id", async (request, reply) => {

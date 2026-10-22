@@ -21,7 +21,8 @@ test("access API with real PostgreSQL and Firebase verified identity", {skip: !t
   });
   const app=Fastify({logger:false});
   app.setErrorHandler((error,_request,reply)=>reply.code(error.statusCode??500).send({message:error.message}));
-  registerAccessRoutes(app);
+  const emailedTokens = new Map<string,string>();
+  registerAccessRoutes(app,{sendInvitation:async(input)=>{emailedTokens.set(input.email,input.token);}});
   app.get("/test/read",async(request,reply)=>{const context=await requirePermission(request,reply,"reservation.read");if(context)return{tenantId:context.tenant.id,salonId:requestedSalonId(request)};});
   app.post("/test/write",async(request,reply)=>{const context=await requirePermission(request,reply,"reservation.write");if(context)return{allowed:true};});
   async function identity(name:string, verified=true) {
@@ -49,7 +50,8 @@ test("access API with real PostgreSQL and Firebase verified identity", {skip: !t
     const {status,...input}=assignment;
     const response=await app.inject({method:"POST",url:"/api/access/invitations",headers:headers(user),payload:{...input,email:target.email}});
     assert.equal(response.statusCode,201,response.body);const body=response.json();
-    return {id:body.invitation.id,token:body.acceptPath.split("#token=")[1] as string,body};
+    assert.equal(body.emailSent,true);assert.equal(body.acceptPath,undefined);
+    return {id:body.invitation.id,token:emailedTokens.get(target.email!)!,body};
   }
   async function accept(user:typeof owner,token:string) {return app.inject({method:"POST",url:"/api/access/invitations/accept",headers:{authorization:`Bearer ${user.credential}`},payload:{token}});}
 
