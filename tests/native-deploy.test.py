@@ -31,7 +31,7 @@ REPOSITORY_LINK = (
     "gitRepositoryLinks/salon-reservation-system"
 )
 EXECUTION_NAME = (
-    "projects/salon-reserve-bg/locations/asia-east1/jobs/"
+    "projects/salon-reserve-bg/locations/asia-northeast1/jobs/"
     "reservation-db-migrate/executions/reservation-db-migrate-test"
 )
 IMAGE = "asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-api:" + COMMIT + "-" + BUILD_ID
@@ -39,6 +39,8 @@ DIGEST = "sha256:" + "c" * 64
 EXECUTION_IMAGE = IMAGE.rsplit(":", 1)[0] + "@" + DIGEST
 WEB_IMAGE = IMAGE.replace("/reservation-api:", "/reservation-web:")
 WEB_DIGEST_IMAGE = WEB_IMAGE.rsplit(":", 1)[0] + "@" + DIGEST
+RELAY_IMAGE = IMAGE.replace("/reservation-api:", "/reservation-api-relay:")
+RELAY_DIGEST_IMAGE = RELAY_IMAGE.rsplit(":", 1)[0] + "@" + DIGEST
 
 
 class FakeClock:
@@ -70,7 +72,7 @@ class FakeGoogleApi:
         self.app_build = None
         self.app_rollout = None
         self.job = {
-            "generation": "10",
+            "generation": "10", "observedGeneration": "10",
             "labels": {"native-deploy-build": (owner or {}).get("buildId", BUILD_ID)},
             "template": {"template": {"containers": [{"image": IMAGE}]}},
             "terminalCondition": {"state": "CONDITION_SUCCEEDED"},
@@ -83,14 +85,19 @@ class FakeGoogleApi:
             "completionTime": "2026-10-13T00:00:00Z",
             "template": {"containers": [{"image": EXECUTION_IMAGE}]},
         }
+        self.relay = {
+            "generation": "10", "observedGeneration": "10", "labels": {"native-deploy-build": BUILD_ID},
+            "template": {"containers": [{"image": RELAY_DIGEST_IMAGE}]},
+            "terminalCondition": {"state": "CONDITION_SUCCEEDED"},
+        }
         self.web = {
-            "generation": "10",
+            "generation": "10", "observedGeneration": "10",
             "labels": {"native-deploy-build": (owner or {}).get("buildId", BUILD_ID)},
             "template": {"containers": [{"image": WEB_DIGEST_IMAGE}]},
             "terminalCondition": {"state": "CONDITION_SUCCEEDED"},
         }
         self.service = {
-            "generation": "10",
+            "generation": "10", "observedGeneration": "10",
             "labels": {"native-deploy-build": (owner or {}).get("buildId", BUILD_ID)},
             "template": {"containers": [{"image": IMAGE}]},
             "terminalCondition": {"state": "CONDITION_SUCCEEDED"},
@@ -132,7 +139,12 @@ class FakeGoogleApi:
                 if isinstance(self.web, Exception):
                     raise self.web
                 return self.web
-            run_base = f"/v2/projects/{native_deploy.PROJECT}/locations/{native_deploy.REGION}"
+            region = (self.owner or {}).get("apiRegion", native_deploy.REGION)
+            run_base = f"/v2/projects/{native_deploy.PROJECT}/locations/{region}"
+            if parsed.path == "/v2/projects/salon-reserve-bg/locations/asia-east1/services/reservation-api" and region == native_deploy.API_REGION:
+                if isinstance(self.relay, Exception):
+                    raise self.relay
+                return self.relay
             if parsed.path.startswith(run_base + "/jobs/reservation-db-migrate/executions/"):
                 resource = self.execution
             else:
@@ -142,6 +154,10 @@ class FakeGoogleApi:
                 }[parsed.path]
             if isinstance(resource, Exception):
                 raise resource
+            if region == native_deploy.REGION and resource is self.job:
+                resource = json.loads(json.dumps(resource))
+                if resource.get("latestCreatedExecution", {}).get("name") == EXECUTION_NAME:
+                    resource["latestCreatedExecution"]["name"] = EXECUTION_NAME.replace("asia-northeast1", "asia-east1")
             return resource
 
         assert parsed.netloc == "storage.googleapis.com", url
@@ -236,7 +252,7 @@ class ProductionLeaseTests(unittest.TestCase):
             ))
         def image_digest(command, **kwargs):
             self.assertEqual(command, [
-                "gcloud", "artifacts", "docker", "images", "describe", WEB_IMAGE if command[5] == WEB_IMAGE else IMAGE,
+                "gcloud", "artifacts", "docker", "images", "describe", command[5] if command[5] in (WEB_IMAGE, RELAY_IMAGE) else IMAGE,
                 "--project=salon-reserve-bg", "--format=value(image_summary.digest)",
             ])
             self.assertEqual(kwargs, {"text": True, "stderr": native_deploy.subprocess.PIPE, "timeout": 60})
@@ -522,10 +538,87 @@ class ProductionLeaseTests(unittest.TestCase):
                 api = FakeGoogleApi()
                 lease = self.lease(api)
                 lease.acquire()
+                if child in ("job", "service"):
+                    native_deploy.mark_deployment_intent(api, lease.generation,
+                        "jobDeployRequested" if child == "job" else "apiDeployRequested", "0")
                 setattr(api, child, native_deploy.ApiError(404))
                 lease.release()
                 self.assertEqual(api.deletes(), [])
                 self.assertEqual(api.generation, "42")
+
+    def test_initial_missing_tokyo_resources_without_intent_allow_release(self):
+        api = FakeGoogleApi()
+        lease = self.lease(api)
+        lease.acquire()
+        api.job = native_deploy.ApiError(404)
+        api.service = native_deploy.ApiError(404)
+        lease.release()
+        self.assertEqual(len(api.deletes()), 1)
+
+    def test_new_lease_records_tokyo_region(self):
+        api = FakeGoogleApi()
+        self.lease(api).acquire()
+        self.assertEqual(api.owner["apiRegion"], "asia-northeast1")
+
+    def test_execution_baseline_must_match_owner_region(self):
+        api = FakeGoogleApi()
+        lease = self.lease(api)
+        lease.acquire()
+        with self.assertRaisesRegex(RuntimeError, "different API region"):
+            native_deploy.mark_deployment_intent(api, lease.generation, "jobExecutionRequested", EXECUTION_NAME.replace("asia-northeast1", "asia-east1"))
+        self.assertEqual(api.intents(), {})
+
+    def test_relay_intent_requires_new_owned_digest_generation(self):
+        for bad in ("generation", "image", "owner", "pending", "missing"):
+            with self.subTest(bad=bad):
+                api = FakeGoogleApi()
+                lease = self.lease(api)
+                lease.acquire()
+                native_deploy.mark_deployment_intent(api, lease.generation, "apiRelayDeployRequested", "9")
+                self.assertEqual(api.intents()["apiRelayDeployRequested"]["expectedRelayDigest"], DIGEST)
+                if bad == "generation":
+                    api.relay["generation"] = "9"
+                elif bad == "image":
+                    api.relay["template"]["containers"][0]["image"] = EXECUTION_IMAGE
+                elif bad == "owner":
+                    api.relay["labels"]["native-deploy-build"] = OTHER_BUILD_ID
+                elif bad == "pending":
+                    api.relay["reconciling"] = True
+                else:
+                    api.relay = native_deploy.ApiError(404)
+                lease.release()
+                self.assertEqual(api.deletes(), [])
+
+    def test_provisioning_owner_is_never_automatically_reclaimed(self):
+        api = FakeGoogleApi({"kind": "tenantProvisioning", "workflowRun": "12345-1", "apiRegion": native_deploy.API_REGION})
+        with self.assertRaisesRegex(RuntimeError, "Timed out"):
+            self.lease(api).acquire(wait_seconds=15)
+        self.assertEqual(api.deletes(), [])
+        self.assertFalse(any("cloudbuild.googleapis.com" in url for _, url, _ in api.calls))
+
+    def test_successful_run_resource_requires_observed_generation(self):
+        for child, phase in (("job", "jobDeployRequested"), ("service", "apiDeployRequested"), ("web", "webDeployRequested"), ("relay", "apiRelayDeployRequested")):
+            with self.subTest(child=child):
+                api = FakeGoogleApi()
+                lease = self.lease(api)
+                lease.acquire()
+                native_deploy.mark_deployment_intent(api, lease.generation, phase, "9")
+                getattr(api, child)["observedGeneration"] = "9"
+                lease.release()
+                self.assertEqual(api.deletes(), [])
+
+    def test_failed_run_resource_with_older_observed_generation_is_terminal(self):
+        for child, phase in (("job", "jobDeployRequested"), ("service", "apiDeployRequested"), ("web", "webDeployRequested"), ("relay", "apiRelayDeployRequested")):
+            with self.subTest(child=child):
+                api = FakeGoogleApi()
+                lease = self.lease(api)
+                lease.acquire()
+                native_deploy.mark_deployment_intent(api, lease.generation, phase, "9")
+                resource = getattr(api, child)
+                resource["observedGeneration"] = "9"
+                resource["terminalCondition"]["state"] = "CONDITION_FAILED"
+                lease.release()
+                self.assertIsNone(api.owner)
 
     def test_public_repository_head_check_does_not_request_credentials(self):
         api = mock.Mock()
@@ -688,6 +781,7 @@ class ProductionLeaseTests(unittest.TestCase):
                 self.assertEqual(api.deletes(), [])
                 self.assertEqual(api.generation, "42")
                 getattr(api, resource_name)["generation"] = "11"
+                getattr(api, resource_name)["observedGeneration"] = "11"
                 lease.release()
                 self.assertIsNone(api.owner)
 
@@ -814,7 +908,7 @@ class ProductionLeaseTests(unittest.TestCase):
         api = FakeGoogleApi()
         self.lease(api).acquire()
         with mock.patch.dict(native_deploy.os.environ, {
-            "PROJECT_ID": "salon-reserve-bg", "REGION": "asia-east1",
+            "PROJECT_ID": "salon-reserve-bg", "REGION": "asia-east1", "API_REGION": "asia-northeast1",
             "BUILD_ID": BUILD_ID, "COMMIT_SHA": COMMIT,
             "GIT_REPOSITORY_LINK": REPOSITORY_LINK,
         }), mock.patch.object(sys, "argv", [
@@ -831,7 +925,7 @@ class ProductionLeaseTests(unittest.TestCase):
         api = FakeGoogleApi()
         self.lease(api).acquire()
         with mock.patch.dict(native_deploy.os.environ, {
-            "PROJECT_ID": "salon-reserve-bg", "REGION": "asia-east1",
+            "PROJECT_ID": "salon-reserve-bg", "REGION": "asia-east1", "API_REGION": "asia-northeast1",
             "BUILD_ID": OTHER_BUILD_ID, "COMMIT_SHA": COMMIT,
             "GIT_REPOSITORY_LINK": REPOSITORY_LINK,
         }), mock.patch.object(sys, "argv", [
@@ -888,6 +982,7 @@ class ProductionLeaseTests(unittest.TestCase):
         lease.acquire()
         native_deploy.mark_deployment_intent(api, lease.generation, "webDeployRequested", "0")
         api.web["generation"] = "1"
+        api.web["observedGeneration"] = "1"
         lease.release()
         self.assertIsNone(api.owner)
 
@@ -943,7 +1038,7 @@ class ProductionLeaseTests(unittest.TestCase):
         lease.acquire()
         lease.release()
         self.assertIsNone(api.owner)
-        self.assertFalse(any("asia-northeast1" in url for method, url, payload in api.calls))
+        self.assertFalse(any("/services/salon-reserve-web" in url for method, url, payload in api.calls))
 
     def test_app_hosting_ids_are_deterministic_distinct_and_30_characters(self):
         actual = []
@@ -966,6 +1061,194 @@ class ProductionLeaseTests(unittest.TestCase):
             backend + "/builds/" + APP_HOSTING_IDS[OLD_BUILD_ID],
             backend + "/rollouts/" + APP_HOSTING_IDS[OLD_BUILD_ID],
         ])
+
+PROVISION_JOB = f"projects/{native_deploy.PROJECT}/locations/{native_deploy.API_REGION}/jobs/reservation-tenant-provision"
+PROVISION_EXECUTION = PROVISION_JOB + "/executions/reservation-tenant-provision-test"
+PROVISION_OPERATION = f"projects/42401528382/locations/{native_deploy.API_REGION}/operations/provision-123"
+PROVISION_VALUES = {"OWNER_EMAIL": "owner@example.test", "OWNER_DISPLAY_NAME": "Owner", "TENANT_NAME": "A, B | Co", "TENANT_SLUG": "test-salon", "SALON_NAME": "Salon", "TIMEZONE": "Asia/Tokyo"}
+
+
+class FakeProvisionApi(FakeGoogleApi):
+    def __init__(self):
+        super().__init__()
+        self.provision_job = None
+        self.active_revision = {
+            "serviceAccount": f"reservation-api-runtime@{native_deploy.PROJECT}.iam.gserviceaccount.com",
+            "containers": [{"image": EXECUTION_IMAGE, "env": [{"name": "DATABASE_URL", "valueSource": {"secretKeyRef": {"secret": "reservation-database-url-tokyo", "version": "1"}}}]}],
+        }
+        self.service.update({"observedGeneration": "10", "latestReadyRevision": "reservation-api-00001-prod", "latestCreatedRevision": "reservation-api-00001-prod", "trafficStatuses": [{"revision": "reservation-api-00001-prod", "percent": 100}]})
+        self.provision_operation = {"name": PROVISION_OPERATION, "done": True, "response": {"name": PROVISION_EXECUTION}}
+        self.provision_execution = {"completionTime": "2026-10-23T00:00:00Z", "succeededCount": 1, "template": {"containers": [{"image": EXECUTION_IMAGE}]}}
+
+    def request(self, method, url, payload=None):
+        if "run.googleapis.com" in url:
+            self.calls.append((method, url, payload))
+            if url.endswith("/services/reservation-api"):
+                return self.service
+            if url.endswith("/revisions/reservation-api-00001-prod"):
+                return self.active_revision
+            if url.endswith(PROVISION_JOB):
+                if self.provision_job is None:
+                    raise native_deploy.ApiError(404)
+                return self.provision_job
+            if url.endswith(PROVISION_JOB + ":run"):
+                assert method == "POST"
+                return {"name": PROVISION_OPERATION}
+            if url.endswith(PROVISION_OPERATION):
+                return self.provision_operation
+            if url.endswith(PROVISION_EXECUTION):
+                return self.provision_execution
+            raise AssertionError(url)
+        return super().request(method, url, payload)
+
+    def deploy(self, command, **kwargs):
+        self.provision_job = {"generation": "1", "labels": {"tenant-provision-run": "12345-1"}, "terminalCondition": {"state": "CONDITION_SUCCEEDED"}, "template": {"template": {"serviceAccount": f"reservation-provisioner@{native_deploy.PROJECT}.iam.gserviceaccount.com", "vpcAccess": {"egress": "PRIVATE_RANGES_ONLY", "networkInterfaces": [{"network": "salon-reserve-vpc", "subnetwork": "salon-reserve-run-asia-northeast1"}]}, "containers": [{"image": EXECUTION_IMAGE, "env": [{"name": "DATABASE_URL", "valueSource": {"secretKeyRef": {"secret": "reservation-database-url-tokyo", "version": "1"}}}]}]}}}
+        return native_deploy.subprocess.CompletedProcess(command, 0)
+
+
+class ProvisioningTests(unittest.TestCase):
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+        self.stack.enter_context(mock.patch.object(native_deploy.urllib.request, "urlopen", side_effect=AssertionError("No network in tests")))
+        self.stack.enter_context(mock.patch.object(native_deploy.subprocess, "check_output", side_effect=AssertionError("No token in tests")))
+        self.api = FakeProvisionApi()
+        self.command = self.stack.enter_context(mock.patch.object(native_deploy.subprocess, "run", side_effect=self.api.deploy))
+        self.clock = FakeClock()
+        self.stack.enter_context(mock.patch.object(native_deploy.time, "monotonic", self.clock.monotonic))
+
+    def run_provision(self, values=None):
+        return native_deploy.run_provisioning(self.api, "12345-1", COMMIT, values or PROVISION_VALUES, sleep=self.clock.sleep)
+
+    def test_current_serving_digest_and_fixed_tokyo_database_are_used(self):
+        captured = {}
+        def deploy(command, **kwargs):
+            file = next(arg.removeprefix("--env-vars-file=") for arg in command if arg.startswith("--env-vars-file="))
+            captured.update(json.loads(pathlib.Path(file).read_text()))
+            return self.api.deploy(command, **kwargs)
+        self.command.side_effect = deploy
+        self.run_provision()
+        command = self.command.call_args[0][0]
+        for value in ("--image=" + EXECUTION_IMAGE, "--region=asia-northeast1", "--set-secrets=DATABASE_URL=reservation-database-url-tokyo:1", "--subnet=salon-reserve-run-asia-northeast1", "--max-retries=0"):
+            self.assertIn(value, command)
+        self.assertEqual(captured["PROVISION_TENANT_NAME"], "A, B | Co")
+        self.assertEqual(len(self.api.deletes()), 1)
+        self.assertIsNone(self.api.owner)
+
+    def test_wrong_active_digest_secret_or_identity_never_starts_job(self):
+        for bad in ("image", "secret", "identity"):
+            with self.subTest(bad=bad):
+                self.api = FakeProvisionApi()
+                if bad == "image":
+                    self.api.active_revision["containers"][0]["image"] = IMAGE
+                elif bad == "secret":
+                    self.api.active_revision["containers"][0]["env"][0]["valueSource"]["secretKeyRef"]["version"] = "latest"
+                else:
+                    self.api.active_revision["serviceAccount"] = "wrong"
+                with self.assertRaises(RuntimeError):
+                    self.run_provision()
+                self.assertIsNone(self.api.owner)
+        self.command.assert_not_called()
+
+    def test_unobserved_or_split_api_traffic_never_starts_job(self):
+        for bad in ("observed", "traffic", "ready", "pending"):
+            with self.subTest(bad=bad):
+                self.api = FakeProvisionApi()
+                if bad == "observed":
+                    self.api.service["observedGeneration"] = "9"
+                elif bad == "traffic":
+                    self.api.service["trafficStatuses"][0]["percent"] = 50
+                elif bad == "ready":
+                    self.api.service["latestCreatedRevision"] = "reservation-api-00002-new"
+                else:
+                    self.api.service["reconciling"] = True
+                with self.assertRaises(RuntimeError):
+                    self.run_provision()
+        self.command.assert_not_called()
+
+    def test_ambiguous_job_deploy_retains_shared_lease(self):
+        self.command.side_effect = native_deploy.subprocess.TimeoutExpired("gcloud", 300)
+        with self.assertRaisesRegex(RuntimeError, "deployment could not be verified"):
+            self.run_provision()
+        self.assertEqual(self.api.owner["kind"], "tenantProvisioning")
+        self.assertEqual(self.api.deletes(), [])
+        self.assertFalse(any(method == "POST" and url.endswith(":run") for method, url, _ in self.api.calls))
+
+    def test_failed_execution_retains_shared_lease(self):
+        self.api.provision_operation["error"] = {"code": 13}
+        with self.assertRaisesRegex(RuntimeError, "execution failed"):
+            self.run_provision()
+        self.assertEqual(self.api.deletes(), [])
+        self.assertEqual(self.api.custom_metadata["tenantProvisioningPhase"], "jobExecutionRequested")
+
+    def test_unapproved_actual_job_identity_database_or_network_never_executes(self):
+        for bad in ("identity", "secret", "subnet", "connector"):
+            with self.subTest(bad=bad):
+                self.api = FakeProvisionApi()
+                def deploy(command, **kwargs):
+                    result = self.api.deploy(command, **kwargs)
+                    template = self.api.provision_job["template"]["template"]
+                    if bad == "identity":
+                        template["serviceAccount"] = "wrong"
+                    elif bad == "secret":
+                        template["containers"][0]["env"][0]["valueSource"]["secretKeyRef"]["version"] = "latest"
+                    elif bad == "subnet":
+                        template["vpcAccess"]["networkInterfaces"][0]["subnetwork"] = "salon-reserve-run-asia-east1"
+                    else:
+                        template["vpcAccess"]["connector"] = "old-connector"
+                    return result
+                self.command.side_effect = deploy
+                with self.assertRaises(RuntimeError):
+                    self.run_provision()
+                self.assertFalse(any(method == "POST" and url.endswith(":run") for method, url, _ in self.api.calls))
+                self.assertEqual(self.api.deletes(), [])
+
+    def test_running_or_wrong_execution_image_retains_lease(self):
+        for bad in ("completion", "image", "failed", "running"):
+            with self.subTest(bad=bad):
+                self.api = FakeProvisionApi()
+                self.command.side_effect = self.api.deploy
+                if bad == "completion":
+                    self.api.provision_execution.pop("completionTime")
+                elif bad == "image":
+                    self.api.provision_execution["template"]["containers"][0]["image"] = WEB_DIGEST_IMAGE
+                elif bad == "failed":
+                    self.api.provision_execution["failedCount"] = 1
+                else:
+                    self.api.provision_execution["runningCount"] = 1
+                with self.assertRaises(RuntimeError):
+                    self.run_provision()
+                self.assertEqual(self.api.deletes(), [])
+
+    def test_existing_running_provision_job_keeps_fence(self):
+        self.api.provision_job = {"generation": "3", "latestCreatedExecution": {"completionStatus": "EXECUTION_RUNNING"}}
+        with self.assertRaisesRegex(RuntimeError, "already running"):
+            self.run_provision()
+        self.command.assert_not_called()
+        self.assertEqual(self.api.deletes(), [])
+
+    def test_lost_fence_prevents_job_deploy(self):
+        self.api.before_patch = self.api.replace_with_live_owner
+        with self.assertRaises(native_deploy.ApiError):
+            self.run_provision()
+        self.command.assert_not_called()
+        self.assertEqual(self.api.owner["buildId"], OTHER_BUILD_ID)
+
+    def test_validation_failure_does_not_acquire_lease(self):
+        for key, value in (("OWNER_EMAIL", "bad"), ("TENANT_SLUG", "../other"), ("TIMEZONE", "Unknown/Timezone"), ("TENANT_NAME", "name\nsecond")):
+            with self.subTest(key=key), self.assertRaises(RuntimeError):
+                self.run_provision(dict(PROVISION_VALUES, **{key: value}))
+        self.assertEqual(self.api.calls, [])
+        self.command.assert_not_called()
+
+    def test_release_does_not_delete_replaced_owner(self):
+        lease = native_deploy.ProvisioningLease(self.api, "12345-1", COMMIT, sleep=self.clock.sleep)
+        lease.acquire()
+        self.api.before_delete = self.api.replace_with_live_owner
+        with self.assertRaisesRegex(RuntimeError, "changed before release"):
+            lease.release()
+        self.assertEqual(self.api.owner["buildId"], OTHER_BUILD_ID)
 
 
 if __name__ == "__main__":

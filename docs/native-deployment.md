@@ -26,7 +26,9 @@ The separate **Provision tenant** workflow remains manual and is never triggered
 | Web limits | 1 CPU, 512 MiB, min 0 / max 1 instances |
 | Previous URL | `https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app` |
 | App Hosting redirect | Backend `salon-reserve-web`, region `asia-east1`; existing source root `apps/web` retained |
-| API | Cloud Run `reservation-api`, region `asia-east1` |
+| API | Cloud Run `reservation-api`, region `asia-northeast1` |
+| Legacy API relay | Cloud Run `reservation-api`, region `asia-east1`, no database access |
+| Database | `salon-reserve-db-tokyo`, private IP, `reservation-database-url-tokyo:1` |
 | API/job runtime identity | `reservation-api-runtime@salon-reserve-bg.iam.gserviceaccount.com` |
 | Schema job | `reservation-db-migrate`, Direct VPC egress |
 | Container registry | `asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy` |
@@ -57,7 +59,7 @@ App Hosting's automatic rollout policy stays **disabled**. Cloud Build performs 
 
 1. Verify the approved project/repository, App Hosting root and policy, private Cloud SQL network, and photo-storage public-access prevention.
 2. Under Node.js 22.23.4, install dependencies, audit all three dependency lock files, generate Prisma, run type checks and application tests, and build the API and web app.
-3. Build and push `reservation-api:${COMMIT_SHA}-${BUILD_ID}`, `reservation-web:${COMMIT_SHA}-${BUILD_ID}`, and `reservation-redirect:${COMMIT_SHA}-${BUILD_ID}` in `asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy`. Smoke-test the web container and test redirect behavior before deployment. Each Cloud Build has unique tags, including repeated builds of one commit.
+3. Build and push `reservation-api:${COMMIT_SHA}-${BUILD_ID}`, `reservation-web:${COMMIT_SHA}-${BUILD_ID}`, `reservation-redirect:${COMMIT_SHA}-${BUILD_ID}`, and `reservation-api-relay:${COMMIT_SHA}-${BUILD_ID}` in `asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy`. Smoke-test the web container and test redirect behavior before deployment. Each Cloud Build has unique tags, including repeated builds of one commit.
 4. Run deployment tests, acquire the production lease, and verify current `main`. Skip a triggering commit that has become obsolete before deployment starts. Resolve immutable web and redirect image digests and validate the App Hosting redirect request before modifying production services.
 5. Record intent, update the private-VPC schema job, record execution intent, and wait for the schema operation.
 6. Record intent, deploy the same image to the API with `native-deploy-build=BUILD_ID`, and verify VPC configuration and `/ready`.
@@ -69,7 +71,7 @@ App Hosting build and rollout IDs are both `native-` followed by the first 23 he
 
 The web and redirect tags must identify the triggering SHA and Cloud Build UUID in the approved registry. The web digest must match the ready Tokyo Cloud Run revision receiving traffic. The redirect digest must match the App Hosting container source before rollout and again after the build reaches `READY`. The backend's repository/root and Developer Connect clone URI are checked independently. App Hosting container-source builds do not populate Git source metadata; retain the Cloud Build source SHA, both image digests, Tokyo revision and App Hosting rollout ID together as release evidence.
 
-The job and API keep their existing `asia-east1` region, runtime identity, private network, Secret Manager database reference, limits, and startup checks. Build workers and the Tokyo web service do not connect directly to the production database. The web service retains the Firebase runtime identity. The API CORS allowlist includes both frontend origins during the transition.
+The job and API use `API_REGION=asia-northeast1`, the Tokyo subnet, and the pinned Tokyo database secret. `REGION=asia-east1` remains the build/registry/App Hosting region; never globally replace it. The existing API runtime identity, limits, and startup checks remain. The legacy API relay has a separate identity with no DB secret or network attachment, and its deployment intent records generation, build owner, and digest under the same lease. Older lease owners without an API region retain the historical east1 interpretation. Build workers and the Tokyo web service do not connect directly to the production database. The web service retains the Firebase runtime identity. The API CORS allowlist includes both frontend origins during the transition.
 
 ### Build environments and budgets
 
@@ -163,3 +165,9 @@ python3 tests/native-deploy-commands.test.py
 ```
 
 These checks do not substitute for production verification. Confirm the exact commit, ready Tokyo revision and image digest, 100% traffic, public login/static assets, origin rejection, and App Hosting redirect path/query behavior after deployment. Check a fragment-bearing invitation link in a browser without submitting it. Confirm Firebase authorized domains and unchanged account-recovery callback; see [tenancy.md](tenancy.md#frontend-hostname-changes). Measure old and new endpoints under the same conditions before reporting latency figures.
+
+## API and database region migration
+
+The first Tokyo deployment may legitimately have no prior API service or schema job; a confirmed 404 becomes baseline generation zero. Once mutation intent is recorded, a missing or mismatched resource remains ambiguous and retains the lease. Follow [tokyo-database-migration.md](tokyo-database-migration.md) for the separate data cutover; a successful schema job or `/ready` response does not prove data equality or that the target permits writes.
+
+Run isolated PostgreSQL 16 integration tests with `cloudbuild.integration.yaml` before the data cutover. The runner exposes no database port, supplies every integration-test URL with a disposable localhost database, and serializes files that share fixture names. It also verifies that the migration inspector detects changed bytes and sequence state.

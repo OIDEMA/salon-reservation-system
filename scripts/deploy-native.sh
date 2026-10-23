@@ -35,11 +35,14 @@ expected = {
     "PROJECT_NUMBER": "42401528382",
     "REGION": "asia-east1",
     "API_SERVICE": "reservation-api",
+    "API_REGION": "asia-northeast1",
+    "DATABASE_URL_SECRET": "reservation-database-url-tokyo:1",
+    "API_RELAY_SERVICE_ACCOUNT": "reservation-api-relay@salon-reserve-bg.iam.gserviceaccount.com",
     "CHART_PHOTOS_BUCKET": "salon-reserve-bg-chart-photos",
     "API_RUNTIME_SERVICE_ACCOUNT": "reservation-api-runtime@salon-reserve-bg.iam.gserviceaccount.com",
-    "DB_INSTANCE": "salon-reserve-db",
+    "DB_INSTANCE": "salon-reserve-db-tokyo",
     "VPC_NETWORK": "salon-reserve-vpc",
-    "VPC_SUBNET": "salon-reserve-run-asia-east1",
+    "VPC_SUBNET": "salon-reserve-run-asia-northeast1",
     "APP_HOSTING_BACKEND": "salon-reserve-web",
     "WEB_REGION": "asia-northeast1",
     "WEB_SERVICE": "salon-reserve-web",
@@ -64,7 +67,9 @@ if not re.fullmatch(
 
 project = expected["PROJECT_ID"]
 region = expected["REGION"]
+api_region = expected["API_REGION"]
 image = f"{region}-docker.pkg.dev/{project}/cloud-run-source-deploy/reservation-api:{commit}-{build_id}"
+api_image_repository = f"{region}-docker.pkg.dev/{project}/cloud-run-source-deploy/reservation-api"
 if required("API_IMAGE") != image:
     raise SystemExit("API_IMAGE must identify the triggering commit and build in the approved registry.")
 web_image_repository = f"{region}-docker.pkg.dev/{project}/cloud-run-source-deploy/reservation-web"
@@ -75,6 +80,11 @@ redirect_image_repository = f"{region}-docker.pkg.dev/{project}/cloud-run-source
 redirect_image = f"{redirect_image_repository}:{commit}-{build_id}"
 if required("REDIRECT_IMAGE") != redirect_image:
     raise SystemExit("REDIRECT_IMAGE must identify the triggering commit and build in the approved registry.")
+api_url = "https://reservation-api-42401528382.asia-northeast1.run.app"
+relay_image_repository = f"{region}-docker.pkg.dev/{project}/cloud-run-source-deploy/reservation-api-relay"
+relay_image = f"{relay_image_repository}:{commit}-{build_id}"
+if required("API_RELAY_IMAGE") != relay_image:
+    raise SystemExit("API_RELAY_IMAGE must identify the triggering commit and build in the approved registry.")
 frontend_url = "https://salon-reserve-web-42401528382.asia-northeast1.run.app"
 legacy_url = "https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app"
 if os.environ.get("DEPLOY_PREFLIGHT_ONLY") != "1" and not re.fullmatch(r"[1-9][0-9]*", os.environ.get("NATIVE_DEPLOY_LOCK_GENERATION", "")):
@@ -94,7 +104,7 @@ approved_env = {
 }
 if not isinstance(web_env, dict) or set(web_env) != approved_env or any(
     not isinstance(value, str) or not value or "|" in value for value in web_env.values()
-) or web_env["APP_PUBLIC_ORIGIN"] != frontend_url or web_env["NEXT_PUBLIC_API_BASE_URL"] != "https://reservation-api-42401528382.asia-east1.run.app" or web_env["NEXT_PUBLIC_FIREBASE_PROJECT_ID"] != project:
+) or web_env["APP_PUBLIC_ORIGIN"] != frontend_url or web_env["NEXT_PUBLIC_API_BASE_URL"] != api_url or web_env["NEXT_PUBLIC_FIREBASE_PROJECT_ID"] != project:
     raise SystemExit("Cloud Run web environment must contain only approved public settings and origins.")
 
 
@@ -215,6 +225,8 @@ if linked_repository.get("cloneUri") not in (
 
 sql = gcloud_json("sql", "instances", "describe", expected["DB_INSTANCE"], f"--project={project}")
 ip_config = sql.get("settings", {}).get("ipConfiguration", {})
+if sql.get("region") != api_region or sql.get("databaseVersion") != "POSTGRES_16" or sql.get("state") != "RUNNABLE" or sql.get("instanceType") != "CLOUD_SQL_INSTANCE" or sql.get("masterInstanceName"):
+    raise SystemExit("The production database must be a runnable PostgreSQL 16 primary in the API region.")
 if ip_config.get("ipv4Enabled") is not False or ip_config.get("privateNetwork") != f"projects/{project}/global/networks/{expected['VPC_NETWORK']}":
     raise SystemExit("The database must use only the approved private network.")
 bucket = gcloud_json("storage", "buckets", "describe", f"gs://{expected['CHART_PHOTOS_BUCKET']}", f"--project={project}")
@@ -241,6 +253,8 @@ def resolve_image(tag, repository):
 
 web_image_digest = resolve_image(web_image, web_image_repository)
 redirect_image_digest = resolve_image(redirect_image, redirect_image_repository)
+relay_image_digest = resolve_image(relay_image, relay_image_repository)
+api_image_digest = resolve_image(image, api_image_repository)
 app_build_id = "native-" + hashlib.sha256(build_id.encode("utf-8")).hexdigest()[:23]
 container_build_payload = {"source": {"container": {"image": redirect_image_digest}}, "config": redirect_config}
 # Validate the legacy-host redirect before any production mutation.
@@ -258,7 +272,7 @@ def mark_intent(phase, baseline=None):
     subprocess.run(command, check=True)
 
 
-run_api = f"https://run.googleapis.com/v2/projects/{project}/locations/{region}"
+run_api = f"https://run.googleapis.com/v2/projects/{project}/locations/{api_region}"
 
 
 def resource_generation(resource):
@@ -268,15 +282,23 @@ def resource_generation(resource):
     return generation
 
 
-job_before_deploy = api_request("GET", f"{run_api}/jobs/reservation-db-migrate")
-mark_intent("jobDeployRequested", resource_generation(job_before_deploy))
+def generation_before_create(url):
+    try:
+        return resource_generation(api_request("GET", url))
+    except DeploymentApiError as error:
+        if error.status != 404:
+            raise
+        return "0"
+
+
+mark_intent("jobDeployRequested", generation_before_create(f"{run_api}/jobs/reservation-db-migrate"))
 gcloud(
     "run", "jobs", "deploy", "reservation-db-migrate",
-    f"--project={project}", f"--region={region}", f"--image={image}",
+    f"--project={project}", f"--region={api_region}", f"--image={image}",
     f"--service-account={expected['API_RUNTIME_SERVICE_ACCOUNT']}",
     f"--labels=native-deploy-build={build_id}",
     f"--network={expected['VPC_NETWORK']}", f"--subnet={expected['VPC_SUBNET']}",
-    "--vpc-egress=private-ranges-only", "--set-secrets=DATABASE_URL=reservation-database-url:latest",
+    "--vpc-egress=private-ranges-only", f"--set-secrets=DATABASE_URL={expected['DATABASE_URL_SECRET']}",
     "--set-env-vars=DB_CONNECTIVITY=private-ip", "--command=npm", "--args=run,prisma:deploy",
     "--tasks=1", "--max-retries=0", "--task-timeout=10m", "--cpu=1", "--memory=512Mi", "--quiet",
 )
@@ -287,22 +309,23 @@ if not isinstance(execution_baseline, str):
 if execution_baseline and not (
     re.fullmatch(r"reservation-db-migrate-[a-z0-9-]+", execution_baseline)
     or re.fullmatch(
-        r"projects/(?:salon-reserve-bg|42401528382)/locations/asia-east1/jobs/reservation-db-migrate/executions/[^/]+",
+        rf"projects/(?:salon-reserve-bg|42401528382)/locations/{api_region}/jobs/reservation-db-migrate/executions/[^/]+",
         execution_baseline,
     )
 ):
     raise RuntimeError("Unexpected Cloud Run migration execution resource.")
 mark_intent("jobExecutionRequested", execution_baseline)
-gcloud("run", "jobs", "execute", "reservation-db-migrate", f"--project={project}", f"--region={region}", "--wait")
+gcloud("run", "jobs", "execute", "reservation-db-migrate", f"--project={project}", f"--region={api_region}", "--wait")
 
-api_before_deploy = api_request("GET", f"{run_api}/services/{expected['API_SERVICE']}")
-mark_intent("apiDeployRequested", resource_generation(api_before_deploy))
+api_resource = f"projects/{project}/locations/{api_region}/services/{expected['API_SERVICE']}"
+api_baseline = generation_before_create("https://run.googleapis.com/v2/" + api_resource)
+mark_intent("apiDeployRequested", api_baseline)
 gcloud(
-    "run", "deploy", expected["API_SERVICE"], f"--project={project}", f"--region={region}",
+    "run", "deploy", expected["API_SERVICE"], f"--project={project}", f"--region={api_region}",
     "--platform=managed", f"--image={image}", f"--service-account={expected['API_RUNTIME_SERVICE_ACCOUNT']}",
     f"--labels=native-deploy-build={build_id}",
     "--allow-unauthenticated", f"--network={expected['VPC_NETWORK']}", f"--subnet={expected['VPC_SUBNET']}",
-    "--vpc-egress=private-ranges-only", "--set-secrets=DATABASE_URL=reservation-database-url:latest",
+    "--vpc-egress=private-ranges-only", f"--set-secrets=DATABASE_URL={expected['DATABASE_URL_SECRET']}",
     f"--set-env-vars=^|^NODE_ENV=production|DB_CONNECTIVITY=private-ip|CHART_PHOTOS_BUCKET={expected['CHART_PHOTOS_BUCKET']}|CORS_ORIGINS={legacy_url},{frontend_url}|MEMBER_BOOKING_TENANTS=mens-gentle:gentle;missmrs-takamatsu:missmrs",
     "--cpu=1", "--memory=512Mi", "--min-instances=0", "--max-instances=1", "--concurrency=40",
     "--timeout=60", "--port=8080",
@@ -320,8 +343,52 @@ def verify_private_run(resource):
         raise RuntimeError("Cloud Run must use the approved VPC network and subnet.")
 
 
-verify_private_run(gcloud_json("run", "services", "describe", expected["API_SERVICE"], f"--project={project}", f"--region={region}"))
-verify_private_run(gcloud_json("run", "jobs", "describe", "reservation-db-migrate", f"--project={project}", f"--region={region}"))
+verify_private_run(gcloud_json("run", "services", "describe", expected["API_SERVICE"], f"--project={project}", f"--region={api_region}"))
+verify_private_run(gcloud_json("run", "jobs", "describe", "reservation-db-migrate", f"--project={project}", f"--region={api_region}"))
+
+
+def api_revision_name(name):
+    if not isinstance(name, str):
+        return ""
+    if re.fullmatch(r"reservation-api-[a-z0-9-]+", name):
+        return api_resource + "/revisions/" + name
+    canonical = resource_name(name)
+    return canonical if re.fullmatch(re.escape(api_resource) + r"/revisions/reservation-api-[a-z0-9-]+", canonical) else ""
+
+
+def verify_api_identity_and_database(template):
+    if template.get("serviceAccount") != expected["API_RUNTIME_SERVICE_ACCOUNT"]:
+        raise RuntimeError("Tokyo API must use the approved runtime identity.")
+    containers = template.get("containers", [])
+    if len(containers) != 1:
+        raise RuntimeError("Tokyo API must have exactly one approved container.")
+    database = [item for item in containers[0].get("env", []) if item.get("name") == "DATABASE_URL"]
+    secret = database[0].get("valueSource", {}).get("secretKeyRef", {}) if len(database) == 1 else {}
+    if secret.get("secret") not in ("reservation-database-url-tokyo", f"projects/{project}/secrets/reservation-database-url-tokyo", f"projects/{expected['PROJECT_NUMBER']}/secrets/reservation-database-url-tokyo") or secret.get("version") != "1" or "value" in database[0]:
+        raise RuntimeError("Tokyo API must use the approved pinned Tokyo database secret.")
+
+
+def verify_api_revision():
+    service = api_request("GET", "https://run.googleapis.com/v2/" + api_resource)
+    template = service.get("template", {})
+    containers = template.get("containers", [])
+    if int(resource_generation(service)) <= int(api_baseline) or service.get("labels", {}).get("native-deploy-build") != build_id or len(containers) != 1 or containers[0].get("image") != image:
+        raise RuntimeError("Tokyo API must use this build's exact image and generation.")
+    if service.get("reconciling", False) is not False or service.get("terminalCondition", {}).get("state") != "CONDITION_SUCCEEDED" or str(service.get("observedGeneration", "")) != str(service.get("generation", "")):
+        raise RuntimeError("Tokyo API must finish and observe the deployed generation.")
+    ready = api_revision_name(service.get("latestReadyRevision"))
+    traffic = service.get("trafficStatuses", [])
+    if not ready or ready != api_revision_name(service.get("latestCreatedRevision")) or sum(item.get("percent", 0) for item in traffic) != 100 or sum(item.get("percent", 0) for item in traffic if api_revision_name(item.get("revision")) == ready) != 100:
+        raise RuntimeError("Tokyo API must route all traffic to its latest ready revision.")
+    verify_api_identity_and_database(template)
+    revision = api_request("GET", "https://run.googleapis.com/v2/" + ready)
+    verify_api_identity_and_database(revision)
+    if revision["containers"][0].get("image") != api_image_digest:
+        raise RuntimeError("Tokyo API active revision must use the verified API digest.")
+    return ready
+
+
+api_ready_revision = verify_api_revision()
 
 
 def read_url(url):
@@ -335,6 +402,49 @@ def read_url(url):
             time.sleep(5)
 
 
+read_url(api_url + "/ready")
+
+
+legacy_api_resource = f"projects/{project}/locations/{region}/services/{expected['API_SERVICE']}"
+relay_baseline = generation_before_create("https://run.googleapis.com/v2/" + legacy_api_resource)
+mark_intent("apiRelayDeployRequested", relay_baseline)
+gcloud(
+    "run", "deploy", expected["API_SERVICE"], f"--project={project}", f"--region={region}",
+    "--platform=managed", f"--image={relay_image_digest}", f"--service-account={expected['API_RELAY_SERVICE_ACCOUNT']}",
+    f"--labels=native-deploy-build={build_id}", "--allow-unauthenticated", "--ingress=all",
+    "--clear-secrets", "--clear-cloudsql-instances", "--clear-network", "--clear-vpc-connector",
+    f"--set-env-vars=UPSTREAM_ORIGIN={api_url},MAINTENANCE_MODE=false",
+    "--cpu=1", "--memory=512Mi", "--min-instances=0", "--max-instances=1", "--concurrency=40",
+    "--timeout=60", "--port=8080",
+    "--startup-probe=httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=5,failureThreshold=24",
+    "--quiet",
+)
+relay = api_request("GET", "https://run.googleapis.com/v2/" + legacy_api_resource)
+relay_template = relay.get("template", {})
+relay_containers = relay_template.get("containers", [])
+if int(resource_generation(relay)) <= int(relay_baseline) or relay.get("labels", {}).get("native-deploy-build") != build_id or len(relay_containers) != 1 or relay_containers[0].get("image") != relay_image_digest:
+    raise RuntimeError("The legacy API must use this build's relay image and generation.")
+relay_env = relay_containers[0].get("env", [])
+if relay_template.get("serviceAccount") != expected["API_RELAY_SERVICE_ACCOUNT"] or relay_template.get("vpcAccess") or relay_template.get("volumes") or any("valueSource" in item for item in relay_env) or {item.get("name"): item.get("value") for item in relay_env} != {"UPSTREAM_ORIGIN": api_url, "MAINTENANCE_MODE": "false"}:
+    raise RuntimeError("The legacy API relay must have no database secrets, volumes, or VPC attachment.")
+if relay.get("reconciling", False) is not False or relay.get("terminalCondition", {}).get("state") != "CONDITION_SUCCEEDED":
+    raise RuntimeError("The legacy API relay must complete its rollout successfully.")
+def relay_revision_name(name):
+    if not isinstance(name, str):
+        return ""
+    if re.fullmatch(r"reservation-api-[a-z0-9-]+", name):
+        return legacy_api_resource + "/revisions/" + name
+    canonical = resource_name(name)
+    return canonical if re.fullmatch(re.escape(legacy_api_resource) + r"/revisions/reservation-api-[a-z0-9-]+", canonical) else ""
+
+
+relay_ready = relay_revision_name(relay.get("latestReadyRevision"))
+relay_traffic = relay.get("trafficStatuses", [])
+if str(relay.get("observedGeneration", "")) != str(relay.get("generation", "")) or not relay_ready or relay_ready != relay_revision_name(relay.get("latestCreatedRevision")) or sum(item.get("percent", 0) for item in relay_traffic) != 100 or sum(item.get("percent", 0) for item in relay_traffic if relay_revision_name(item.get("revision")) == relay_ready) != 100:
+    raise RuntimeError("The legacy API must send all traffic to the observed relay revision.")
+relay_revision = api_request("GET", "https://run.googleapis.com/v2/" + relay_ready)
+if len(relay_revision.get("containers", [])) != 1 or relay_revision["containers"][0].get("image") != relay_image_digest:
+    raise RuntimeError("The legacy API active revision must use the verified relay digest.")
 read_url(f"https://reservation-api-{expected['PROJECT_NUMBER']}.{region}.run.app/ready")
 
 
@@ -506,5 +616,6 @@ for path in ("/login", "/mens-gentle/reservations?view=week"):
 
 print(f"Native production deployment succeeded for {commit} ({build_id}).")
 print(f"Tokyo Cloud Run ready revision: {web_ready_revision}")
+print(f"Tokyo API ready revision: {api_ready_revision}")
 print(f"App Hosting build logs: {built.get('buildLogsUri', '')}")
 PY

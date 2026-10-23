@@ -1,0 +1,14 @@
+# Runs PostgreSQL16 integration tests in an isolated container. This build has no
+# secrets, SQL instance attachments, deployment steps, or published images.
+steps:
+  - id: postgres-16-integration
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - scripts/test-postgres-integration.sh
+    env:
+      - BUILD_ID=$BUILD_ID
+serviceAccount: projects/$PROJECT_ID/serviceAccounts/github-deploy@salon-reserve-bg.iam.gserviceaccount.com
+options:
+  logging: CLOUD_LOGGING_ONLY
+timeout: 1800s

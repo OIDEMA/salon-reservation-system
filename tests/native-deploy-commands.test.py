@@ -18,10 +18,17 @@ LINK = 'projects/salon-reserve-bg/locations/asia-east1/connections/firebase/gitR
 BACKEND = 'projects/salon-reserve-bg/locations/asia-east1/backends/salon-reserve-web'
 APP_ID = 'native-666ff6ccaa5b3c07feaa3a9'
 BUILD_PATH = f'{BACKEND}/builds/{APP_ID}'
+API_REPOSITORY = 'asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-api'
+API_DIGEST = f'{API_REPOSITORY}@sha256:{"f" * 64}'
+API_RESOURCE = 'projects/salon-reserve-bg/locations/asia-northeast1/services/reservation-api'
+API_REVISION = API_RESOURCE + '/revisions/reservation-api-00021-tokyo'
+DB_ENV = {'name': 'DATABASE_URL', 'valueSource': {'secretKeyRef': {'secret': 'reservation-database-url-tokyo', 'version': '1'}}}
 WEB_REPOSITORY = 'asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-web'
 WEB_DIGEST = f'{WEB_REPOSITORY}@sha256:{"c" * 64}'
 REDIRECT_REPOSITORY = WEB_REPOSITORY.replace('/reservation-web', '/reservation-redirect')
 REDIRECT_DIGEST = f'{REDIRECT_REPOSITORY}@sha256:{"d" * 64}'
+RELAY_REPOSITORY = WEB_REPOSITORY.replace('/reservation-web', '/reservation-api-relay')
+RELAY_DIGEST = f'{RELAY_REPOSITORY}@sha256:{"e" * 64}'
 WEB_URL = 'https://salon-reserve-web-42401528382.asia-northeast1.run.app'
 LEGACY_URL = 'https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app'
 WEB_RESOURCE = 'projects/salon-reserve-bg/locations/asia-northeast1/services/salon-reserve-web'
@@ -31,15 +38,16 @@ REDIRECT_CONFIG = json.loads((ROOT / 'scripts/apphosting-redirect-config.json').
 WEB_ENV = json.loads((ROOT / 'scripts/web-runtime-env.json').read_text())
 ENV = {
     'PROJECT_ID': 'salon-reserve-bg', 'PROJECT_NUMBER': '42401528382', 'REGION': 'asia-east1',
-    'API_SERVICE': 'reservation-api', 'CHART_PHOTOS_BUCKET': 'salon-reserve-bg-chart-photos',
+    'API_SERVICE': 'reservation-api', 'API_REGION': 'asia-northeast1', 'DATABASE_URL_SECRET': 'reservation-database-url-tokyo:1', 'API_RELAY_SERVICE_ACCOUNT': 'reservation-api-relay@salon-reserve-bg.iam.gserviceaccount.com', 'CHART_PHOTOS_BUCKET': 'salon-reserve-bg-chart-photos',
     'API_RUNTIME_SERVICE_ACCOUNT': 'reservation-api-runtime@salon-reserve-bg.iam.gserviceaccount.com',
-    'DB_INSTANCE': 'salon-reserve-db', 'VPC_NETWORK': 'salon-reserve-vpc',
-    'VPC_SUBNET': 'salon-reserve-run-asia-east1', 'APP_HOSTING_BACKEND': 'salon-reserve-web',
+    'DB_INSTANCE': 'salon-reserve-db-tokyo', 'VPC_NETWORK': 'salon-reserve-vpc',
+    'VPC_SUBNET': 'salon-reserve-run-asia-northeast1', 'APP_HOSTING_BACKEND': 'salon-reserve-web',
     'GIT_REPOSITORY_LINK': LINK, 'COMMIT_SHA': SHA, 'BUILD_ID': BUILD,
     'NATIVE_DEPLOY_LOCK_GENERATION': '123456789',
     'API_IMAGE': f'asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-api:{SHA}-{BUILD}',
     'WEB_IMAGE': f'{WEB_REPOSITORY}:{SHA}-{BUILD}',
     'REDIRECT_IMAGE': f'{REDIRECT_REPOSITORY}:{SHA}-{BUILD}',
+    'API_RELAY_IMAGE': f'{RELAY_REPOSITORY}:{SHA}-{BUILD}',
     'WEB_REGION': 'asia-northeast1', 'WEB_SERVICE': 'salon-reserve-web',
     'WEB_RUNTIME_SERVICE_ACCOUNT': 'firebase-app-hosting-compute@salon-reserve-bg.iam.gserviceaccount.com',
 }
@@ -61,6 +69,9 @@ class NativeDeploymentTests(unittest.TestCase):
         self.backend_reads = 0
         self.link_reads = 0
         self.web_deployed = False
+        self.api_deployed = False
+        self.relay_deployed = False
+        self.job_deployed = False
         env = dict(ENV, **(changes or {}))
         active_app_id = 'native-' + hashlib.sha256(env['BUILD_ID'].encode('utf-8')).hexdigest()[:23]
         active_build_path = f'{BACKEND}/builds/{active_app_id}'
@@ -68,6 +79,13 @@ class NativeDeploymentTests(unittest.TestCase):
             self.commands.append(command)
             self.events.append(('command', command))
             output = ''
+            if command[1:4] == ['run', 'jobs', 'deploy']:
+                self.job_deployed = True
+            if command[1:4] == ['run', 'deploy', 'reservation-api']:
+                if '--region=asia-east1' in command:
+                    self.relay_deployed = True
+                else:
+                    self.api_deployed = True
             if command[1:4] == ['run', 'deploy', 'salon-reserve-web']:
                 self.web_deployed = True
             if command[:3] == ['python3', 'scripts/native-deploy.py', 'mark-intent']:
@@ -77,14 +95,23 @@ class NativeDeploymentTests(unittest.TestCase):
             if command[1:3] == ['auth', 'print-access-token']:
                 output = 'test-token'
             elif command[1:4] == ['sql', 'instances', 'describe']:
-                output = json.dumps({'settings': {'ipConfiguration': {
+                sql = {'region': 'asia-east1' if bad == 'db-region' else 'asia-northeast1',
+                    'databaseVersion': 'POSTGRES_15' if bad == 'db-version' else 'POSTGRES_16',
+                    'state': 'MAINTENANCE' if bad == 'db-state' else 'RUNNABLE',
+                    'instanceType': 'READ_REPLICA_INSTANCE' if bad == 'db-type' else 'CLOUD_SQL_INSTANCE',
+                    'settings': {'ipConfiguration': {
                     'ipv4Enabled': bad == 'public-db',
                     'privateNetwork': 'projects/salon-reserve-bg/global/networks/salon-reserve-vpc',
-                }}})
+                }}}
+                if bad == 'db-replica-parent':
+                    sql['masterInstanceName'] = 'salon-reserve-db'
+                if bad in ('db-missing-region', 'db-missing-version', 'db-missing-state', 'db-missing-type'):
+                    sql.pop({'db-missing-region': 'region', 'db-missing-version': 'databaseVersion', 'db-missing-state': 'state', 'db-missing-type': 'instanceType'}[bad])
+                output = json.dumps(sql)
             elif command[1:4] == ['storage', 'buckets', 'describe']:
                 output = json.dumps({'uniform_bucket_level_access': True, 'public_access_prevention': 'inherited' if bad == 'public-storage' else 'enforced'})
             elif command[1:5] == ['artifacts', 'docker', 'images', 'describe']:
-                full_digest = REDIRECT_DIGEST if '/reservation-redirect:' in command[5] else WEB_DIGEST
+                full_digest = API_DIGEST if '/reservation-api:' in command[5] else RELAY_DIGEST if '/reservation-api-relay:' in command[5] else REDIRECT_DIGEST if '/reservation-redirect:' in command[5] else WEB_DIGEST
                 summary = {'digest': full_digest.split('@')[1], 'fully_qualified_digest': full_digest}
                 if bad == 'registry-missing-digest':
                     summary.pop('digest')
@@ -95,7 +122,7 @@ class NativeDeploymentTests(unittest.TestCase):
                 output = json.dumps({'image_summary': summary})
             elif command[1:4] in (['run', 'jobs', 'describe'], ['run', 'services', 'describe']):
                 output = json.dumps({'spec': {'template': {'metadata': {'annotations': {
-                    'run.googleapis.com/network-interfaces': json.dumps([{'network': 'salon-reserve-vpc', 'subnetwork': 'salon-reserve-run-asia-east1'}]),
+                    'run.googleapis.com/network-interfaces': json.dumps([{'network': 'salon-reserve-vpc', 'subnetwork': 'salon-reserve-run-asia-northeast1'}]),
                 }}}}})
             return SimpleNamespace(stdout=output)
 
@@ -124,9 +151,11 @@ class NativeDeploymentTests(unittest.TestCase):
                 policy = {} if bad == 'rollout-policy-missing' else {'disabled': False if bad == 'auto-rollout' else ('true' if bad == 'rollout-policy-string' else True)}
                 return Response({'rolloutPolicy': policy})
             if url.endswith('/jobs/reservation-db-migrate'):
-                latest = None if bad == 'no-execution' else {'name': f'projects/salon-reserve-bg/locations/asia-east1/jobs/reservation-db-migrate/executions/previous'}
+                if bad == 'new-job' and not self.job_deployed:
+                    raise urllib.error.HTTPError(url, 404, 'missing', {}, Response({}))
+                latest = None if bad == 'no-execution' else {'name': f'projects/salon-reserve-bg/locations/asia-northeast1/jobs/reservation-db-migrate/executions/previous'}
                 if bad == 'wrong-execution':
-                    latest = {'name': 'projects/other/locations/asia-east1/jobs/reservation-db-migrate/executions/previous'}
+                    latest = {'name': 'projects/other/locations/asia-northeast1/jobs/reservation-db-migrate/executions/previous'}
                 if bad == 'short-execution':
                     latest = {'name': 'reservation-db-migrate-8z99g'}
                 return Response({
@@ -134,7 +163,20 @@ class NativeDeploymentTests(unittest.TestCase):
                     'latestCreatedExecution': latest,
                 })
             if url.endswith('/services/reservation-api'):
-                return Response({'generation': '20'})
+                if '/locations/asia-east1/' in url:
+                    return Response({'generation': '41' if self.relay_deployed else '40', 'observedGeneration': '40' if bad == 'relay-unobserved' else '41', 'labels': {'native-deploy-build': env['BUILD_ID']}, 'terminalCondition': {'state': 'CONDITION_SUCCEEDED'}, 'latestReadyRevision': 'reservation-api-00042-relay', 'latestCreatedRevision': 'reservation-api-00042-relay', 'trafficStatuses': [{'revision': 'reservation-api-00042-relay', 'percent': 50 if bad == 'relay-split' else 100}], 'template': {'serviceAccount': ENV['API_RELAY_SERVICE_ACCOUNT'], 'containers': [{'image': RELAY_DIGEST, 'env': [{'name': 'UPSTREAM_ORIGIN', 'value': 'https://reservation-api-42401528382.asia-northeast1.run.app'}, {'name': 'MAINTENANCE_MODE', 'value': 'false'}]}]}})
+                if bad == 'new-api' and not self.api_deployed:
+                    raise urllib.error.HTTPError(url, 404, 'missing', {}, Response({}))
+                container = {'image': 'wrong' if bad == 'api-image' else env['API_IMAGE'], 'env': [json.loads(json.dumps(DB_ENV))]}
+                if bad == 'api-secret':
+                    container['env'][0]['valueSource']['secretKeyRef']['version'] = 'latest'
+                return Response({'generation': '20' if not self.api_deployed or bad == 'api-stale' else '21',
+                    'observedGeneration': '20' if bad == 'api-unobserved' else '21',
+                    'labels': {'native-deploy-build': 'wrong' if bad == 'api-owner' else env['BUILD_ID']},
+                    'reconciling': bad == 'api-reconciling', 'terminalCondition': {'state': 'CONDITION_SUCCEEDED'},
+                    'template': {'serviceAccount': 'wrong' if bad == 'api-sa' else ENV['API_RUNTIME_SERVICE_ACCOUNT'], 'containers': [container]},
+                    'latestReadyRevision': API_REVISION, 'latestCreatedRevision': API_REVISION + '-new' if bad == 'api-not-ready' else API_REVISION,
+                    'trafficStatuses': [{'revision': 'reservation-api-00020-old' if bad == 'api-old-traffic' else API_REVISION.split('/')[-1], 'percent': 50 if bad == 'api-split' else 100}]})
             if url.endswith('/services/salon-reserve-web'):
                 if not self.web_deployed and bad in ('new-web', 'web-forbidden'):
                     raise urllib.error.HTTPError(url, 404 if bad == 'new-web' else 403, 'unavailable', {}, Response({}))
@@ -154,6 +196,13 @@ class NativeDeploymentTests(unittest.TestCase):
                     'latestCreatedRevision': WEB_REVISION + '-wrong' if bad == 'web-not-ready' else WEB_REVISION,
                     'trafficStatuses': [{'revision': WEB_REVISION.split('/')[-1] if bad == 'web-canonical' else WEB_REVISION, 'percent': 99 if bad == 'web-traffic' else 100}],
                 })
+            if url.endswith('/revisions/reservation-api-00021-tokyo'):
+                container = {'image': 'wrong' if bad == 'api-revision-image' else API_DIGEST, 'env': [json.loads(json.dumps(DB_ENV))]}
+                if bad == 'api-revision-secret':
+                    container['env'][0]['valueSource']['secretKeyRef']['secret'] = 'reservation-database-url'
+                return Response({'serviceAccount': 'wrong' if bad == 'api-revision-sa' else ENV['API_RUNTIME_SERVICE_ACCOUNT'], 'containers': [container]})
+            if url.endswith('/revisions/reservation-api-00042-relay'):
+                return Response({'containers': [{'image': 'wrong' if bad == 'relay-revision-image' else RELAY_DIGEST}]})
             if url.endswith('/revisions/salon-reserve-web-00002-new'):
                 return Response({'containers': [{'image': 'wrong' if bad == 'web-revision-image' else WEB_DIGEST}]})
             if method == 'POST':
@@ -225,6 +274,15 @@ class NativeDeploymentTests(unittest.TestCase):
         self.assertFalse(any(method == 'POST' for method, _, _ in self.requests))
         self.assertFalse(any(command[1:5] == ['artifacts', 'docker', 'images', 'describe'] for command in self.commands))
 
+    def test_unapproved_or_incomplete_database_identity_stops_before_mutation(self):
+        for bad in ('db-region', 'db-version', 'db-state', 'db-type', 'db-replica-parent', 'db-missing-region', 'db-missing-version', 'db-missing-state', 'db-missing-type'):
+            for preflight in (False, True):
+                with self.subTest(bad=bad, preflight=preflight), self.assertRaisesRegex(SystemExit, 'PostgreSQL 16 primary'):
+                    self.run_deploy({'DEPLOY_PREFLIGHT_ONLY': '1'} if preflight else {}, bad=bad)
+                self.assertFalse(any(command[:3] == ['python3', 'scripts/native-deploy.py', 'mark-intent'] for command in self.commands))
+                self.assertFalse(any(command[1:2] == ['run'] for command in self.commands))
+                self.assertFalse(any(method in ('POST', 'PATCH', 'DELETE') for method, _, _ in self.requests))
+
     def test_invalid_container_config_prevents_production_mutations(self):
         with self.assertRaisesRegex(RuntimeError, 'Invalid runtime settings'):
             self.run_deploy(bad='container-validation')
@@ -274,9 +332,9 @@ class NativeDeploymentTests(unittest.TestCase):
     def test_production_commands_and_rollout_use_one_commit(self):
         self.run_deploy()
         mutations = [command for command in self.commands if command[1:2] == ['run'] and (command[2] == 'deploy' or command[3] in ('deploy', 'execute'))]
-        self.assertEqual([command[1:4] for command in mutations], [['run', 'jobs', 'deploy'], ['run', 'jobs', 'execute'], ['run', 'deploy', 'reservation-api'], ['run', 'deploy', 'salon-reserve-web']])
+        self.assertEqual([command[1:4] for command in mutations], [['run', 'jobs', 'deploy'], ['run', 'jobs', 'execute'], ['run', 'deploy', 'reservation-api'], ['run', 'deploy', 'reservation-api'], ['run', 'deploy', 'salon-reserve-web']])
         self.assertIn(f"--image={ENV['API_IMAGE']}", mutations[0])
-        self.assertIn('--set-secrets=DATABASE_URL=reservation-database-url:latest', mutations[0])
+        self.assertIn('--set-secrets=DATABASE_URL=reservation-database-url-tokyo:1', mutations[0])
         self.assertIn('--max-retries=0', mutations[0])
         self.assertIn(f'--labels=native-deploy-build={BUILD}', mutations[0])
         self.assertIn('--wait', mutations[1])
@@ -292,8 +350,9 @@ class NativeDeploymentTests(unittest.TestCase):
         self.run_deploy()
         expected = [
             ('jobDeployRequested', '10'),
-            ('jobExecutionRequested', 'projects/salon-reserve-bg/locations/asia-east1/jobs/reservation-db-migrate/executions/previous'),
+            ('jobExecutionRequested', 'projects/salon-reserve-bg/locations/asia-northeast1/jobs/reservation-db-migrate/executions/previous'),
             ('apiDeployRequested', '20'),
+            ('apiRelayDeployRequested', '40'),
             ('webDeployRequested', '30'),
             ('appBuildRequested', None),
             ('appRolloutRequested', None),
@@ -320,7 +379,7 @@ class NativeDeploymentTests(unittest.TestCase):
                 self.assertEqual(following[1][0:2], ['gcloud', 'run'])
 
     def test_failed_intent_record_never_runs_its_mutation(self):
-        phases = ['jobDeployRequested', 'jobExecutionRequested', 'apiDeployRequested', 'webDeployRequested', 'appBuildRequested', 'appRolloutRequested']
+        phases = ['jobDeployRequested', 'jobExecutionRequested', 'apiDeployRequested', 'apiRelayDeployRequested', 'webDeployRequested', 'appBuildRequested', 'appRolloutRequested']
         for completed, phase in enumerate(phases):
             with self.subTest(phase=phase):
                 with self.assertRaises(subprocess.CalledProcessError):
@@ -452,7 +511,7 @@ class NativeDeploymentTests(unittest.TestCase):
         )
         for build, expected_id in cases:
             with self.subTest(build=build):
-                self.run_deploy({'BUILD_ID': build, 'API_IMAGE': f'asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-api:{SHA}-{build}', 'WEB_IMAGE': f'{WEB_REPOSITORY}:{SHA}-{build}', 'REDIRECT_IMAGE': f'{REDIRECT_REPOSITORY}:{SHA}-{build}'})
+                self.run_deploy({'BUILD_ID': build, 'API_IMAGE': f'asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-api:{SHA}-{build}', 'WEB_IMAGE': f'{WEB_REPOSITORY}:{SHA}-{build}', 'REDIRECT_IMAGE': f'{REDIRECT_REPOSITORY}:{SHA}-{build}', 'API_RELAY_IMAGE': f'{RELAY_REPOSITORY}:{SHA}-{build}'})
                 self.assertEqual(len(expected_id), 30)
                 self.assertEqual(expected_id, 'native-' + hashlib.sha256(build.encode('utf-8')).hexdigest()[:23])
                 create_build = next(url for method, url, _ in self.requests if method == 'POST' and '/builds?' in url and 'validateOnly=true' not in url)
@@ -508,6 +567,43 @@ class NativeDeploymentTests(unittest.TestCase):
         self.run_deploy(bad='new-web')
         intent = next(command for command in self.commands if 'webDeployRequested' in command)
         self.assertEqual(intent[intent.index('--baseline') + 1], '0')
+
+    def test_initial_tokyo_api_and_job_use_zero_generation_baseline(self):
+        for bad, phase in (('new-api', 'apiDeployRequested'), ('new-job', 'jobDeployRequested')):
+            with self.subTest(bad=bad):
+                self.run_deploy(bad=bad)
+                intent = next(command for command in self.commands if phase in command)
+                self.assertEqual(intent[intent.index('--baseline') + 1], '0')
+
+    def test_unapproved_api_region_database_secret_and_relay_identity_fail_closed(self):
+        for key in ('API_REGION', 'DB_INSTANCE', 'VPC_SUBNET', 'DATABASE_URL_SECRET', 'API_RELAY_SERVICE_ACCOUNT', 'API_RELAY_IMAGE'):
+            with self.subTest(key=key), self.assertRaises(SystemExit):
+                self.run_deploy({key: 'unapproved'})
+            self.assertEqual(self.commands, [])
+            self.assertEqual(self.requests, [])
+
+    def test_legacy_relay_removes_database_access_and_uses_own_digest(self):
+        self.run_deploy()
+        relay = next(command for command in self.commands if command[1:4] == ['run', 'deploy', 'reservation-api'] and '--region=asia-east1' in command)
+        for value in ('--image=' + RELAY_DIGEST, '--service-account=' + ENV['API_RELAY_SERVICE_ACCOUNT'], '--clear-secrets', '--clear-cloudsql-instances', '--clear-network', '--clear-vpc-connector'):
+            self.assertIn(value, relay)
+        self.assertIn('--set-env-vars=UPSTREAM_ORIGIN=https://reservation-api-42401528382.asia-northeast1.run.app,MAINTENANCE_MODE=false', relay)
+
+    def test_unverified_relay_traffic_stops_before_web_update(self):
+        for bad in ('relay-unobserved', 'relay-split', 'relay-revision-image'):
+            with self.subTest(bad=bad), self.assertRaises(RuntimeError):
+                self.run_deploy(bad=bad)
+            self.assertFalse(self.web_deployed)
+            self.assertFalse(self.real_rollout_created)
+
+    def test_unverified_tokyo_api_never_switches_legacy_relay(self):
+        for bad in ('api-stale', 'api-image', 'api-owner', 'api-unobserved', 'api-reconciling', 'api-not-ready', 'api-split', 'api-old-traffic', 'api-sa', 'api-secret', 'api-revision-image', 'api-revision-sa', 'api-revision-secret'):
+            with self.subTest(bad=bad), self.assertRaises(RuntimeError):
+                self.run_deploy(bad=bad)
+            self.assertFalse(self.relay_deployed)
+            self.assertFalse(self.web_deployed)
+            self.assertFalse(self.real_rollout_created)
+            self.assertFalse(any('apiRelayDeployRequested' in command for command in self.commands))
 
     def test_invalid_tokyo_configuration_prevents_cloud_access(self):
         for key in ('WEB_REGION', 'WEB_SERVICE', 'WEB_RUNTIME_SERVICE_ACCOUNT', 'REDIRECT_IMAGE'):

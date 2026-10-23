@@ -79,6 +79,12 @@ test("reservation and checkout pages keep lists bounded and searchable across th
       { kind: "OUT" as const, amountYen: 50 }, { kind: "REFUND" as const, amountYen: 20 }
     ]).map((movement) => ({ ...scope, sessionId: openRegister.id, ...movement, reason: "非公開入出金理由",
       requestId: randomUUID(), requestHash: "test-fixture", createdByUserId: registerReader.id })) });
+    // Fresh bulk-loaded tables have no planner statistics until autovacuum runs.
+    // Collect them deterministically: the checkout's relation searches otherwise
+    // choose costly correlated scans and can exceed the transaction deadline.
+    for (const table of ["Customer", "Reservation", "Service", "CashCheckout"]) {
+      await prisma.$executeRawUnsafe(`ANALYZE public."${table}"`);
+    }
     const get = (url: string, headers: Record<string, string> = reservationReader.headers) => server.inject({ method: "GET", url, headers });
 
     await t.test("reservation page is bounded, complete and does not serialize detail fields", async () => {
@@ -111,7 +117,14 @@ test("reservation and checkout pages keep lists bounded and searchable across th
       assert.deepEqual(empty, { reservations: [], total: 0, page: 1, pageSize: 50, totalPages: 1 });
     });
     await t.test("checkout page retains all history without fetching items/payments/notes", async () => {
-      const getCash = (query = "") => get(`/api/cash/checkouts/page${query ? `?${query}` : ""}`, checkoutReader.headers);
+      const getCash = async (query = "") => {
+        const started = performance.now();
+        const response = await get(`/api/cash/checkouts/page${query ? `?${query}` : ""}`, checkoutReader.headers);
+        const durationMs = Math.round(performance.now() - started);
+        if (query.startsWith("q=")) t.diagnostic(JSON.stringify({ checkoutSearch: query, durationMs, status: response.statusCode }));
+        assert.equal(response.statusCode, 200, JSON.stringify({ query, durationMs, body: response.body }));
+        return response;
+      };
       const first = await getCash(); assert.equal(first.statusCode, 200, first.body);
       assert.deepEqual([first.json().total, first.json().pageSize, first.json().totalPages, first.json().checkouts.length], [220, 50, 5, 50]);
       const seen = new Set<string>();

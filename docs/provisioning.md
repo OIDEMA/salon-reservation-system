@@ -27,6 +27,8 @@ The command is idempotent only when the same tenant slug is already owned by the
 | `PROVISION_SALON_NAME` | Initial salon name |
 | `PROVISION_TIMEZONE` | Optional; defaults to `Asia/Tokyo` |
 
-Run this command only as a one-off Cloud Run job attached to `salon-reserve-vpc` and `salon-reserve-run-asia-east1`, using the private `DATABASE_URL`. The provisioning job service account needs Firebase Authentication administration and Secret Manager access. Do not add this command to the automatic production deployment workflow.
+Run this command only as a one-off Cloud Run job attached to `salon-reserve-vpc` and `salon-reserve-run-asia-northeast1`, using the private `DATABASE_URL`. The provisioning job service account needs Firebase Authentication administration and Secret Manager access. Do not add this command to the automatic production deployment workflow.
 
 In production, an authorized operator runs the separate **Provision tenant** GitHub Actions workflow manually. The workflow uses `reservation-provisioner@salon-reserve-bg.iam.gserviceaccount.com`, validates the inputs, deploys the private-VPC job, and waits for it to finish. It is never triggered by a push to `main`.
+
+The job runs in `asia-northeast1` and uses the pinned `reservation-database-url-tokyo:1` secret. The workflow selects the immutable image digest of the Tokyo production API revision receiving 100% traffic and shares the production deployment lease with native releases. During a database migration, disable provisioning until all writers use the verified target database. Never restart a retired east1 provisioning job with its former database secret.

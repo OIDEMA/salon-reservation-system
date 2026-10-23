@@ -4,7 +4,9 @@
 
 The web application runs on Cloud Run service `salon-reserve-web` in Tokyo (`asia-northeast1`). Its public origin is `https://salon-reserve-web-42401528382.asia-northeast1.run.app`. It uses `firebase-app-hosting-compute@salon-reserve-bg.iam.gserviceaccount.com` for Firebase Admin authentication, with one CPU, 512 MiB memory, a minimum of zero and a maximum of one instance. Zero minimum instances permits cold starts; compare both warm requests and first requests after an idle period when measuring latency.
 
-The API (`reservation-api`), Cloud SQL, private VPC subnet, Artifact Registry images, Cloud Build trigger, and production deployment lease remain in `asia-east1`. The Tokyo frontend calls the existing HTTPS API and does not connect directly to Cloud SQL or receive its database secret. API-backed page latency includes the Tokyo-to-`asia-east1` round trip; frontend placement alone does not establish a measured improvement for every operation.
+The API (`reservation-api`) and private Cloud SQL (`salon-reserve-db-tokyo`) run in `asia-northeast1`, alongside the frontend. The frontend calls `https://reservation-api-42401528382.asia-northeast1.run.app`; it never receives the database secret. Artifact Registry, Cloud Build, the deployment lease, and the existing private photo bucket remain in `asia-east1`. Measure actual requests before claiming a latency improvement.
+
+The former API origin, `https://reservation-api-42401528382.asia-east1.run.app`, runs a compatibility relay to the fixed Tokyo API. It preserves method, body, authorization, idempotency keys, and query strings. It has no database secret or VPC connection and uses `reservation-api-relay@salon-reserve-bg.iam.gserviceaccount.com` with no data-access roles. A redirect is unsuitable because the member client rejects redirects and includes its API origin in pending-booking idempotency storage. The relay does not automatically retry a failed request. `MAINTENANCE_MODE=true` fences all business requests, including GET; normal service explicitly sets it to `false`.
 
 The previous origin, `https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app`, remains on the App Hosting backend `salon-reserve-web` in `asia-east1` with a small redirect container. GET and HEAD page requests receive a non-cacheable 302 to the Tokyo origin, preserving the path and query. Browser fragments, including invitation tokens, are inherited because the redirect target does not set a fragment. Other methods receive 409 `SERVICE_MOVED`, so an already-open old page must be reloaded before retrying an operation. `/healthz` checks the redirect process without following a redirect.
 
@@ -12,12 +14,12 @@ The two Cloud Run services share a name but have different regions. Always speci
 
 ## Database networking
 
-The production Cloud SQL instance `salon-reserve-db` must not have a public IP address.
+The production Cloud SQL instance `salon-reserve-db-tokyo` must not have a public IP address.
 
 - Cloud SQL uses Private Service Access on `salon-reserve-vpc`.
-- The API service and schema/provisioning jobs use Direct VPC egress through `salon-reserve-run-asia-east1`.
+- The API service and schema/provisioning jobs use Direct VPC egress through `salon-reserve-run-asia-northeast1`.
 - Only private address ranges are routed through the VPC.
-- `DATABASE_URL` points directly to the Cloud SQL private IP over TCP and requires TLS.
+- `DATABASE_URL` uses the pinned secret `reservation-database-url-tokyo:1`, points directly to the Cloud SQL private IP over TCP, and requires TLS. Do not rotate a shared `latest` version to change database instances; running and newly started containers can otherwise split writes across databases.
 - Cloud SQL socket mounts are deliberately cleared from the Cloud Run service and migration job.
 
 The production workflow checks that `ipv4Enabled` is `false` and that the expected private network is attached before applying the database schema. A deployment fails closed if public IP is re-enabled or the private network is detached.
@@ -29,11 +31,15 @@ Direct VPC connectivity can take time to become available when a new Cloud Run i
 | Resource | Name | Range/region |
 | --- | --- | --- |
 | VPC | `salon-reserve-vpc` | custom mode |
-| Cloud Run subnet | `salon-reserve-run-asia-east1` | `10.80.0.0/24`, `asia-east1` |
-| Private Service Access range | `google-managed-services-salon-reserve` | `10.90.0.0/24` |
+| Tokyo Cloud Run subnet | `salon-reserve-run-asia-northeast1` | `10.81.0.0/24`, `asia-northeast1` |
+| Tokyo Private Service Access range | `google-managed-services-salon-reserve-tokyo` | `10.91.0.0/24` |
+| Retained former subnet | `salon-reserve-run-asia-east1` | `10.80.0.0/24`, `asia-east1` |
+| Retained former PSA range | `google-managed-services-salon-reserve` | `10.90.0.0/24` |
 
 Do not add an authorized network or enable `ipv4Enabled` on Cloud SQL. Administrative database operations must run through the VPC-connected Cloud Run migration job.
 
+
+See [tokyo-database-migration.md](tokyo-database-migration.md) for data preservation, writer fencing, and rollback conditions.
 
 ## Private chart photo storage
 
@@ -42,7 +48,7 @@ Clinical photos use a dedicated Google Cloud Storage bucket, separate from App H
 | Setting | Production value |
 | --- | --- |
 | Bucket | `salon-reserve-bg-chart-photos` |
-| Location | `asia-east1` (same region as the API) |
+| Location | `asia-east1` (retained during the API/DB migration) |
 | API environment variable | `CHART_PHOTOS_BUCKET=salon-reserve-bg-chart-photos` |
 | Public access prevention | `enforced` |
 | Uniform bucket-level access | Enabled |
