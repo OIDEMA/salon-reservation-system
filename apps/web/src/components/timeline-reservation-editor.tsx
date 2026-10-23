@@ -133,7 +133,7 @@ export function TimelineReservationEditor({ value, menus, rows, onClose, onSaved
   }
 
   return (
-    <div className="drawerBackdrop timelineModalBackdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target && !busy) onClose(); }}>
+    <div className="drawerBackdrop timelineModalBackdrop" role="presentation" aria-busy={busy} onMouseDown={(event) => { if (event.currentTarget === event.target && !busy) onClose(); }}>
       <aside className="editDrawer timelineEditDrawer" role="dialog" aria-modal="true" aria-labelledby="timeline-editor-title">
         <header className="timelineEditorHeader">
           <div>

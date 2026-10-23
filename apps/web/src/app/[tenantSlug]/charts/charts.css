@@ -52,12 +52,12 @@
 .chartPhoto .secondaryButton { font-size: 12px; min-height: 34px; justify-self: start; }
 .chartPhotoError { min-height: 180px; display: grid; place-content: center; justify-items: center; gap: 12px; background: #f8fafc; font-size: 12px; padding: 14px; margin: 0; }
 .chartPhotoError p { margin: 0; line-height: 1.7; }
-.chartPhotoPreview { display: grid; gap: 6px; padding: 0; border: 0; background: transparent; color: var(--teal-dark); cursor: zoom-in; font-size: 12px; text-align: left; }
+.chartPhotoPreview { display: grid; gap: 6px; padding: 0; border: 0; background: transparent; color: var(--teal-dark); cursor: pointer; font-size: 12px; text-align: left; }
 .chartPhotoPreview:focus-visible { outline: 3px solid var(--teal-dark); outline-offset: 3px; border-radius: 8px; }
 .chartPhotoNote { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
-.chartPhotoDialog { width: min(960px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); background: #fff; box-shadow: 0 16px 60px #0f172a40; }
-.chartPhotoDialog::backdrop { background: #0f172aa6; }
-.chartPhotoDialogContent { display: grid; gap: 18px; padding: 24px; }
+.chartPhotoDialog { width: min(960px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); background: #fff; box-shadow: 0 16px 60px #0f172a40; cursor: pointer; }
+.chartPhotoDialog::backdrop { background: #0f172aa6; cursor: pointer; }
+.chartPhotoDialogContent { display: grid; gap: 18px; padding: 24px; cursor: auto; }
 .chartPhotoDialogHeader { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
 .chartPhotoDialogHeader h3 { margin: 0; overflow-wrap: anywhere; }
 .chartPhotoDialogHeader button { flex: none; }

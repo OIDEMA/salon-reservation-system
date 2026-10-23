@@ -37,7 +37,7 @@ select {
   font: inherit;
 }
 
-/* Keep component-specific drag, resize, zoom, and loading cursors authoritative. */
+/* Keep component-specific drag, resize, and loading cursors authoritative. */
 :where(
   button,
   a[href],
@@ -45,7 +45,7 @@ select {
   summary,
   [role="button"],
   input:is([type="button"], [type="submit"], [type="reset"], [type="checkbox"], [type="radio"], [type="file"], [type="color"]),
-  label:has(input:is([type="checkbox"], [type="radio"]):enabled)
+  label:has(input:is([type="checkbox"], [type="radio"], [type="file"], [type="color"]):enabled)
 ) {
   cursor: pointer;
 }
@@ -65,7 +65,7 @@ textarea:disabled,
 a[aria-disabled="true"],
 button[aria-disabled="true"],
 [role="button"][aria-disabled="true"],
-label:has(input:is([type="checkbox"], [type="radio"]):disabled) {
+label:has(input:is([type="checkbox"], [type="radio"], [type="file"], [type="color"]):disabled) {
   cursor: not-allowed;
 }
 
@@ -3049,12 +3049,18 @@ a {
   max-height: calc(100vh - 48px);
   border-radius: 12px;
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
+  cursor: auto;
 }
 
 .timelineModalBackdrop {
   align-items: center;
   justify-content: center;
   padding: 24px;
+  cursor: pointer;
+}
+
+.timelineModalBackdrop[aria-busy="true"] {
+  cursor: wait;
 }
 
 .timelineEditorHeader {
