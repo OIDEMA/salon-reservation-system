@@ -27,7 +27,8 @@ test("member booking keeps token, owner, publication, inventory and retry bounda
     const hiddenSalon = await prisma.salon.create({ data: { tenantId: hidden.id, name: "非公開店舗" } });
     const scope = { tenantId: tenant.id, salonId: salon.id };
     const settings = await prisma.salonSettings.create({ data: { ...scope, storeId: prefix, openTime: "09:00", closeTime: "20:00", maxConcurrentReservations: 1,
-      cancellationMessage: "", friendMessage: "", candidateIntervalMinutes: 30, bookingWindowValue: "1ヶ月先" } });
+      cancellationMessage: "", friendMessage: "", candidateIntervalMinutes: 30, bookingWindowValue: "1ヶ月先",
+      notifyReservationEmail: true, notificationEmail: "booking-notice@example.test" } });
     const category = await prisma.menuCategory.create({ data: { ...scope, name: "公開カテゴリ", type: "MENU" } });
     await prisma.menuCategory.create({ data: { ...scope, name: "停止カテゴリ", type: "MENU", enabled: false } });
     const menu = await prisma.service.create({ data: { ...scope, name: "公開メニュー", category: category.name, durationMinutes: 30, price: 5000, color: "#111111" } });
@@ -73,6 +74,12 @@ test("member booking keeps token, owner, publication, inventory and retry bounda
       const response = await create(); assert.equal(response.statusCode, 201, response.body); const reservation = response.json().reservation; reservationId = reservation.id;
       assert.equal(reservation.price, 5500); assert.equal(reservation.status, "CONFIRMED"); assert.equal(reservation.paymentStatus, "UNPAID"); assert(reservation.canCancel);
       const saved = await prisma.reservation.findUniqueOrThrow({ where: { id: reservationId } }); assert.notEqual(saved.customerId, oldCustomer.id); assert.equal(saved.source, "MINI_APP");
+      const notification = await prisma.emailOutbox.findUniqueOrThrow({ where: { eventKey: `reservation.created:${reservationId}` } });
+      assert.equal(notification.eventType, "reservation.created"); assert.equal(notification.status, "PENDING");
+      assert.equal(notification.recipientEmail, "booking-notice@example.test"); assert.equal(notification.tenantId, tenant.id); assert.equal(notification.salonId, salon.id);
+      assert.deepEqual(notification.payload, { reservationId, salonName: salon.name, startsAt: japanDateTime(date, "10:00").toISOString(),
+        serviceName: menu.name, tenantSlug: tenant.slug });
+      assert.equal(await prisma.emailOutbox.count({ where: { eventKey: `reservation.created:${reservationId}` } }), 1);
       assert.equal(await prisma.memberCustomerLink.count({ where: { uid: uidA, customerId: saved.customerId } }), 1);
       const own = await list(); assert.equal(own.json().total, 1); assert.equal(own.json().reservations[0].id, reservationId); assert(!own.body.includes(old.id)); assert(!own.body.includes("private medical"));
       assert.equal((await list(uidB)).json().total, 0); assert.equal((await cancel(reservationId, uidB)).statusCode, 404);
@@ -97,6 +104,9 @@ test("member booking keeps token, owner, publication, inventory and retry bounda
       const key = randomUUID();
       const originalPayload = { ...input("11:00"), customer: { name: "連絡先更新", kana: "レンラクサキ", phone: "090-2222-3333" } };
       const first = await create(originalPayload, key); assert.equal(first.statusCode, 201, first.body);
+      const eventKey = `reservation.created:${first.json().reservation.id}`;
+      assert.equal(await prisma.emailOutbox.count({ where: { eventKey } }), 1);
+      const outboxCountBeforeReplay = await prisma.emailOutbox.count({ where: scope });
       const ownerLink = await prisma.memberCustomerLink.findUniqueOrThrow({ where: { projectId_uid_tenantId_salonId: { projectId: "salon-reserve-bg", uid: uidA, ...scope } } });
       const ownContact = await prisma.customer.findUniqueOrThrow({ where: { id: ownerLink.customerId } });
       assert.equal(ownContact.name, "連絡先更新"); assert.equal(ownContact.kana, "レンラクサキ"); assert.equal(ownContact.phone, "090-2222-3333");
@@ -105,6 +115,8 @@ test("member booking keeps token, owner, publication, inventory and retry bounda
       await prisma.service.update({ where: { id: menu.id }, data: { price: 9000, durationMinutes: 45 } });
       expectedPrice = 9500;
       const retry = await create(originalPayload, key); assert.equal(retry.statusCode, 200, retry.body); assert.equal(retry.json().reservation.id, first.json().reservation.id); assert.equal(retry.json().reservation.price, 5500); assert.equal(retry.json().reservation.durationMinutes, 30);
+      assert.equal(await prisma.emailOutbox.count({ where: { eventKey } }), 1);
+      assert.equal(await prisma.emailOutbox.count({ where: scope }), outboxCountBeforeReplay);
       await prisma.service.update({ where: { id: menu.id }, data: { durationMinutes: 30 } });
       const adminList = await server.inject({ url: "/api/reservations/page", headers: adminHeaders });
       assert.equal(adminList.statusCode, 200, adminList.body);
@@ -154,6 +166,17 @@ test("member booking keeps token, owner, publication, inventory and retry bounda
         serviceId: menu.id, serviceName: menu.name, staffId: staff.id, customerId: oldCustomer.id, customerName: oldCustomer.name, status: "CONFIRMED" } });
       const mixed = await Promise.all([create(input("14:00"), randomUUID(), uidB), adminCreate]); assert.deepEqual(mixed.map((response) => response.statusCode).sort(), [201, 409], mixed.map((response) => response.body).join("\n"));
       assert.equal(await prisma.reservation.count({ where: { ...scope, startsAt: japanDateTime(date, "14:00"), status: "CONFIRMED" } }), 1);
+    });
+    await t.test("disabled notification or missing recipient does not enqueue mail", async () => {
+      const previousCount = await prisma.emailOutbox.count({ where: scope });
+      await prisma.salonSettings.update({ where: { id: settings.id }, data: { notifyReservationEmail: false } });
+      const disabled = await create(input("15:30"), randomUUID(), uidB); assert.equal(disabled.statusCode, 201, disabled.body);
+      assert.equal(await prisma.emailOutbox.count({ where: { eventKey: `reservation.created:${disabled.json().reservation.id}` } }), 0);
+      await prisma.salonSettings.update({ where: { id: settings.id }, data: { notifyReservationEmail: true, notificationEmail: null } });
+      const withoutRecipient = await create(input("16:30"), randomUUID(), uidB); assert.equal(withoutRecipient.statusCode, 201, withoutRecipient.body);
+      assert.equal(await prisma.emailOutbox.count({ where: { eventKey: `reservation.created:${withoutRecipient.json().reservation.id}` } }), 0);
+      assert.equal(await prisma.emailOutbox.count({ where: scope }), previousCount);
+      await prisma.salonSettings.update({ where: { id: settings.id }, data: { notificationEmail: "booking-notice@example.test" } });
     });
     await t.test("pagination is handled in the database and rejects unbounded input", async () => {
       const one = await list(uidA, "?page=1&pageSize=1"); const two = await list(uidA, "?page=2&pageSize=1");
@@ -210,6 +233,7 @@ test("member booking keeps token, owner, publication, inventory and retry bounda
     });
   } finally {
     await server.close(); tokenMock.mock.restore(); sessionMock.mock.restore();
+    await prisma.emailOutbox.deleteMany({ where: { tenantId: { in: tenants } } });
     await prisma.memberReservationRequest.deleteMany({ where: { tenantId: { in: tenants } } });
     await prisma.memberBookingRateLimit.deleteMany({ where: { uid: { in: [uidA, uidB, uidC, uidAdmin] } } });
     if (tenants.length) {

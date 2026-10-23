@@ -201,6 +201,15 @@ export function registerMemberBookingRoutes(server: FastifyInstance, dependencie
           status: "CONFIRMED", source: "MINI_APP", isRequest: true, paymentStatus: "UNPAID", memberBookingRequest: { create: {
             projectId: identity.projectId, uid: identity.uid, idempotencyKey: key, payloadHash, price
           } } }, include: reservationInclude });
+        const recipient = settings.notificationEmail?.trim();
+        if (settings.notifyReservationEmail && recipient && z.string().email().safeParse(recipient).success) {
+          await tx.emailOutbox.create({ data: {
+            eventKey: `reservation.created:${reservation.id}`, eventType: "reservation.created",
+            ...scope, recipientEmail: recipient,
+            payload: { reservationId: reservation.id, salonName: salon.name, startsAt: startsAt.toISOString(),
+              serviceName: service.name, tenantSlug: salon.tenant.slug }
+          } });
+        }
         await audit(tx, request, identity, salon.tenantId, salon.id, reservation.id, "member.reservation.create");
         return { reservation, created: true };
       });

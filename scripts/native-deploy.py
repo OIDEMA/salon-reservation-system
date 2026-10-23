@@ -24,6 +24,7 @@ REGION = "asia-east1"
 API_REGION = "asia-northeast1"
 WEB_REGION = "asia-northeast1"
 WEB_SERVICE = "salon-reserve-web"
+EMAIL_RUNTIME_SERVICE_ACCOUNT = "reservation-email-runtime@salon-reserve-bg.iam.gserviceaccount.com"
 BUCKET = "salon-reserve-bg-deployment-locks"
 LOCK_NAME = "deployment-locks/reservation-production.json"
 REPOSITORY = "https://github.com/OIDEMA/salon-reservation-system.git"
@@ -36,6 +37,7 @@ INTENT_PHASES = {
     "jobDeployRequested": "baselineGeneration",
     "jobExecutionRequested": "baselineExecution",
     "apiDeployRequested": "baselineGeneration",
+    "emailJobDeployRequested": "baselineGeneration",
     "webDeployRequested": "baselineGeneration",
     "apiRelayDeployRequested": "baselineGeneration",
     "appBuildRequested": None,
@@ -115,7 +117,7 @@ def read_intents(metadata, require_execution_digest=True):
         field = INTENT_PHASES[phase]
         if field == "baselineGeneration" and not re.fullmatch(r"[0-9]+", str(intent.get(field, ""))):
             raise RuntimeError("The deployment lease has an invalid generation baseline.")
-        digest_field = {"webDeployRequested": "expectedWebDigest", "apiRelayDeployRequested": "expectedRelayDigest"}.get(phase)
+        digest_field = {"webDeployRequested": "expectedWebDigest", "apiRelayDeployRequested": "expectedRelayDigest", "emailJobDeployRequested": "expectedEmailJobDigest"}.get(phase)
         if digest_field and require_execution_digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", str(intent.get(digest_field, ""))):
             raise RuntimeError("The deployment lease has an invalid service image digest.")
         if field == "baselineExecution":
@@ -152,10 +154,10 @@ def mark_deployment_intent(api, generation, phase, baseline=None):
         # After an ambiguous response, repeating the cloud mutation could create
         # two executions. A new build/lease or operator review is required.
         raise RuntimeError("A deployment phase has already been requested and cannot be repeated.")
-    if phase in ("jobExecutionRequested", "webDeployRequested", "apiRelayDeployRequested"):
+    if phase in ("jobExecutionRequested", "webDeployRequested", "apiRelayDeployRequested", "emailJobDeployRequested"):
         # Execution.image is digest-pinned by Cloud Run even when Job.image uses
         # a tag. Record the expected digest before starting the asynchronous run.
-        image_name = {"jobExecutionRequested": "reservation-api", "webDeployRequested": "reservation-web", "apiRelayDeployRequested": "reservation-api-relay"}[phase]
+        image_name = {"jobExecutionRequested": "reservation-api", "webDeployRequested": "reservation-web", "apiRelayDeployRequested": "reservation-api-relay", "emailJobDeployRequested": "reservation-api"}[phase]
         image = f"{REGION}-docker.pkg.dev/{PROJECT}/cloud-run-source-deploy/{image_name}:{owner['commitSha']}-{owner['buildId']}"
         try:
             digest = subprocess.check_output(
@@ -167,7 +169,7 @@ def mark_deployment_intent(api, generation, phase, baseline=None):
             raise RuntimeError("Unable to verify the migration image digest.") from None
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
             raise RuntimeError("The migration image returned an invalid digest.")
-        intent[{"jobExecutionRequested": "expectedExecutionDigest", "webDeployRequested": "expectedWebDigest", "apiRelayDeployRequested": "expectedRelayDigest"}[phase]] = digest
+        intent[{"jobExecutionRequested": "expectedExecutionDigest", "webDeployRequested": "expectedWebDigest", "apiRelayDeployRequested": "expectedRelayDigest", "emailJobDeployRequested": "expectedEmailJobDigest"}[phase]] = digest
     intents[phase] = intent
     custom_metadata = dict(metadata.get("metadata", {}))
     custom_metadata[INTENT_METADATA_KEY] = json.dumps(intents, sort_keys=True, separators=(",", ":"))
@@ -293,6 +295,30 @@ def deployment_children_finished(api, build_id, commit=None, intents=None, api_r
         ):
             return False
         if not run_resource_finished(service):
+            return False
+
+    # A newly deployed mail Job must reconcile to the exact API image before
+    # an interrupted build can relinquish the lease. Older leases omit this
+    # intent and do not require the Job to exist.
+    if "emailJobDeployRequested" in intents:
+        intent = intents["emailJobDeployRequested"]
+        try:
+            email_job = api.request("GET", run_base + "/jobs/reservation-email-outbox")
+        except ApiError as error:
+            if error.status == 404:
+                return False
+            raise
+        generation = str(email_job.get("generation", ""))
+        task = email_job.get("template", {}).get("template", {})
+        containers = task.get("containers", [])
+        image = f"{REGION}-docker.pkg.dev/{PROJECT}/cloud-run-source-deploy/reservation-api@{intent['expectedEmailJobDigest']}"
+        if (not re.fullmatch(r"[0-9]+", generation)
+                or int(generation) <= int(intent["baselineGeneration"])
+                or email_job.get("labels", {}).get("native-deploy-build") != build_id
+                or task.get("serviceAccount") != EMAIL_RUNTIME_SERVICE_ACCOUNT
+                or len(containers) != 1 or containers[0].get("image") != image):
+            return False
+        if not run_resource_finished(email_job):
             return False
 
     # Older leases remain recoverable without new-region or relay resources.

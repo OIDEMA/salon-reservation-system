@@ -37,9 +37,12 @@ expected = {
     "API_SERVICE": "reservation-api",
     "API_REGION": "asia-northeast1",
     "DATABASE_URL_SECRET": "reservation-database-url-tokyo:1",
+    "INVITATION_TOKEN_KEY_SECRET": "reservation-invitation-token-key:1",
+    "SES_ROLE_ARN": "arn:aws:iam::243110548344:role/salon-reserve-ses-sender",
     "API_RELAY_SERVICE_ACCOUNT": "reservation-api-relay@salon-reserve-bg.iam.gserviceaccount.com",
     "CHART_PHOTOS_BUCKET": "salon-reserve-bg-chart-photos",
     "API_RUNTIME_SERVICE_ACCOUNT": "reservation-api-runtime@salon-reserve-bg.iam.gserviceaccount.com",
+    "EMAIL_RUNTIME_SERVICE_ACCOUNT": "reservation-email-runtime@salon-reserve-bg.iam.gserviceaccount.com",
     "DB_INSTANCE": "salon-reserve-db-tokyo",
     "VPC_NETWORK": "salon-reserve-vpc",
     "VPC_SUBNET": "salon-reserve-run-asia-northeast1",
@@ -81,6 +84,7 @@ redirect_image = f"{redirect_image_repository}:{commit}-{build_id}"
 if required("REDIRECT_IMAGE") != redirect_image:
     raise SystemExit("REDIRECT_IMAGE must identify the triggering commit and build in the approved registry.")
 api_url = "https://reservation-api-42401528382.asia-northeast1.run.app"
+email_job_name = "reservation-email-outbox"
 relay_image_repository = f"{region}-docker.pkg.dev/{project}/cloud-run-source-deploy/reservation-api-relay"
 relay_image = f"{relay_image_repository}:{commit}-{build_id}"
 if required("API_RELAY_IMAGE") != relay_image:
@@ -326,7 +330,7 @@ gcloud(
     "--platform=managed", f"--image={image}", f"--service-account={expected['API_RUNTIME_SERVICE_ACCOUNT']}",
     f"--labels=native-deploy-build={build_id}",
     "--allow-unauthenticated", f"--network={expected['VPC_NETWORK']}", f"--subnet={expected['VPC_SUBNET']}",
-    "--vpc-egress=private-ranges-only", f"--set-secrets=DATABASE_URL={expected['DATABASE_URL_SECRET']}",
+    "--vpc-egress=private-ranges-only", f"--set-secrets=DATABASE_URL={expected['DATABASE_URL_SECRET']},INVITATION_TOKEN_KEY={expected['INVITATION_TOKEN_KEY_SECRET']}",
     f"--set-env-vars=^|^NODE_ENV=production|DB_CONNECTIVITY=private-ip|CHART_PHOTOS_BUCKET={expected['CHART_PHOTOS_BUCKET']}|CORS_ORIGINS={legacy_url},{frontend_fallback_url},{frontend_url}|MEMBER_BOOKING_TENANTS=mens-gentle:gentle;missmrs-takamatsu:missmrs",
     "--cpu=1", "--memory=512Mi", "--min-instances=0", "--max-instances=1", "--concurrency=40",
     "--timeout=60", "--port=8080",
@@ -367,6 +371,10 @@ def verify_api_identity_and_database(template):
     secret = database[0].get("valueSource", {}).get("secretKeyRef", {}) if len(database) == 1 else {}
     if secret.get("secret") not in ("reservation-database-url-tokyo", f"projects/{project}/secrets/reservation-database-url-tokyo", f"projects/{expected['PROJECT_NUMBER']}/secrets/reservation-database-url-tokyo") or secret.get("version") != "1" or "value" in database[0]:
         raise RuntimeError("Tokyo API must use the approved pinned Tokyo database secret.")
+    invitation = [item for item in containers[0].get("env", []) if item.get("name") == "INVITATION_TOKEN_KEY"]
+    invitation_secret = invitation[0].get("valueSource", {}).get("secretKeyRef", {}) if len(invitation) == 1 else {}
+    if invitation_secret.get("secret") not in ("reservation-invitation-token-key", f"projects/{project}/secrets/reservation-invitation-token-key", f"projects/{expected['PROJECT_NUMBER']}/secrets/reservation-invitation-token-key") or invitation_secret.get("version") != "1" or "value" in invitation[0]:
+        raise RuntimeError("Tokyo API must use the approved pinned invitation token key.")
 
 
 def verify_api_revision():
@@ -404,6 +412,60 @@ def read_url(url):
 
 
 read_url(api_url + "/ready")
+
+# A separate scheduled Job drains committed email outbox records. It is never
+# executed by this deployment; the scheduler and one-off delivery checks are
+# managed separately after the exact job revision is verified.
+email_job_url = f"{run_api}/jobs/{email_job_name}"
+email_job_baseline = generation_before_create(email_job_url)
+mark_intent("emailJobDeployRequested", email_job_baseline)
+gcloud(
+    "run", "jobs", "deploy", email_job_name,
+    f"--project={project}", f"--region={api_region}", f"--image={api_image_digest}",
+    f"--service-account={expected['EMAIL_RUNTIME_SERVICE_ACCOUNT']}",
+    f"--labels=native-deploy-build={build_id}",
+    f"--network={expected['VPC_NETWORK']}", f"--subnet={expected['VPC_SUBNET']}",
+    "--vpc-egress=private-ranges-only",
+    f"--set-secrets=DATABASE_URL={expected['DATABASE_URL_SECRET']},INVITATION_TOKEN_KEY={expected['INVITATION_TOKEN_KEY_SECRET']}",
+    f"--set-env-vars=NODE_ENV=production,DB_CONNECTIVITY=private-ip,AWS_SES_ROLE_ARN={expected['SES_ROLE_ARN']},PUBLIC_BASE_URL={frontend_url}",
+    "--command=node", "--args=dist/src/scripts/send-email-outbox.js",
+    "--tasks=1", "--max-retries=0", "--task-timeout=10m", "--cpu=1", "--memory=512Mi", "--quiet",
+)
+verify_private_run(gcloud_json("run", "jobs", "describe", email_job_name, f"--project={project}", f"--region={api_region}"))
+
+
+def verify_email_job():
+    job = api_request("GET", email_job_url)
+    if int(resource_generation(job)) <= int(email_job_baseline) or job.get("labels", {}).get("native-deploy-build") != build_id:
+        raise RuntimeError("Email Job must belong to this build and advance its generation.")
+    if job.get("reconciling", False) is not False or job.get("terminalCondition", {}).get("state") != "CONDITION_SUCCEEDED" or str(job.get("observedGeneration", "")) != str(job.get("generation", "")):
+        raise RuntimeError("Email Job must finish reconciling successfully.")
+    execution = job.get("template", {})
+    task = execution.get("template", {})
+    containers = task.get("containers", [])
+    if execution.get("taskCount", 1) != 1 or task.get("maxRetries", 0) != 0 or len(containers) != 1 or task.get("serviceAccount") != expected["EMAIL_RUNTIME_SERVICE_ACCOUNT"]:
+        raise RuntimeError("Email Job task count, retries, container, or identity changed.")
+    network = task.get("vpcAccess", {})
+    interfaces = network.get("networkInterfaces", [])
+    if network.get("egress") != "PRIVATE_RANGES_ONLY" or len(interfaces) != 1 or interfaces[0].get("network") != expected["VPC_NETWORK"] or interfaces[0].get("subnetwork") != expected["VPC_SUBNET"]:
+        raise RuntimeError("Email Job must use the approved Tokyo private network.")
+    container = containers[0]
+    if container.get("image") != api_image_digest or container.get("command") != ["node"] or container.get("args") != ["dist/src/scripts/send-email-outbox.js"]:
+        raise RuntimeError("Email Job must use this build's exact API digest and outbox command.")
+    environment = {item.get("name"): item for item in container.get("env", [])}
+    if set(environment) != {"NODE_ENV", "DB_CONNECTIVITY", "AWS_SES_ROLE_ARN", "PUBLIC_BASE_URL", "DATABASE_URL", "INVITATION_TOKEN_KEY"}:
+        raise RuntimeError("Email Job has unapproved environment settings.")
+    expected_values = {"NODE_ENV": "production", "DB_CONNECTIVITY": "private-ip", "AWS_SES_ROLE_ARN": expected["SES_ROLE_ARN"], "PUBLIC_BASE_URL": frontend_url}
+    if any(environment[name].get("value") != value or "valueSource" in environment[name] for name, value in expected_values.items()):
+        raise RuntimeError("Email Job must use the approved role and public origin.")
+    for name, secret_name in (("DATABASE_URL", "reservation-database-url-tokyo"), ("INVITATION_TOKEN_KEY", "reservation-invitation-token-key")):
+        item = environment[name]
+        secret = item.get("valueSource", {}).get("secretKeyRef", {})
+        if secret.get("secret") not in (secret_name, f"projects/{project}/secrets/{secret_name}", f"projects/{expected['PROJECT_NUMBER']}/secrets/{secret_name}") or secret.get("version") != "1" or "value" in item:
+            raise RuntimeError("Email Job must use only the approved pinned secrets.")
+
+
+verify_email_job()
 
 
 legacy_api_resource = f"projects/{project}/locations/{region}/services/{expected['API_SERVICE']}"

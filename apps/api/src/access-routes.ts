@@ -1,10 +1,11 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient, TenantMembership } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { prisma } from "./database.js";
 import { requireAuthenticatedUser, requestedSalonId, type TenantContext } from "./tenant-context.js";
 import { AccessPolicyError, assertAccessAssignment, canManageMember, effectivePermissions, hasPermission, PERMISSIONS, requirePermission } from "./permissions.js";
+import { deriveInvitationToken } from "./invitation-token.js";
 
 const assignmentSchema = z.object({
   role: z.enum(["OWNER", "ADMIN", "MANAGER", "STAFF", "VIEWER"]),
@@ -113,23 +114,31 @@ export function registerAccessRoutes(server: FastifyInstance, dependencies: Acce
     const context = await authorize(request, reply, "access.manage");
     if (!context) return;
     const input = inviteSchema.parse(request.body);
-    const token = randomBytes(32).toString("base64url");
+    const id = randomUUID();
+    const email = input.email.toLowerCase();
+    const expiresAt = new Date(Date.now() + input.expiresInDays * 86_400_000);
+    // Validate the server-side key before revoking an older invitation or writing anything.
+    const token = deriveInvitationToken({ id, email, expiresAt });
     const invitation = await db.$transaction(async (transaction) => {
       await lockTenant(transaction, context.tenant.id);
       const actor = await currentActor(transaction, context);
       const salons = await transaction.salon.findMany({ where: { tenantId: context.tenant.id }, select: { id: true } });
       assertAccessAssignment(actor, undefined, undefined, input, salons.map((salon) => salon.id));
-      const email = input.email.toLowerCase();
       const existing = await transaction.tenantMembership.findFirst({ where: { tenantId: context.tenant.id, user: { email } } });
       if (existing) throw new AccessPolicyError("MEMBER_ALREADY_EXISTS", "このメールアドレスは登録済みです。既存メンバーを編集してください。", 409);
       await transaction.tenantInvitation.updateMany({ where: { tenantId: context.tenant.id, email, acceptedAt: null, revokedAt: null }, data: { revokedAt: new Date() } });
-      const created = await transaction.tenantInvitation.create({ data: { tenantId: context.tenant.id, email, role: input.role,
+      const created = await transaction.tenantInvitation.create({ data: { id, tenantId: context.tenant.id, email, role: input.role,
         useCustomPermissions: input.useCustomPermissions, permissions: [...new Set(input.permissions)], salonIds: input.role === "OWNER" ? [] : [...new Set(input.salonIds)],
-        tokenHash: hashInvitationToken(token), expiresAt: new Date(Date.now() + input.expiresInDays * 86_400_000), invitedByUserId: context.user.id } });
+        tokenHash: hashInvitationToken(token), expiresAt, invitedByUserId: context.user.id } });
+      await transaction.emailOutbox.create({ data: {
+        eventKey: `invitation.created:${id}`, eventType: "invitation.created", tenantId: context.tenant.id,
+        salonId: null, recipientEmail: email,
+        payload: { invitationId: id, tenantName: context.tenant.name, role: input.role, expiresAt: expiresAt.toISOString() }
+      } });
       await transaction.auditLog.create({ data: auditData(request, context, "access.invitation.create", "tenantInvitation", created.id) });
       return created;
     });
-    return reply.code(201).send({ invitation: publicInvitation(invitation), acceptPath: `/accept-invitation#token=${token}` });
+    return reply.code(201).send({ invitation: publicInvitation(invitation) });
   });
 
   server.delete("/api/access/invitations/:id", async (request, reply) => {

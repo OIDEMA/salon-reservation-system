@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import Fastify from "fastify";
+import { deriveInvitationToken } from "../src/invitation-token.js";
 
 const testDatabaseUrl = process.env.OPERATIONS_TEST_DATABASE_URL;
 if (testDatabaseUrl && !new URL(testDatabaseUrl).pathname.endsWith("_test")) {
@@ -10,6 +11,8 @@ if (testDatabaseUrl && !new URL(testDatabaseUrl).pathname.endsWith("_test")) {
 
 test("access API with real PostgreSQL and Firebase verified identity", {skip: !testDatabaseUrl}, async(t)=>{
   process.env.DATABASE_URL = testDatabaseUrl!;
+  const previousInvitationTokenKey=process.env.INVITATION_TOKEN_KEY;
+  process.env.INVITATION_TOKEN_KEY="integration-test-invitation-token-key-32-bytes";
   const [{prisma},{firebaseAdminAuth},{registerAccessRoutes},{requirePermission},{requestedSalonId,requireAuthenticatedUser},{lockOperation,runSerializable}] = await Promise.all([
     import("../src/database.js"),import("../src/auth.js"),import("../src/access-routes.js"),import("../src/permissions.js"),import("../src/tenant-context.js"),import("../src/operations-support.js")
   ]);
@@ -49,7 +52,9 @@ test("access API with real PostgreSQL and Firebase verified identity", {skip: !t
     const {status,...input}=assignment;
     const response=await app.inject({method:"POST",url:"/api/access/invitations",headers:headers(user),payload:{...input,email:target.email}});
     assert.equal(response.statusCode,201,response.body);const body=response.json();
-    return {id:body.invitation.id,token:body.acceptPath.split("#token=")[1] as string,body};
+    assert.equal(body.acceptPath,undefined);
+    const stored=await prisma.tenantInvitation.findUniqueOrThrow({where:{id:body.invitation.id}});
+    return {id:stored.id,token:deriveInvitationToken(stored),body};
   }
   async function accept(user:typeof owner,token:string) {return app.inject({method:"POST",url:"/api/access/invitations/accept",headers:{authorization:`Bearer ${user.credential}`},payload:{token}});}
 
@@ -84,6 +89,9 @@ test("access API with real PostgreSQL and Firebase verified identity", {skip: !t
       const target=await identity("concurrent");const created=await invite(owner,target);
       assert(!JSON.stringify(created.body.invitation).includes("tokenHash"));
       const stored=await prisma.tenantInvitation.findUniqueOrThrow({where:{id:created.id}});assert.notEqual(stored.tokenHash,created.token);assert.equal(stored.tokenHash.length,64);
+      const outbox=await prisma.emailOutbox.findUniqueOrThrow({where:{eventKey:`invitation.created:${created.id}`}});
+      assert.equal(outbox.eventType,"invitation.created");assert.equal(outbox.recipientEmail,target.email);
+      assert(!JSON.stringify(outbox).includes(created.token));
       const responses=await Promise.all([accept(target,created.token),accept(target,created.token)]);
       assert.deepEqual(responses.map(response=>response.statusCode).sort(),[200,410]);
       assert.equal(await prisma.tenantMembership.count({where:{tenantId:tenant.id,userId:target.id}}),1);
@@ -185,7 +193,10 @@ test("access API with real PostgreSQL and Firebase verified identity", {skip: !t
     });
   } finally {
     await app.close();credentialMock.mock.restore();
+    if(tenantIds.length)await prisma.emailOutbox.deleteMany({where:{tenantId:{in:tenantIds}}});
     for(const tenantId of tenantIds) await prisma.tenant.deleteMany({where:{id:tenantId}});
     if(userIds.length) await prisma.appUser.deleteMany({where:{id:{in:userIds}}});await prisma.$disconnect();
+    if(previousInvitationTokenKey===undefined)delete process.env.INVITATION_TOKEN_KEY;
+    else process.env.INVITATION_TOKEN_KEY=previousInvitationTokenKey;
   }
 });

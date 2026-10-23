@@ -136,6 +136,23 @@ export function SettingsManagement({ initialData }: { initialData: AdminSettings
           <ToggleButton disabled={!canWrite || busy} label="複数メニュー予約" enabled={settings.multiMenuBooking} onClick={() => setSetting("multiMenuBooking", !settings.multiMenuBooking)} />
           <ToggleButton disabled={!canWrite || busy} label="指名なし自動割当" enabled={settings.autoAssignUnspecified} onClick={() => setSetting("autoAssignUnspecified", !settings.autoAssignUnspecified)} />
           <ToggleButton disabled={!canWrite || busy} label="事前質問" enabled={settings.questionsEnabled} onClick={() => setSetting("questionsEnabled", !settings.questionsEnabled)} />
+          <ToggleButton disabled={!canWrite || busy} label="予約メール通知" enabled={settings.notifyReservationEmail} onClick={() => setSetting("notifyReservationEmail", !settings.notifyReservationEmail)} />
+        </div>
+        <div className="settingsGrid">
+          <label className="settingField">
+            <span>管理者メール</span>
+            <input
+              aria-describedby="reservation-notification-email-help"
+              autoComplete="off"
+              disabled={busy}
+              maxLength={254}
+              readOnly={!canWrite}
+              type="email"
+              value={settings.notificationEmail ?? ""}
+              onChange={(event) => setSetting("notificationEmail", event.target.value || null)}
+            />
+            <small id="reservation-notification-email-help">予約メール通知がONのとき、この店舗の新しい予約を通知します。未入力の場合は送信されません。</small>
+          </label>
         </div>
       </section>
 

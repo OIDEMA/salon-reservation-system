@@ -187,12 +187,15 @@ substitutions:
   _API_SERVICE: reservation-api
   _API_REGION: asia-northeast1
   _DATABASE_URL_SECRET: reservation-database-url-tokyo:1
+  _INVITATION_TOKEN_KEY_SECRET: reservation-invitation-token-key:1
+  _SES_ROLE_ARN: arn:aws:iam::243110548344:role/salon-reserve-ses-sender
   _API_RELAY_SERVICE_ACCOUNT: reservation-api-relay@salon-reserve-bg.iam.gserviceaccount.com
   _WEB_REGION: asia-northeast1
   _WEB_SERVICE: salon-reserve-web
   _WEB_RUNTIME_SERVICE_ACCOUNT: firebase-app-hosting-compute@salon-reserve-bg.iam.gserviceaccount.com
   _CHART_PHOTOS_BUCKET: salon-reserve-bg-chart-photos
   _API_RUNTIME_SERVICE_ACCOUNT: reservation-api-runtime@salon-reserve-bg.iam.gserviceaccount.com
+  _EMAIL_RUNTIME_SERVICE_ACCOUNT: reservation-email-runtime@salon-reserve-bg.iam.gserviceaccount.com
   _DB_INSTANCE: salon-reserve-db-tokyo
   _VPC_NETWORK: salon-reserve-vpc
   _VPC_SUBNET: salon-reserve-run-asia-northeast1
@@ -209,12 +212,15 @@ options:
     - API_SERVICE=$_API_SERVICE
     - API_REGION=$_API_REGION
     - DATABASE_URL_SECRET=$_DATABASE_URL_SECRET
+    - INVITATION_TOKEN_KEY_SECRET=$_INVITATION_TOKEN_KEY_SECRET
+    - SES_ROLE_ARN=$_SES_ROLE_ARN
     - API_RELAY_SERVICE_ACCOUNT=$_API_RELAY_SERVICE_ACCOUNT
     - WEB_REGION=$_WEB_REGION
     - WEB_SERVICE=$_WEB_SERVICE
     - WEB_RUNTIME_SERVICE_ACCOUNT=$_WEB_RUNTIME_SERVICE_ACCOUNT
     - CHART_PHOTOS_BUCKET=$_CHART_PHOTOS_BUCKET
     - API_RUNTIME_SERVICE_ACCOUNT=$_API_RUNTIME_SERVICE_ACCOUNT
+    - EMAIL_RUNTIME_SERVICE_ACCOUNT=$_EMAIL_RUNTIME_SERVICE_ACCOUNT
     - DB_INSTANCE=$_DB_INSTANCE
     - VPC_NETWORK=$_VPC_NETWORK
     - VPC_SUBNET=$_VPC_SUBNET

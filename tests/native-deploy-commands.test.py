@@ -23,6 +23,7 @@ API_DIGEST = f'{API_REPOSITORY}@sha256:{"f" * 64}'
 API_RESOURCE = 'projects/salon-reserve-bg/locations/asia-northeast1/services/reservation-api'
 API_REVISION = API_RESOURCE + '/revisions/reservation-api-00021-tokyo'
 DB_ENV = {'name': 'DATABASE_URL', 'valueSource': {'secretKeyRef': {'secret': 'reservation-database-url-tokyo', 'version': '1'}}}
+INVITATION_ENV = {'name': 'INVITATION_TOKEN_KEY', 'valueSource': {'secretKeyRef': {'secret': 'reservation-invitation-token-key', 'version': '1'}}}
 WEB_REPOSITORY = 'asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-web'
 WEB_DIGEST = f'{WEB_REPOSITORY}@sha256:{"c" * 64}'
 REDIRECT_REPOSITORY = WEB_REPOSITORY.replace('/reservation-web', '/reservation-redirect')
@@ -39,8 +40,9 @@ REDIRECT_CONFIG = json.loads((ROOT / 'scripts/apphosting-redirect-config.json').
 WEB_ENV = json.loads((ROOT / 'scripts/web-runtime-env.json').read_text())
 ENV = {
     'PROJECT_ID': 'salon-reserve-bg', 'PROJECT_NUMBER': '42401528382', 'REGION': 'asia-east1',
-    'API_SERVICE': 'reservation-api', 'API_REGION': 'asia-northeast1', 'DATABASE_URL_SECRET': 'reservation-database-url-tokyo:1', 'API_RELAY_SERVICE_ACCOUNT': 'reservation-api-relay@salon-reserve-bg.iam.gserviceaccount.com', 'CHART_PHOTOS_BUCKET': 'salon-reserve-bg-chart-photos',
+    'API_SERVICE': 'reservation-api', 'API_REGION': 'asia-northeast1', 'DATABASE_URL_SECRET': 'reservation-database-url-tokyo:1', 'INVITATION_TOKEN_KEY_SECRET': 'reservation-invitation-token-key:1', 'SES_ROLE_ARN': 'arn:aws:iam::243110548344:role/salon-reserve-ses-sender', 'API_RELAY_SERVICE_ACCOUNT': 'reservation-api-relay@salon-reserve-bg.iam.gserviceaccount.com', 'CHART_PHOTOS_BUCKET': 'salon-reserve-bg-chart-photos',
     'API_RUNTIME_SERVICE_ACCOUNT': 'reservation-api-runtime@salon-reserve-bg.iam.gserviceaccount.com',
+    'EMAIL_RUNTIME_SERVICE_ACCOUNT': 'reservation-email-runtime@salon-reserve-bg.iam.gserviceaccount.com',
     'DB_INSTANCE': 'salon-reserve-db-tokyo', 'VPC_NETWORK': 'salon-reserve-vpc',
     'VPC_SUBNET': 'salon-reserve-run-asia-northeast1', 'APP_HOSTING_BACKEND': 'salon-reserve-web',
     'GIT_REPOSITORY_LINK': LINK, 'COMMIT_SHA': SHA, 'BUILD_ID': BUILD,
@@ -73,6 +75,7 @@ class NativeDeploymentTests(unittest.TestCase):
         self.api_deployed = False
         self.relay_deployed = False
         self.job_deployed = False
+        self.email_job_deployed = False
         env = dict(ENV, **(changes or {}))
         active_app_id = 'native-' + hashlib.sha256(env['BUILD_ID'].encode('utf-8')).hexdigest()[:23]
         active_build_path = f'{BACKEND}/builds/{active_app_id}'
@@ -81,7 +84,10 @@ class NativeDeploymentTests(unittest.TestCase):
             self.events.append(('command', command))
             output = ''
             if command[1:4] == ['run', 'jobs', 'deploy']:
-                self.job_deployed = True
+                if command[4] == 'reservation-email-outbox':
+                    self.email_job_deployed = True
+                else:
+                    self.job_deployed = True
             if command[1:4] == ['run', 'deploy', 'reservation-api']:
                 if '--region=asia-east1' in command:
                     self.relay_deployed = True
@@ -163,14 +169,39 @@ class NativeDeploymentTests(unittest.TestCase):
                     'generation': None if bad == 'job-generation-missing' else '10',
                     'latestCreatedExecution': latest,
                 })
+            if url.endswith('/jobs/reservation-email-outbox'):
+                if bad == 'new-email-job' and not self.email_job_deployed:
+                    raise urllib.error.HTTPError(url, 404, 'missing', {}, Response({}))
+                generation = '6' if self.email_job_deployed else '5'
+                container = {'image': 'wrong' if bad == 'email-image' else API_DIGEST,
+                    'command': ['node'], 'args': ['dist/src/scripts/send-email-outbox.js'],
+                    'env': [
+                        {'name': 'NODE_ENV', 'value': 'production'},
+                        {'name': 'DB_CONNECTIVITY', 'value': 'private-ip'},
+                        {'name': 'AWS_SES_ROLE_ARN', 'value': env['SES_ROLE_ARN']},
+                        {'name': 'PUBLIC_BASE_URL', 'value': WEB_URL},
+                        json.loads(json.dumps(DB_ENV)), json.loads(json.dumps(INVITATION_ENV)),
+                    ]}
+                if bad == 'email-secret':
+                    container['env'][-1]['valueSource']['secretKeyRef']['version'] = 'latest'
+                return Response({'generation': generation, 'observedGeneration': '5' if bad == 'email-unobserved' else generation,
+                    'labels': {'native-deploy-build': 'wrong' if bad == 'email-owner' else env['BUILD_ID']},
+                    'reconciling': bad == 'email-reconciling',
+                    'terminalCondition': {'state': 'CONDITION_FAILED' if bad == 'email-failed' else 'CONDITION_SUCCEEDED'},
+                    'template': {'taskCount': 1, 'template': {'maxRetries': 0,
+                        'serviceAccount': 'wrong' if bad == 'email-sa' else ENV['EMAIL_RUNTIME_SERVICE_ACCOUNT'],
+                        'vpcAccess': {'egress': 'PRIVATE_RANGES_ONLY', 'networkInterfaces': [{'network': ENV['VPC_NETWORK'], 'subnetwork': ENV['VPC_SUBNET']}]},
+                        'containers': [container]}}})
             if url.endswith('/services/reservation-api'):
                 if '/locations/asia-east1/' in url:
                     return Response({'generation': '41' if self.relay_deployed else '40', 'observedGeneration': '40' if bad == 'relay-unobserved' else '41', 'labels': {'native-deploy-build': env['BUILD_ID']}, 'terminalCondition': {'state': 'CONDITION_SUCCEEDED'}, 'latestReadyRevision': 'reservation-api-00042-relay', 'latestCreatedRevision': 'reservation-api-00042-relay', 'trafficStatuses': [{'revision': 'reservation-api-00042-relay', 'percent': 50 if bad == 'relay-split' else 100}], 'template': {'serviceAccount': ENV['API_RELAY_SERVICE_ACCOUNT'], 'containers': [{'image': RELAY_DIGEST, 'env': [{'name': 'UPSTREAM_ORIGIN', 'value': 'https://reservation-api-42401528382.asia-northeast1.run.app'}, {'name': 'MAINTENANCE_MODE', 'value': 'false'}]}]}})
                 if bad == 'new-api' and not self.api_deployed:
                     raise urllib.error.HTTPError(url, 404, 'missing', {}, Response({}))
-                container = {'image': 'wrong' if bad == 'api-image' else env['API_IMAGE'], 'env': [json.loads(json.dumps(DB_ENV))]}
+                container = {'image': 'wrong' if bad == 'api-image' else env['API_IMAGE'], 'env': [json.loads(json.dumps(DB_ENV)), json.loads(json.dumps(INVITATION_ENV))]}
                 if bad == 'api-secret':
                     container['env'][0]['valueSource']['secretKeyRef']['version'] = 'latest'
+                if bad == 'api-invitation-secret':
+                    container['env'][1]['valueSource']['secretKeyRef']['version'] = 'latest'
                 return Response({'generation': '20' if not self.api_deployed or bad == 'api-stale' else '21',
                     'observedGeneration': '20' if bad == 'api-unobserved' else '21',
                     'labels': {'native-deploy-build': 'wrong' if bad == 'api-owner' else env['BUILD_ID']},
@@ -198,9 +229,11 @@ class NativeDeploymentTests(unittest.TestCase):
                     'trafficStatuses': [{'revision': WEB_REVISION.split('/')[-1] if bad == 'web-canonical' else WEB_REVISION, 'percent': 99 if bad == 'web-traffic' else 100}],
                 })
             if url.endswith('/revisions/reservation-api-00021-tokyo'):
-                container = {'image': 'wrong' if bad == 'api-revision-image' else API_DIGEST, 'env': [json.loads(json.dumps(DB_ENV))]}
+                container = {'image': 'wrong' if bad == 'api-revision-image' else API_DIGEST, 'env': [json.loads(json.dumps(DB_ENV)), json.loads(json.dumps(INVITATION_ENV))]}
                 if bad == 'api-revision-secret':
                     container['env'][0]['valueSource']['secretKeyRef']['secret'] = 'reservation-database-url'
+                if bad == 'api-revision-invitation-secret':
+                    container['env'][1]['valueSource']['secretKeyRef']['secret'] = 'wrong'
                 return Response({'serviceAccount': 'wrong' if bad == 'api-revision-sa' else ENV['API_RUNTIME_SERVICE_ACCOUNT'], 'containers': [container]})
             if url.endswith('/revisions/reservation-api-00042-relay'):
                 return Response({'containers': [{'image': 'wrong' if bad == 'relay-revision-image' else RELAY_DIGEST}]})
@@ -364,7 +397,7 @@ class NativeDeploymentTests(unittest.TestCase):
     def test_production_commands_and_rollout_use_one_commit(self):
         self.run_deploy()
         mutations = [command for command in self.commands if command[1:2] == ['run'] and (command[2] == 'deploy' or command[3] in ('deploy', 'execute'))]
-        self.assertEqual([command[1:4] for command in mutations], [['run', 'jobs', 'deploy'], ['run', 'jobs', 'execute'], ['run', 'deploy', 'reservation-api'], ['run', 'deploy', 'reservation-api'], ['run', 'deploy', 'salon-reserve-web']])
+        self.assertEqual([command[1:4] for command in mutations], [['run', 'jobs', 'deploy'], ['run', 'jobs', 'execute'], ['run', 'deploy', 'reservation-api'], ['run', 'jobs', 'deploy'], ['run', 'deploy', 'reservation-api'], ['run', 'deploy', 'salon-reserve-web']])
         self.assertIn(f"--image={ENV['API_IMAGE']}", mutations[0])
         self.assertIn('--set-secrets=DATABASE_URL=reservation-database-url-tokyo:1', mutations[0])
         self.assertIn('--max-retries=0', mutations[0])
@@ -372,6 +405,11 @@ class NativeDeploymentTests(unittest.TestCase):
         self.assertIn('--wait', mutations[1])
         self.assertIn(f"--image={ENV['API_IMAGE']}", mutations[2])
         self.assertIn(f'--labels=native-deploy-build={BUILD}', mutations[2])
+        for value in (f'--image={API_DIGEST}', f"--service-account={ENV['EMAIL_RUNTIME_SERVICE_ACCOUNT']}",
+                      '--set-secrets=DATABASE_URL=reservation-database-url-tokyo:1,INVITATION_TOKEN_KEY=reservation-invitation-token-key:1',
+                      f'--set-env-vars=NODE_ENV=production,DB_CONNECTIVITY=private-ip,AWS_SES_ROLE_ARN={ENV["SES_ROLE_ARN"]},PUBLIC_BASE_URL={WEB_URL}',
+                      '--command=node', '--args=dist/src/scripts/send-email-outbox.js', '--tasks=1', '--max-retries=0'):
+            self.assertIn(value, mutations[3])
         api_environment = next(value for value in mutations[2] if value.startswith("--set-env-vars="))
         self.assertIn("MEMBER_BOOKING_TENANTS=mens-gentle:gentle;missmrs-takamatsu:missmrs", api_environment)
         self.assertNotIn("FIREBASE_AUTH_EMULATOR_HOST", api_environment)
@@ -384,6 +422,7 @@ class NativeDeploymentTests(unittest.TestCase):
             ('jobDeployRequested', '10'),
             ('jobExecutionRequested', 'projects/salon-reserve-bg/locations/asia-northeast1/jobs/reservation-db-migrate/executions/previous'),
             ('apiDeployRequested', '20'),
+            ('emailJobDeployRequested', '5'),
             ('apiRelayDeployRequested', '40'),
             ('webDeployRequested', '30'),
             ('appBuildRequested', None),
@@ -411,7 +450,7 @@ class NativeDeploymentTests(unittest.TestCase):
                 self.assertEqual(following[1][0:2], ['gcloud', 'run'])
 
     def test_failed_intent_record_never_runs_its_mutation(self):
-        phases = ['jobDeployRequested', 'jobExecutionRequested', 'apiDeployRequested', 'apiRelayDeployRequested', 'webDeployRequested', 'appBuildRequested', 'appRolloutRequested']
+        phases = ['jobDeployRequested', 'jobExecutionRequested', 'apiDeployRequested', 'emailJobDeployRequested', 'apiRelayDeployRequested', 'webDeployRequested', 'appBuildRequested', 'appRolloutRequested']
         for completed, phase in enumerate(phases):
             with self.subTest(phase=phase):
                 with self.assertRaises(subprocess.CalledProcessError):
@@ -602,14 +641,14 @@ class NativeDeploymentTests(unittest.TestCase):
         self.assertEqual(intent[intent.index('--baseline') + 1], '0')
 
     def test_initial_tokyo_api_and_job_use_zero_generation_baseline(self):
-        for bad, phase in (('new-api', 'apiDeployRequested'), ('new-job', 'jobDeployRequested')):
+        for bad, phase in (('new-api', 'apiDeployRequested'), ('new-job', 'jobDeployRequested'), ('new-email-job', 'emailJobDeployRequested')):
             with self.subTest(bad=bad):
                 self.run_deploy(bad=bad)
                 intent = next(command for command in self.commands if phase in command)
                 self.assertEqual(intent[intent.index('--baseline') + 1], '0')
 
     def test_unapproved_api_region_database_secret_and_relay_identity_fail_closed(self):
-        for key in ('API_REGION', 'DB_INSTANCE', 'VPC_SUBNET', 'DATABASE_URL_SECRET', 'API_RELAY_SERVICE_ACCOUNT', 'API_RELAY_IMAGE'):
+        for key in ('API_REGION', 'DB_INSTANCE', 'VPC_SUBNET', 'DATABASE_URL_SECRET', 'INVITATION_TOKEN_KEY_SECRET', 'SES_ROLE_ARN', 'EMAIL_RUNTIME_SERVICE_ACCOUNT', 'API_RELAY_SERVICE_ACCOUNT', 'API_RELAY_IMAGE'):
             with self.subTest(key=key), self.assertRaises(SystemExit):
                 self.run_deploy({key: 'unapproved'})
             self.assertEqual(self.commands, [])
@@ -630,13 +669,21 @@ class NativeDeploymentTests(unittest.TestCase):
             self.assertFalse(self.real_rollout_created)
 
     def test_unverified_tokyo_api_never_switches_legacy_relay(self):
-        for bad in ('api-stale', 'api-image', 'api-owner', 'api-unobserved', 'api-reconciling', 'api-not-ready', 'api-split', 'api-old-traffic', 'api-sa', 'api-secret', 'api-revision-image', 'api-revision-sa', 'api-revision-secret'):
+        for bad in ('api-stale', 'api-image', 'api-owner', 'api-unobserved', 'api-reconciling', 'api-not-ready', 'api-split', 'api-old-traffic', 'api-sa', 'api-secret', 'api-invitation-secret', 'api-revision-image', 'api-revision-sa', 'api-revision-secret', 'api-revision-invitation-secret'):
             with self.subTest(bad=bad), self.assertRaises(RuntimeError):
                 self.run_deploy(bad=bad)
             self.assertFalse(self.relay_deployed)
             self.assertFalse(self.web_deployed)
             self.assertFalse(self.real_rollout_created)
             self.assertFalse(any('apiRelayDeployRequested' in command for command in self.commands))
+
+    def test_unverified_email_job_never_switches_legacy_relay(self):
+        for bad in ('email-image', 'email-owner', 'email-unobserved', 'email-reconciling', 'email-failed', 'email-sa', 'email-secret'):
+            with self.subTest(bad=bad), self.assertRaises(RuntimeError):
+                self.run_deploy(bad=bad)
+            self.assertFalse(self.relay_deployed)
+            self.assertFalse(self.web_deployed)
+            self.assertFalse(self.real_rollout_created)
 
     def test_invalid_tokyo_configuration_prevents_cloud_access(self):
         for key in ('WEB_REGION', 'WEB_SERVICE', 'WEB_RUNTIME_SERVICE_ACCOUNT', 'REDIRECT_IMAGE'):

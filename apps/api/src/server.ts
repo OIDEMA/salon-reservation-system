@@ -130,7 +130,9 @@ const settingsInputSchema = z.object({
   cancellationMessage: z.string().max(4000).optional(),
   friendMessage: z.string().max(4000).optional(),
   preReservationMessage: z.string().max(4000).optional(),
-  acceptingReservations: z.boolean().optional()
+  acceptingReservations: z.boolean().optional(),
+  notifyReservationEmail: z.boolean().optional(),
+  notificationEmail: z.string().trim().email().max(254).nullable().optional()
 });
 
 const staffInputSchema = z.object({
@@ -1202,6 +1204,29 @@ server.post("/api/reservations", async (request, reply) => {
         userAgent: request.headers["user-agent"]
       }
     });
+    if (created.status !== "CANCELLED" && created.status !== "NO_SHOW") {
+      const settings = await transaction.salonSettings.findUnique({
+        where: { tenantId_salonId: { tenantId: context.tenant.id, salonId: salon.id } },
+        select: { notifyReservationEmail: true, notificationEmail: true }
+      });
+      const recipient = settings?.notificationEmail?.trim();
+      if (settings?.notifyReservationEmail && recipient && z.string().email().safeParse(recipient).success) {
+        await transaction.emailOutbox.create({ data: {
+          eventKey: `reservation.created:${created.id}`,
+          eventType: "reservation.created",
+          tenantId: context.tenant.id,
+          salonId: salon.id,
+          recipientEmail: recipient,
+          payload: {
+            reservationId: created.id,
+            salonName: salon.name,
+            startsAt: startsAt.toISOString(),
+            serviceName: service.name,
+            tenantSlug: context.tenant.slug
+          }
+        } });
+      }
+    }
     return created;
   });
 

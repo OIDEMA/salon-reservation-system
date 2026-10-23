@@ -81,6 +81,13 @@ class FakeGoogleApi:
                 "name": EXECUTION_NAME, "completionStatus": "EXECUTION_SUCCEEDED",
             },
         }
+        self.email_job = {
+            "generation": "10", "observedGeneration": "10",
+            "labels": {"native-deploy-build": (owner or {}).get("buildId", BUILD_ID)},
+            "template": {"template": {"serviceAccount": native_deploy.EMAIL_RUNTIME_SERVICE_ACCOUNT,
+                "containers": [{"image": EXECUTION_IMAGE}]}},
+            "terminalCondition": {"state": "CONDITION_SUCCEEDED"},
+        }
         self.execution = {
             "completionTime": "2026-10-13T00:00:00Z",
             "template": {"containers": [{"image": EXECUTION_IMAGE}]},
@@ -150,6 +157,7 @@ class FakeGoogleApi:
             else:
                 resource = {
                     run_base + "/jobs/reservation-db-migrate": self.job,
+                    run_base + "/jobs/reservation-email-outbox": self.email_job,
                     run_base + "/services/reservation-api": self.service,
                 }[parsed.path]
             if isinstance(resource, Exception):
@@ -586,6 +594,56 @@ class ProductionLeaseTests(unittest.TestCase):
                     api.relay["reconciling"] = True
                 else:
                     api.relay = native_deploy.ApiError(404)
+                lease.release()
+                self.assertEqual(api.deletes(), [])
+
+    def test_email_job_intent_records_api_digest_and_releases_after_reconciliation(self):
+        api = FakeGoogleApi()
+        lease = self.lease(api)
+        lease.acquire()
+        native_deploy.mark_deployment_intent(api, lease.generation, "emailJobDeployRequested", "9")
+        self.assertEqual(api.intents()["emailJobDeployRequested"], {
+            "baselineGeneration": "9", "expectedEmailJobDigest": DIGEST,
+        })
+        self.assertEqual(self.digest_lookup.call_args.args[0][5], IMAGE)
+        lease.release()
+        self.assertIsNone(api.owner)
+
+    def test_email_job_intent_retains_lease_until_exact_owned_revision_finishes(self):
+        for bad in ("missing", "stale", "owner", "service-account", "image", "tag", "reconciling", "unobserved", "unknown"):
+            with self.subTest(bad=bad):
+                api = FakeGoogleApi()
+                lease = self.lease(api)
+                lease.acquire()
+                native_deploy.mark_deployment_intent(api, lease.generation, "emailJobDeployRequested", "9")
+                if bad == "missing":
+                    api.email_job = native_deploy.ApiError(404)
+                elif bad == "stale":
+                    api.email_job["generation"] = "9"
+                elif bad == "owner":
+                    api.email_job["labels"]["native-deploy-build"] = OTHER_BUILD_ID
+                elif bad == "service-account":
+                    api.email_job["template"]["template"]["serviceAccount"] = "wrong@example.com"
+                elif bad in ("image", "tag"):
+                    api.email_job["template"]["template"]["containers"][0]["image"] = WEB_DIGEST_IMAGE if bad == "image" else IMAGE
+                elif bad == "reconciling":
+                    api.email_job["reconciling"] = True
+                elif bad == "unobserved":
+                    api.email_job["observedGeneration"] = "9"
+                else:
+                    api.email_job["terminalCondition"]["state"] = "CONDITION_UNKNOWN"
+                lease.release()
+                self.assertEqual(api.deletes(), [])
+
+    def test_email_job_intent_rejects_missing_or_invalid_digest_metadata(self):
+        for digest in (None, "", "sha256:invalid"):
+            with self.subTest(digest=digest):
+                api = FakeGoogleApi()
+                lease = self.lease(api)
+                lease.acquire()
+                api.custom_metadata[native_deploy.INTENT_METADATA_KEY] = json.dumps({
+                    "emailJobDeployRequested": {"baselineGeneration": "9", "expectedEmailJobDigest": digest}
+                })
                 lease.release()
                 self.assertEqual(api.deletes(), [])
 

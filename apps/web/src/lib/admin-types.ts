@@ -29,6 +29,7 @@ export type SalonSettings = {
   candidateIntervalMinutes: number;
   calendarDefaultView: string;
   calendarDisplayMode: string;
+  notificationEmail: string | null;
   notifyReservationEmail: boolean;
   notifyReservationLine: boolean;
   notifyCancellation: boolean;
