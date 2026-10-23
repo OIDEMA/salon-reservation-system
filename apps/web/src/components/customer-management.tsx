@@ -100,12 +100,14 @@ export function CustomerManagement({ initialPage }: { initialPage: AdminCustomer
             <Search size={18} />
             <input value={query} onChange={(event) => searchCustomers(event.target.value)} maxLength={100} placeholder={can("chart.read") ? "氏名・カナ・電話・タグ・メモで検索" : "氏名・カナ・電話・タグで検索"} />
           </label>
-          {canWrite ? <TenantLink className="primaryButton" href="/customers/new">
-            <Plus size={17} />新規登録
-          </TenantLink> : null}
-          {tenantSlug === "missmrs-takamatsu" && canWrite && can("chart.write") ? <TenantLink className="secondaryButton" href="/customers/import">顧客データを取り込む</TenantLink> : null}
+          {canWrite ? <div className="customerToolbarActions">
+            <TenantLink className="primaryButton" href="/customers/new">
+              <Plus size={17} />新規登録
+            </TenantLink>
+            {tenantSlug === "missmrs-takamatsu" && can("chart.write") ? <TenantLink className="secondaryButton" href="/customers/import">顧客データを取り込む</TenantLink> : null}
+          </div> : null}
         </div>
-        <nav className="masterToolbar" aria-label="顧客一覧のページ">
+        <nav className="customerPagination" aria-label="顧客一覧のページ">
           <span aria-live="polite">{listBusy ? "検索中..." : `${customerPage.total.toLocaleString("ja-JP")}件 / ${customerPage.page} / ${customerPage.totalPages}ページ`}</span>
           <div className="adminActions">
             <button className="secondaryButton" type="button" disabled={listBusy || customerPage.page <= 1} onClick={() => setRequestedPage(customerPage.page - 1)}>前へ</button>
@@ -135,7 +137,7 @@ export function CustomerManagement({ initialPage }: { initialPage: AdminCustomer
         {selected ? (
           <div className="customerDetail">
             <div className="detailPanelHeader">
-              <div><span>Customer</span><h2>{selected.name}</h2><p>{selected.kana} / {selected.phone || "電話未登録"}</p></div>
+              <div><h2>{selected.name}</h2><p>{selected.kana} / {selected.phone || "電話未登録"}</p></div>
               {canWrite ? <div className="adminActions">
                 <TenantLink className="secondaryButton" href={"/customers/" + encodeURIComponent(selected.id) + "/edit"}><UserRoundPen size={17} />編集</TenantLink>
                 <button className="dangerButton large" type="button" disabled={busy} onClick={() => void deleteCustomer()}><Trash2 size={17} />削除</button>

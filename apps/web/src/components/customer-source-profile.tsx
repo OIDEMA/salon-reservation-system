@@ -24,10 +24,10 @@ export function CustomerSourceProfiles({ profiles }: { profiles?: CustomerImport
     ];
     const notes = ["初回来店日", "来店きっかけ", "要注意チェック", "血液型", "お客様メモ", "その他1", "その他2", "その他3"];
     return <section key={`${source.sourceStoreId}:${source.externalCustomerId}`} className="karteBox">
-      <div><h3>サロンボードから移行した情報</h3>
+      <div><h3>顧客の詳細情報</h3>
         <dl>{contacts.map(([label, value]) => value ? <div key={label}><dt>{label}</dt><dd>{value}</dd></div> : null)}
-          {source.sourceVisitCount !== null ? <div><dt>移行前の来店回数</dt><dd>{source.sourceVisitCount}回</dd></div> : null}
-          {source.sourceLastVisitDateRaw ? <div><dt>移行前の最終来店</dt><dd>{source.sourceLastVisitDateRaw}</dd></div> : null}
+          {source.sourceVisitCount !== null ? <div><dt>過去の来店回数</dt><dd>{source.sourceVisitCount}回</dd></div> : null}
+          {source.sourceLastVisitDateRaw ? <div><dt>過去の最終来店</dt><dd>{source.sourceLastVisitDateRaw}</dd></div> : null}
           {can("chart.read") ? notes.map((label) => source.profile?.[label] ? <div key={label}><dt>{label}</dt><dd style={{ whiteSpace: "pre-wrap" }}>{source.profile[label]}</dd></div> : null) : null}
         </dl>
       </div>

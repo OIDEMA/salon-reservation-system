@@ -45,7 +45,7 @@ test("履歴カードは原状態を安全に表示し、時間変更・会計�
   assert.doesNotMatch(html, /data-resize-handle|<button|draggable="true"|\/edit|\/checkout|<script>/);
   const missing = render(createElement(HistoricalScheduleCard, { reservation: { ...history, endsAt: null, endTime: null }, style: {} }), ["reservation.read"]);
   assert.match(missing, /終了時刻未登録/); assert.doesNotMatch(missing, /から11:00|10:00–11:00/);
-  assert.match(historicalScheduleLabel(history), /移行した予約履歴を開く/);
+  assert.match(historicalScheduleLabel(history), /予約履歴を開く/);
 });
 
 test("一覧でもキャンセルを含む履歴全件が詳細リンクになり、原状態や担当を保持する", () => {

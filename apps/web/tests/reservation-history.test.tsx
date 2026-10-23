@@ -52,7 +52,7 @@ test("予約履歴の原文は電子カルテ閲覧権限を要求し、重複�
   assert.match(allowed, /&lt;script&gt;private&lt;\/script&gt;/);
   assert.doesNotMatch(allowed, /<script>|<button|checkout\/new|charts\/new/);
   assert.doesNotMatch(render(createElement(ReservationHistoryDetail, { history: detail }), ["chart.read"]), /移行顧客/);
-  assert.match(render(createElement(ReservationHistoryDetail, { history: { ...detail, rawHeaders: undefined, rawValues: undefined } }), ["reservation.read", "chart.read"]), /全項目を取得できません/);
+  assert.match(render(createElement(ReservationHistoryDetail, { history: { ...detail, rawHeaders: undefined, rawValues: undefined } }), ["reservation.read", "chart.read"]), /詳細情報を取得できません/);
   assert.doesNotMatch(render(createElement(ReservationHistoryDetail, { history: { ...detail, canReadOriginal: false } }), ["reservation.read", "chart.read"]), /元のメモ|次のメモ|private/);
 });
 

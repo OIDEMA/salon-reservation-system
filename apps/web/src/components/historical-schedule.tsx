@@ -6,7 +6,7 @@ import { tenantPath } from "@/lib/tenant-routing";
 import { usePermissions, useTenantSlug } from "./tenant-provider";
 
 export function historicalScheduleLabel(reservation: HistoricalScheduleReservation) {
-  return `${reservation.customerName} ${reservation.startTime}${reservation.endTime ? `から${reservation.endTime}` : "。終了時刻未登録"}。${reservation.staffName || "担当未登録"}。${reservation.sourceStatus}。移行した予約履歴を開く`;
+  return `${reservation.customerName} ${reservation.startTime}${reservation.endTime ? `から${reservation.endTime}` : "。終了時刻未登録"}。${reservation.staffName || "担当未登録"}。${reservation.sourceStatus}。予約履歴を開く`;
 }
 
 export function HistoricalScheduleCard({ reservation, style, editable = false, dragging = false, invalidDrop = false,
@@ -45,8 +45,8 @@ export function HistoricalScheduleAgenda({ reservations }: { reservations: Histo
   const tenantSlug = useTenantSlug();
   const { can } = usePermissions();
   if (!can("reservation.read") || !reservations.length) return null;
-  return <section className="agendaView historicalAgenda" aria-label="移行した予約履歴">
-    <h2>移行した予約履歴</h2>
+  return <section className="agendaView historicalAgenda" aria-label="予約履歴">
+    <h2>予約履歴</h2>
     {reservations.map((reservation) => <a key={reservation.id} className="agendaItem historicalAgendaItem"
       href={tenantPath(tenantSlug, `/reservations/history/${encodeURIComponent(reservation.id)}`)} aria-label={historicalScheduleLabel(reservation)}>
       <span>{reservation.startTime}{reservation.endTime ? `–${reservation.endTime}` : <small>終了時刻未登録</small>}</span>

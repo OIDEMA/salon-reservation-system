@@ -32,7 +32,7 @@ test("移行前の実績を区別して表示し、元メモはカルテ閲覧�
   };
   const element = createElement(CustomerSourceProfiles, { profiles: [profile] });
   const basic = render(element, ["customer.read"]);
-  assert.match(basic, /移行前の来店回数/);
+  assert.match(basic, /過去の来店回数/);
   assert.match(basic, /12回/);
   assert.match(basic, /synthetic@example.invalid/);
   assert.doesNotMatch(basic, /観察内容/);

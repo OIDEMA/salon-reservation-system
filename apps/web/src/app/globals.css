@@ -436,22 +436,6 @@ a {
   box-shadow: var(--shadow);
 }
 
-.timelineHelp {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 18px;
-  padding: 8px 2px;
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.timelineHelp span::before {
-  content: "•";
-  margin-right: 6px;
-  color: var(--teal-dark);
-}
-
 .timelineMessage {
   margin-bottom: 8px;
   border: 1px solid;
@@ -1518,6 +1502,17 @@ a {
   overflow: hidden;
 }
 
+.calendarMonthHeading {
+  border-bottom: 1px solid var(--line);
+  padding: 14px 16px;
+  background: var(--surface);
+}
+
+.calendarMonthHeading h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
 .calendarWeekHeader,
 .calendarMonthGrid {
   display: grid;
@@ -2547,11 +2542,13 @@ a {
 }
 
 .customerListPanel {
+  min-width: 0;
   border-right: 1px solid var(--line);
   background: #f8fafc;
 }
 
 .customerToolbar,
+.customerPagination,
 .masterToolbar {
   display: flex;
   align-items: center;
@@ -2561,8 +2558,39 @@ a {
   padding: 16px;
 }
 
+.customerToolbar {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.customerToolbarActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .customerToolbar .searchBox {
+  width: 100%;
   min-width: 0;
+}
+
+.customerToolbar .searchBox input {
+  min-width: 0;
+  font-size: 14px;
+}
+
+.customerToolbar .searchBox > svg {
+  flex-shrink: 0;
+}
+
+.customerPagination {
+  flex-wrap: wrap;
+  padding: 12px 16px;
+}
+
+.customerPagination > span {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .customerRows {

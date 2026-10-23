@@ -629,14 +629,7 @@ export function ReservationDashboard({ initialData, renderId }: { initialData?: 
 
             {loadError ? <div className="adminNotice">{loadError}</div> : null}
             {!loadError && !dashboard.salon ? <div className="adminNotice">店舗情報が未登録です。基本設定から店舗を登録してください。</div> : null}
-            {dashboard.historicalHasMore ? <div className="adminNotice">この日の移行履歴は表示上限を超えています。<a href={tenantPath(tenantSlug, "/reservations/history")}>予約履歴一覧</a>で検索してください。</div> : null}
-            {canWrite && viewMode === "timeline" && dashboard.salon ? (
-              <div className="timelineHelp">
-                <span>空き枠をクリック／ドラッグして予約登録</span>
-                <span>予約をドラッグして移動</span>
-                <span>右端をドラッグして時間変更</span>
-              </div>
-            ) : null}
+            {dashboard.historicalHasMore ? <div className="adminNotice">この日の予約履歴は表示上限を超えています。<a href={tenantPath(tenantSlug, "/reservations/history")}>予約履歴一覧</a>で検索してください。</div> : null}
             {scheduleMessage ? (
               <DismissibleMessage
                 className={`timelineMessage ${scheduleMessage.type === "error" ? "isError" : "isSuccess"}`}

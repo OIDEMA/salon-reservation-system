@@ -32,6 +32,7 @@ import { customerAccountingTotals } from "./accounting-stats.js";
 import { customerLookupQuerySchema, lookupCustomers, registeredCustomerPhoneExists } from "./customer-lookup.js";
 import { customerPage, customerPageQuerySchema } from "./customer-page.js";
 import { reservationPage, reservationPageQuerySchema, reservationOptions, reservationOptionsQuerySchema } from "./reservation-page.js";
+import { emptyReservationCalendar, reservationCalendar, reservationCalendarQuerySchema } from "./reservation-calendar.js";
 import { dashboardQuerySchema, dashboardHistory, dashboardReservationWhere, dashboardScheduleRows, dashboardDisplayHours,
   japanDayBounds, scheduleTime, staffScheduleDependencyCount, type DashboardFilters } from "./dashboard-history.js";
 import { requestedSalonId, requireAuthenticatedUser, requireTenantContext, type TenantContext } from "./tenant-context.js";
@@ -1088,6 +1089,17 @@ server.get("/api/reservations", async (request, reply) => {
     take: 1000
   });
   return reservations.map(reservationResponse);
+});
+
+server.get("/api/reservations/calendar", async (request, reply) => {
+  const context = await requireTenantContext(request, reply);
+  if (!context) return;
+  const { month } = reservationCalendarQuerySchema.parse(request.query);
+  const salon = await findScopedSalon(context, request);
+  const result = salon
+    ? await reservationCalendar(prisma, { tenantId: context.tenant.id, salonId: salon.id }, month)
+    : emptyReservationCalendar(month);
+  return reply.header("Cache-Control", "private, no-store").send(result);
 });
 
 server.get("/api/reservations/page", async (request, reply) => {

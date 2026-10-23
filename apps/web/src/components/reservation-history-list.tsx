@@ -49,7 +49,7 @@ export function ReservationHistoryList({ initialPage, initialFilters = emptyHist
   return <div className="reservationManager">
     <form className="searchPanel reservationSearchControls historySearchControls" onSubmit={(event) => { event.preventDefault(); void loadPage(1, filters); }}>
       <label className="searchBox wide"><Search size={18} /><input aria-label="予約履歴を検索" value={filters.q} maxLength={100} onChange={(event) => setFilters({ ...filters, q: event.target.value })} placeholder="顧客名・カナ・担当・メニュー・予約番号" /></label>
-      <select aria-label="移行元の予約状態" value={filters.sourceStatus} onChange={(event) => setFilters({ ...filters, sourceStatus: event.target.value })}>
+      <select aria-label="予約の状態" value={filters.sourceStatus} onChange={(event) => setFilters({ ...filters, sourceStatus: event.target.value })}>
         <option value="">すべての状態</option>{historyPage.statusOptions.map((status) => <option key={status} value={status}>{status}</option>)}
       </select>
       <input type="date" aria-label="開始日" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} />
@@ -67,11 +67,12 @@ export function ReservationHistoryList({ initialPage, initialFilters = emptyHist
     </nav>
     <section className="tablePanel" aria-busy={busy}>
       <table className="adminTable reservationTable historyTable">
-        <thead><tr><th>日時</th><th>顧客</th><th>メニュー</th><th>担当</th><th>予約時金額</th><th>移行元の状態</th><th>経路</th><th>詳細</th></tr></thead>
+        <thead><tr><th>日時</th><th>終了時刻</th><th>顧客</th><th>メニュー</th><th>担当</th><th>予約時金額</th><th>状態</th><th>経路</th><th>詳細</th></tr></thead>
         <tbody>
-          {!historyPage.items.length ? <tr><td colSpan={8}>該当する予約履歴はありません。</td></tr> : null}
+          {!historyPage.items.length ? <tr><td colSpan={9}>該当する予約履歴はありません。</td></tr> : null}
           {historyPage.items.map((item) => <tr key={item.id}>
-            <td><strong>{historyDate(item.startsAt)}</strong>{item.endsAt ? <small>終了 {historyDate(item.endsAt, { year: undefined, month: undefined, day: undefined })}</small> : item.durationMinutes !== null ? <small>{item.durationMinutes}分</small> : null}</td>
+            <td><strong>{historyDate(item.startsAt)}</strong>{!item.endsAt && item.durationMinutes !== null ? <small>{item.durationMinutes}分</small> : null}</td>
+            <td>{historyDate(item.endsAt, { year: undefined, month: undefined, day: undefined })}</td>
             <td>{item.customerName}</td>
             <td className="historyMenuCell">{item.menuText || "未登録"}</td>
             <td>{item.staffName || "担当未登録"}</td>
