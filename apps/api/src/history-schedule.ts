@@ -22,7 +22,7 @@ type Schedule = { startsAt: Date; endsAt: Date | null; staffId: string | null };
 export function moveHistoricalSchedule(previous: Schedule, input: z.infer<typeof historyScheduleInputSchema>): Schedule {
   const startsAt = new Date(`${input.date}T${input.startTime}:00+09:00`);
   const duration = previous.endsAt ? previous.endsAt.getTime() - previous.startsAt.getTime() : null;
-  if (duration !== null && duration <= 0) throw operationError(400, "元の予約時間を確認してください。");
+  if (duration !== null && duration <= 0) throw operationError(400, "予約時間を確認してください。");
   return { startsAt, endsAt: duration === null ? null : new Date(startsAt.getTime() + duration), staffId: input.staffId };
 }
 

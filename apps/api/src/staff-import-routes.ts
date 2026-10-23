@@ -11,12 +11,12 @@ function safeRoute(handler: Handler): Handler {
   return async (request, reply) => {
     try { return await handler(request, reply); }
     catch (error) {
-      if (error instanceof z.ZodError) return reply.code(400).send({ code: "INVALID_IMPORT", message: error.issues[0]?.message ?? "移行データを確認してください。" });
+      if (error instanceof z.ZodError) return reply.code(400).send({ code: "INVALID_IMPORT", message: error.issues[0]?.message ?? "取込データを確認してください。" });
       if (error instanceof Error && "statusCode" in error && typeof error.statusCode === "number" && [400, 403, 404, 409].includes(error.statusCode)) {
         return reply.code(error.statusCode).send({ code: "IMPORT_REJECTED", message: error.message });
       }
       request.log.error({ errorName: error instanceof Error ? error.name : "UnknownError", errorCode: error instanceof Prisma.PrismaClientKnownRequestError ? error.code : undefined }, "staff operation failed");
-      return reply.code(500).send({ code: "STAFF_OPERATION_FAILED", message: "処理を完了できませんでした。同じ移行データで再試行できます。" });
+      return reply.code(500).send({ code: "STAFF_OPERATION_FAILED", message: "処理を完了できませんでした。同じ取込データで再試行できます。" });
     }
   };
 }
@@ -25,13 +25,13 @@ export async function registerStaffImportRoutes(server: FastifyInstance, options
   server.post("/api/admin/staff-imports/salonboard", { bodyLimit: STAFF_IMPORT_BODY_LIMIT }, safeRoute(async (request, reply) => {
     const context = await requireContext(request, reply, "master.write");
     if (!context) return;
-    if (context.tenant.slug !== STAFF_IMPORT_TARGET_TENANT) throw operationError(403, "この移行元はミスミセス高松店だけに取り込めます。");
+    if (context.tenant.slug !== STAFF_IMPORT_TARGET_TENANT) throw operationError(403, "このデータはミスミセス高松店だけに取り込めます。");
     // The complete bounded snapshot is validated before the first database write.
     const { envelope, checksum } = prepareStaffImport(request.body);
     const scope = { tenantId: context.tenant.id, salonId: context.salon.id };
     const result = await runSerializable(async (tx) => {
       await lockOperation(tx, context, "master.write");
-      if (context.tenant.slug !== STAFF_IMPORT_TARGET_TENANT) throw operationError(403, "この移行元はミスミセス高松店だけに取り込めます。");
+      if (context.tenant.slug !== STAFF_IMPORT_TARGET_TENANT) throw operationError(403, "このデータはミスミセス高松店だけに取り込めます。");
       let createdCount = 0; let skippedCount = 0;
       for (const record of envelope.records) {
         const identity = { ...scope, source: envelope.source, sourceStoreId: envelope.sourceStoreId, externalRecordKey: record.externalRecordKey };

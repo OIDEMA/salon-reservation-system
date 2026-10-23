@@ -5,12 +5,19 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { StaffImport, StaffImportLink } from "../src/components/staff-import";
 import { StaffSourceDetails } from "../src/components/staff-source-details";
 import { TenantProvider } from "../src/components/tenant-provider";
+import { staffCommentForForm } from "../src/lib/staff-form";
 
 function render(children: ReactNode, permissions: string[], tenantSlug = "missmrs-takamatsu") {
   return renderToStaticMarkup(createElement(TenantProvider, {
     tenantSlug, memberships: [{ role: "STAFF", permissions, tenant: { id: "tenant-test", slug: tenantSlug, name: "テスト", salons: [{ id: "salon-test", name: "テスト店" }] } }], children
   }));
 }
+test("旧定型コメントだけを中立化し、手入力のコメントは保持する", () => {
+  assert.equal(staffCommentForForm("サロンボードの過去予約から移行した担当（予約受付停止）。元情報は担当名の記録です。"), "予約履歴の担当名を記録したスタッフです（予約受付停止）。");
+  for (const comment of [null, "", "接客メモ", "移行元のお客様へ確認済み", "サロンボードの過去予約から移行した担当（予約受付停止）。元情報は担当名の記録です。追記あり"]) {
+    assert.equal(staffCommentForForm(comment), comment);
+  }
+});
 test("スタッフ移行はマスタ編集権限と正しい移行先を要求する", () => {
   for (const permission of [[], ["master.read"], ["access.write"]]) {
     assert.doesNotMatch(render(createElement(StaffImport), permission), /type="file"/);
@@ -25,10 +32,10 @@ test("取得元の設定は現在の予約設定と区別し、HTMLを実行せ�
   const html = renderToStaticMarkup(createElement(StaffSourceDetails, { records: [{ source: "SALONBOARD", sourceStoreId: "H000551123", importedAt: "2026-10-14T00:00:00Z",
     profile: { sourceProfile: { "スタッフ紹介": "テスト<script>alert(1)</script>", "対応メニュー": ["脱毛", "痩身"], "基本シフト": { "月": "11:00～20:00", "火": null } } }
   }] }));
-  assert.match(html, /現在の予約設定とは別に保存/);
+  assert.match(html, /スタッフの詳細情報/);
   assert.match(html, /テスト&lt;script&gt;alert/);
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /11:00～20:00/);
-  assert.match(html, /初期値を設定/);
+  assert.doesNotMatch(html, /初期値を設定|現在の予約設定とは別に保存/);
   assert.equal(renderToStaticMarkup(createElement(StaffSourceDetails, { records: [] })), "");
 });

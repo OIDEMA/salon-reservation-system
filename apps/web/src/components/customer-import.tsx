@@ -38,7 +38,7 @@ export function CustomerImport() {
     return <p className="formMessage error" role="alert">顧客データを取り込む権限がありません。</p>;
   }
   if (tenantSlug !== "missmrs-takamatsu") {
-    return <p className="formMessage error" role="alert">この移行データの登録先はミスミセス高松店です。</p>;
+    return <p className="formMessage error" role="alert">このデータの登録先はミスミセス高松店です。</p>;
   }
 
   async function chooseFile(file?: File) {
@@ -52,11 +52,11 @@ export function CustomerImport() {
       if (data.version !== 1 || data.source !== "SALONBOARD" || data.sourceStoreId !== "H000551123" ||
         !Array.isArray(data.records) || !Number.isInteger(data.expectedCount) ||
         data.expectedCount < 1 || data.expectedCount > 10000 || data.records.length !== data.expectedCount) {
-        throw new Error("ミスミセス高松店の移行ファイルと件数を確認してください。");
+        throw new Error("ミスミセス高松店の取込ファイルと件数を確認してください。");
       }
       if (sequence === readSequence.current) setDocument(data);
     } catch (error) {
-      if (sequence === readSequence.current) setMessage(error instanceof SyntaxError ? "JSON形式の移行ファイルを選択してください。" : error instanceof Error ? error.message : "ファイルを読み込めませんでした。");
+      if (sequence === readSequence.current) setMessage(error instanceof SyntaxError ? "JSON形式の取込ファイルを選択してください。" : error instanceof Error ? error.message : "ファイルを読み込めませんでした。");
     } finally { if (sequence === readSequence.current) setReading(false); }
   }
 
@@ -89,7 +89,7 @@ export function CustomerImport() {
   }
 
   return <div className="customerImportForm">
-    <label className="field"><span>サロンボードの顧客データ</span>
+    <label className="field"><span>顧客データ</span>
       <input type="file" accept=".json,application/json" disabled={busy || reading} onChange={(event) => void chooseFile(event.target.files?.[0])} />
     </label>
     {document ? <p>{filename} / {document.expectedCount.toLocaleString("ja-JP")}件 / 登録先：ミスミセス高松店</p> : null}

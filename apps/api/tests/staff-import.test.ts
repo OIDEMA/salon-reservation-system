@@ -98,3 +98,14 @@ test("management placeholders remain inactive room resources", () => {
   assert.equal(parsed.role, "ROOM_RESOURCE"); assert.equal(parsed.active, false);
   assert.throws(() => prepareStaffImport(envelope([{ ...room, active: true }])));
 });
+
+test("unsupported import sources are rejected without displaying the internal source name", () => {
+  for (const source of ["OTHER", "", null, undefined, 0]) {
+    const result = staffImportEnvelopeSchema.safeParse({ ...envelope(), source });
+    assert.equal(result.success, false);
+    if (result.success) continue;
+    const issue = result.error.issues.find((entry) => entry.path[0] === "source");
+    assert.equal(issue?.message, "取込ファイルの形式を確認してください。");
+    assert.equal(result.error.issues.some((entry) => /SALONBOARD/i.test(entry.message)), false);
+  }
+});

@@ -19,7 +19,7 @@ export function ReservationHistoryImport() {
   useEffect(() => () => { ++readSequence.current; controller.current?.abort(); }, []);
 
   if (!can("reservation.write") || !can("chart.write")) return <p className="formMessage error" role="alert">予約履歴を取り込むには、予約と電子カルテの編集権限が必要です。</p>;
-  if (tenantSlug !== "missmrs-takamatsu") return <p className="formMessage error" role="alert">この移行データの登録先はミスミセス高松店です。</p>;
+  if (tenantSlug !== "missmrs-takamatsu") return <p className="formMessage error" role="alert">このデータの登録先はミスミセス高松店です。</p>;
 
   async function chooseFile(file?: File) {
     const sequence = ++readSequence.current;
@@ -31,7 +31,7 @@ export function ReservationHistoryImport() {
       const data = validateHistoryImportPreview(JSON.parse(await file.text()));
       if (sequence === readSequence.current) setDocument(data);
     } catch (error) {
-      if (sequence === readSequence.current) setMessage(error instanceof SyntaxError ? "JSON形式の移行ファイルを選択してください。" : error instanceof Error ? error.message : "ファイルを読み込めませんでした。");
+      if (sequence === readSequence.current) setMessage(error instanceof SyntaxError ? "JSON形式の取込ファイルを選択してください。" : error instanceof Error ? error.message : "ファイルを読み込めませんでした。");
     } finally { if (sequence === readSequence.current) setReading(false); }
   }
 
@@ -48,9 +48,9 @@ export function ReservationHistoryImport() {
   }
 
   return <div className="customerImportForm">
-    <label className="field"><span>サロンボードの予約履歴データ</span><input type="file" accept=".json,application/json" disabled={busy || reading} onChange={(event) => void chooseFile(event.target.files?.[0])} /></label>
+    <label className="field"><span>予約履歴データ</span><input type="file" accept=".json,application/json" disabled={busy || reading} onChange={(event) => void chooseFile(event.target.files?.[0])} /></label>
     {document ? <p>{document.expectedCount.toLocaleString("ja-JP")}件 / 対象期間：{document.periodFrom}〜{document.periodTo}の前日 / 登録先：ミスミセス高松店</p> : null}
-    <p>日時・担当・メニュー・金額・状態を、移行元の記録として保存します。同じ予約番号の履歴は重複登録しません。</p>
+    <p>日時・担当・メニュー・金額・状態を保存します。同じ予約番号の履歴は重複登録しません。</p>
     {progress ? <div aria-live="polite">
       <p>{progress.processedCount.toLocaleString("ja-JP")} / {progress.expectedCount.toLocaleString("ja-JP")}件 完了</p>
       <progress max={progress.expectedCount} value={progress.processedCount} />

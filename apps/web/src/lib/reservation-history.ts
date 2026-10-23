@@ -47,7 +47,7 @@ export function validateHistoryImportPreview(value: unknown): ReservationHistory
     data.expectedCount < 1 || data.expectedCount > 10000 || data.records.length !== data.expectedCount ||
     !validDate(data.periodFrom) || !validDate(data.periodTo) || data.periodFrom! >= data.periodTo! ||
     typeof data.capturedAt !== "string" || Number.isNaN(Date.parse(data.capturedAt))) {
-    throw new Error("ミスミセス高松店の移行ファイル・対象期間・件数を確認してください。");
+    throw new Error("ミスミセス高松店の取込ファイル・対象期間・件数を確認してください。");
   }
   return data as ReservationHistoryImportFile;
 }
@@ -61,7 +61,7 @@ export async function importReservationHistory(tenantSlug: string, document: Res
   // and its committed offsets, including a chunk whose response was interrupted.
   let progress = await historyResponse<ReservationHistoryImportProgress>(await fetch(`${path}/prepare`, { ...options, body: JSON.stringify(document) }));
   if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-  if (progress.chunkSize !== 50 || progress.expectedCount !== document.expectedCount) throw new Error("移行ファイルの登録件数を確認できませんでした。");
+  if (progress.chunkSize !== 50 || progress.expectedCount !== document.expectedCount) throw new Error("取込ファイルの登録件数を確認できませんでした。");
   onProgress(progress);
   for (let offset = 0; offset < document.records.length; offset += progress.chunkSize) {
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");

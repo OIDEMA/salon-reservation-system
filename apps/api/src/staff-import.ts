@@ -11,7 +11,7 @@ const jsonValue: z.ZodType<JsonValue> = z.lazy(() => z.union([
   z.null(), z.string().max(10000).refine((value) => !value.includes("\0")), z.number().finite(), z.boolean(),
   z.array(jsonValue).max(500), z.record(z.string().max(120).refine((value) => !value.includes("\0")), jsonValue)
 ]));
-const profile = z.record(z.string().min(1).max(120).refine((value) => !value.includes("\0")), jsonValue).refine((value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= 24000, "スタッフの元情報が大きすぎます。");
+const profile = z.record(z.string().min(1).max(120).refine((value) => !value.includes("\0")), jsonValue).refine((value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= 24000, "スタッフ情報が大きすぎます。");
 
 /** A snapshot natural key, not an immutable ID supplied by SalonBoard. */
 export function staffNaturalKey(sourceStoreId: string, name: string, kana: string): string {
@@ -29,20 +29,20 @@ export const staffImportRecordSchema = z.object({
 }).strict().superRefine((record, context) => {
   const expectedKey = record.publicationStaffId ? staffPublicationKey(STAFF_IMPORT_SOURCE_STORE, record.publicationStaffId) : staffNaturalKey(STAFF_IMPORT_SOURCE_STORE, record.name, record.kana);
   if (record.externalRecordKey !== expectedKey) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: "スタッフの元情報と移行データの識別値が一致しません。", path: ["externalRecordKey"] });
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "スタッフ情報と取込データの識別値が一致しません。", path: ["externalRecordKey"] });
   }
   if (record.role === "ROOM_RESOURCE" && record.active) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "管理枠は無効な設備枠として取り込んでください。", path: ["active"] });
   }
 });
 export const staffImportEnvelopeSchema = z.object({
-  version: z.literal(1), source: z.literal("SALONBOARD"), sourceStoreId: z.literal(STAFF_IMPORT_SOURCE_STORE),
+  version: z.literal(1), source: z.literal("SALONBOARD", { errorMap: () => ({ message: "取込ファイルの形式を確認してください。" }) }), sourceStoreId: z.literal(STAFF_IMPORT_SOURCE_STORE),
   capturedAt: z.string().datetime({ offset: true }), expectedCount: z.number().int().min(1).max(100),
   records: z.array(staffImportRecordSchema).min(1).max(100)
 }).strict().superRefine((input, context) => {
-  if (input.expectedCount !== input.records.length) context.addIssue({ code: z.ZodIssueCode.custom, message: "移行元の総件数と登録件数が一致しません。", path: ["expectedCount"] });
+  if (input.expectedCount !== input.records.length) context.addIssue({ code: z.ZodIssueCode.custom, message: "ファイルの総件数と登録件数が一致しません。", path: ["expectedCount"] });
   if (new Set(input.records.map((record) => record.externalRecordKey)).size !== input.records.length) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: "同じ移行元のスタッフが複数含まれています。元情報を確認してください。", path: ["records"] });
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "同じスタッフ情報が複数含まれています。取込データを確認してください。", path: ["records"] });
   }
 });
 export type StaffImportEnvelope = z.infer<typeof staffImportEnvelopeSchema>;

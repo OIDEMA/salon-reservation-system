@@ -25,7 +25,7 @@ function calendarDate(value: string | null | undefined): string | null {
 }
 
 export const salonboardCustomerRecordSchema = z.object({
-  externalCustomerId: text(160, 1).refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(value), "移行元の固定顧客IDを確認してください。"),
+  externalCustomerId: text(160, 1).refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(value), "取込データの顧客IDを確認してください。"),
   name: text(100, 1),
   kana: text(100),
   customerNumber: optionalText(160),
@@ -40,17 +40,17 @@ export const salonboardCustomerRecordSchema = z.object({
   profile: profileSchema.optional()
 }).strict().superRefine((record, context) => {
   const phone = record.phone?.trim() || labelValue(record.profile ?? {}, labelGroups.phone) || labelValue(record.profile ?? {}, labelGroups.phone2);
-  if (phone && phone.length > 30) context.addIssue({ code: z.ZodIssueCode.custom, message: "移行元の電話番号は30文字以内にしてください。", path: ["phone"] });
+  if (phone && phone.length > 30) context.addIssue({ code: z.ZodIssueCode.custom, message: "電話番号は30文字以内にしてください。", path: ["phone"] });
 });
 export type SalonboardCustomerRecord = z.infer<typeof salonboardCustomerRecordSchema>;
 export const salonboardImportEnvelopeSchema = z.object({
-  version: z.literal(1), source: z.literal("SALONBOARD"), sourceStoreId: z.literal(SALONBOARD_SOURCE_STORE),
+  version: z.literal(1), source: z.literal("SALONBOARD", { errorMap: () => ({ message: "取込ファイルの形式を確認してください。" }) }), sourceStoreId: z.literal(SALONBOARD_SOURCE_STORE),
   expectedCount: z.number().int().min(1).max(10000), capturedAt: z.string().datetime({ offset: true }),
   records: z.array(salonboardCustomerRecordSchema).min(1).max(10000)
 }).strict().superRefine((input, context) => {
-  if (input.expectedCount !== input.records.length) context.addIssue({ code: z.ZodIssueCode.custom, message: "移行元の総件数と取込件数が一致しません。", path: ["expectedCount"] });
+  if (input.expectedCount !== input.records.length) context.addIssue({ code: z.ZodIssueCode.custom, message: "ファイルの総件数と取込件数が一致しません。", path: ["expectedCount"] });
   if (new Set(input.records.map((record) => record.externalCustomerId)).size !== input.records.length) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: "移行元の固定顧客IDが重複しています。", path: ["records"] });
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "取込データの顧客IDが重複しています。", path: ["records"] });
   }
 });
 export type SalonboardImportEnvelope = z.infer<typeof salonboardImportEnvelopeSchema>;

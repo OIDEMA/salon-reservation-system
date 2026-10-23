@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   canonicalJson, customerExternalDetail, importChecksum, prepareSalonboardManifest,
-  salonboardImportChunkSchema, salonboardRecordProfile, type SalonboardCustomerRecord
+  salonboardImportChunkSchema, salonboardImportEnvelopeSchema, salonboardRecordProfile, type SalonboardCustomerRecord
 } from "../src/customer-import.js";
 
 const record: SalonboardCustomerRecord = {
@@ -52,4 +52,15 @@ test("known contact labels project separately and raw notes require chart access
   assert.equal((customerExternalDetail(external, true).profile as Record<string, string>)["お客様メモ"], "PRIVATE CLINICAL TEST NOTE");
   assert.equal(salonboardRecordProfile({ ...record, phone: "070-9999-8888" }, external.importedAt.toISOString()).phone, "070-9999-8888");
   assert.equal(salonboardRecordProfile({ ...record, birthDate: "1990/2/30", sourceLastVisitDate: "2026/2/31" }, external.importedAt.toISOString()).birthDate, null);
+});
+
+test("unsupported import sources are rejected without displaying the internal source name", () => {
+  for (const source of ["OTHER", "", null, undefined, 0]) {
+    const result = salonboardImportEnvelopeSchema.safeParse({ ...envelope(), source });
+    assert.equal(result.success, false);
+    if (result.success) continue;
+    const issue = result.error.issues.find((entry) => entry.path[0] === "source");
+    assert.equal(issue?.message, "取込ファイルの形式を確認してください。");
+    assert.equal(result.error.issues.some((entry) => /SALONBOARD/i.test(entry.message)), false);
+  }
 });

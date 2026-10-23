@@ -29,7 +29,7 @@ export function StaffImport() {
   useEffect(() => () => { ++sequence.current; requestController.current?.abort(); }, []);
 
   if (!can("master.write")) return <p role="alert">スタッフデータを取り込む権限がありません。</p>;
-  if (tenantSlug !== "missmrs-takamatsu") return <p role="alert">この移行データの登録先はミスミセス高松店です。</p>;
+  if (tenantSlug !== "missmrs-takamatsu") return <p role="alert">このデータの登録先はミスミセス高松店です。</p>;
 
   async function chooseFile(file?: File) {
     const current = ++sequence.current;
@@ -41,11 +41,11 @@ export function StaffImport() {
       const data = JSON.parse(await file.text()) as ImportFile;
       if (!data || data.version !== 1 || data.source !== "SALONBOARD" || data.sourceStoreId !== "H000551123" ||
         !Array.isArray(data.records) || !Number.isInteger(data.expectedCount) || data.expectedCount < 1 || data.expectedCount > 100 || data.records.length !== data.expectedCount) {
-        throw new Error("ミスミセス高松店の移行ファイルと件数を確認してください。");
+        throw new Error("ミスミセス高松店の取込ファイルと件数を確認してください。");
       }
       if (current === sequence.current) setDocument(data);
     } catch (error) {
-      if (current === sequence.current) setMessage(error instanceof SyntaxError ? "JSON形式の移行ファイルを選択してください。" : error instanceof Error ? error.message : "ファイルを読み込めませんでした。");
+      if (current === sequence.current) setMessage(error instanceof SyntaxError ? "JSON形式の取込ファイルを選択してください。" : error instanceof Error ? error.message : "ファイルを読み込めませんでした。");
     } finally { if (current === sequence.current) setReading(false); }
   }
   async function importStaff() {
@@ -65,9 +65,9 @@ export function StaffImport() {
     } finally { if (!controller.signal.aborted) setBusy(false); }
   }
   return <div className="customerImportForm">
-    <label className="field"><span>サロンボードのスタッフデータ</span><input type="file" accept=".json,application/json" disabled={busy || reading} onChange={(event) => void chooseFile(event.target.files?.[0])} /></label>
+    <label className="field"><span>スタッフデータ</span><input type="file" accept=".json,application/json" disabled={busy || reading} onChange={(event) => void chooseFile(event.target.files?.[0])} /></label>
     {document ? <p>{document.expectedCount}件 / 登録先：ミスミセス高松店</p> : null}
-    <p>取り込み済みのスタッフは重複登録せず、現在の設定を保持します。移行元のスタッフIDがないデータは氏名・カナで確認するため、変更した場合は重複がないか確認してください。</p>
+    <p>登録済みのスタッフは重複登録せず、現在の設定を保持します。スタッフIDのないデータは氏名・カナで照合します。氏名・カナを変更した場合は重複がないか確認してください。</p>
     {result ? <p aria-live="polite">新規登録 {result.createdCount}件 / 登録済み {result.skippedCount}件 / 合計 {result.expectedCount}件</p> : null}
     {message ? <p className="formMessage" role={result ? "status" : "alert"}>{message}</p> : null}
     <div className="adminActions"><button className="primaryButton" type="button" disabled={!document || reading || busy || Boolean(result)} onClick={() => void importStaff()}>{reading ? "ファイルを確認中..." : busy ? "登録中..." : "登録を開始"}</button><TenantLink className="secondaryButton" href="/staff">スタッフ一覧へ</TenantLink></div>

@@ -10,12 +10,10 @@ function ProfileValue({ value }: { value: unknown }) {
 export function StaffSourceDetails({ records }: { records: AdminStaffDetail["sourceRecords"] }) {
   if (!records?.length) return null;
   return <section className="adminPanel masterCreatePanel">
-    <h2>スタッフの参考情報</h2>
-    <p>現在の予約設定とは別に保存している記録です。</p>
+    <h2>スタッフの詳細情報</h2>
     {records.map((record, index) => <details key={index}>
       <summary>詳細を見る</summary>
       <ProfileValue value={record.profile.sourceProfile} />
-      <p>{record.profile.unconfirmedDefaults && typeof record.profile.unconfirmedDefaults === "object" && "nominationFee" in record.profile.unconfirmedDefaults ? "指名料と予約表カラーは" : "予約表カラーは"}未確認のため、初期値を設定しています。</p>
     </details>)}
   </section>;
 }

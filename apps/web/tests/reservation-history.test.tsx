@@ -102,7 +102,7 @@ function progress(offsets: number[]): ReservationHistoryImportProgress {
 test("取込前プレビューは店舗・期間・件数を確認する", () => {
   const document = importFile(); assert.equal(validateHistoryImportPreview(document), document);
   for (const change of [{ sourceStoreId: "other" }, { expectedCount: 1 }, { records: null }, { periodFrom: "2025-02-30" }, { periodTo: "2025-10-14" }, { capturedAt: "invalid" }, { expectedCount: 10001 }]) {
-    assert.throws(() => validateHistoryImportPreview({ ...document, ...change }), /移行ファイル・対象期間・件数/);
+    assert.throws(() => validateHistoryImportPreview({ ...document, ...change }), /取込ファイル・対象期間・件数/);
   }
   assert.throws(() => validateHistoryImportPreview(null));
 });

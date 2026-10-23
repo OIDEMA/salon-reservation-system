@@ -8,7 +8,7 @@ export const HISTORY_IMPORT_BODY_LIMIT = 20 * 1024 * 1024;
 export const HISTORY_IMPORT_RAW_ROW_LIMIT = 64 * 1024;
 const text = (max: number, min = 0) => z.string().trim().min(min).max(max).refine((value) => !value.includes("\0"), "使用できない文字が含まれています。");
 const nullableText = (max: number) => text(max).nullable();
-const identifier = text(160, 1).refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(value), "移行元の固定IDを確認してください。");
+const identifier = text(160, 1).refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(value), "取込データのIDを確認してください。");
 const rawText = (max: number) => z.string().max(max).refine((value) => !value.includes("\0"), "使用できない文字が含まれています。");
 export const historyDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const date = new Date(`${value}T00:00:00Z`);
@@ -29,20 +29,20 @@ export const historyReservationRecordSchema = z.object({
   sourceRoute: nullableText(200), nominated: z.boolean().nullable(), equipmentName: nullableText(500),
   rawHeaders: z.array(rawText(500)).min(1).max(200), rawValues: z.array(rawText(HISTORY_IMPORT_RAW_ROW_LIMIT)).min(1).max(200)
 }).strict().superRefine((record, context) => {
-  if (record.rawHeaders.length !== record.rawValues.length) context.addIssue({ code: z.ZodIssueCode.custom, message: "元データの列数が一致しません。", path: ["rawValues"] });
-  if (Buffer.byteLength(JSON.stringify([record.rawHeaders, record.rawValues]), "utf8") > HISTORY_IMPORT_RAW_ROW_LIMIT) context.addIssue({ code: z.ZodIssueCode.custom, message: "元データの1行は64KiB以内にしてください。", path: ["rawValues"] });
+  if (record.rawHeaders.length !== record.rawValues.length) context.addIssue({ code: z.ZodIssueCode.custom, message: "取込データの列数が一致しません。", path: ["rawValues"] });
+  if (Buffer.byteLength(JSON.stringify([record.rawHeaders, record.rawValues]), "utf8") > HISTORY_IMPORT_RAW_ROW_LIMIT) context.addIssue({ code: z.ZodIssueCode.custom, message: "取込データの1行は64KiB以内にしてください。", path: ["rawValues"] });
   if (record.endsAt && new Date(record.endsAt) <= new Date(record.startsAt)) context.addIssue({ code: z.ZodIssueCode.custom, message: "終了日時は開始日時より後にしてください。", path: ["endsAt"] });
 });
 export type HistoryReservationRecord = z.infer<typeof historyReservationRecordSchema>;
 export const historyImportEnvelopeSchema = z.object({
-  version: z.literal(1), source: z.literal("SALONBOARD"), sourceStoreId: z.literal(SALONBOARD_SOURCE_STORE),
+  version: z.literal(1), source: z.literal("SALONBOARD", { errorMap: () => ({ message: "取込ファイルの形式を確認してください。" }) }), sourceStoreId: z.literal(SALONBOARD_SOURCE_STORE),
   periodFrom: historyDateSchema, periodTo: historyDateSchema, capturedAt: timestamp,
   expectedCount: z.number().int().min(1).max(10000), records: z.array(historyReservationRecordSchema).min(1).max(10000)
 }).strict().superRefine((envelope, context) => {
-  if (Buffer.byteLength(JSON.stringify(envelope), "utf8") > HISTORY_IMPORT_BODY_LIMIT) context.addIssue({ code: z.ZodIssueCode.custom, message: "移行ファイルは20MiB以内にしてください。" });
+  if (Buffer.byteLength(JSON.stringify(envelope), "utf8") > HISTORY_IMPORT_BODY_LIMIT) context.addIssue({ code: z.ZodIssueCode.custom, message: "取込ファイルは20MiB以内にしてください。" });
   if (envelope.periodFrom >= envelope.periodTo) context.addIssue({ code: z.ZodIssueCode.custom, message: "対象期間の終了日は開始日より後にしてください。", path: ["periodTo"] });
-  if (envelope.expectedCount !== envelope.records.length) context.addIssue({ code: z.ZodIssueCode.custom, message: "移行元の総件数と取込件数が一致しません。", path: ["expectedCount"] });
-  if (new Set(envelope.records.map((record) => record.externalReservationId)).size !== envelope.records.length) context.addIssue({ code: z.ZodIssueCode.custom, message: "移行元の固定予約IDが重複しています。", path: ["records"] });
+  if (envelope.expectedCount !== envelope.records.length) context.addIssue({ code: z.ZodIssueCode.custom, message: "ファイルの総件数と取込件数が一致しません。", path: ["expectedCount"] });
+  if (new Set(envelope.records.map((record) => record.externalReservationId)).size !== envelope.records.length) context.addIssue({ code: z.ZodIssueCode.custom, message: "取込データの予約IDが重複しています。", path: ["records"] });
   for (const [index, record] of envelope.records.entries()) {
     if (!Number.isFinite(new Date(record.startsAt).getTime())) continue;
     const day = historyJstDate(record.startsAt);

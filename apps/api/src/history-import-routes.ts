@@ -19,20 +19,20 @@ function safeRoute(handler: Handler): Handler {
   return async (request, reply) => {
     try { return await handler(request, reply); }
     catch (error) {
-      if (error instanceof z.ZodError) return reply.code(400).send({ code: "INVALID_HISTORY", message: error.issues[0]?.message ?? "移行データ・検索条件を確認してください。" });
+      if (error instanceof z.ZodError) return reply.code(400).send({ code: "INVALID_HISTORY", message: error.issues[0]?.message ?? "取込データ・検索条件を確認してください。" });
       if (error instanceof Error && "statusCode" in error && typeof error.statusCode === "number" && [400, 403, 404, 409].includes(error.statusCode)) return reply.code(error.statusCode).send({ code: "HISTORY_REJECTED", message: error.message });
       // Database errors may contain original source values. Never log the error object.
       request.log.error({ errorName: error instanceof Error ? error.name : "UnknownError", errorCode: error instanceof Prisma.PrismaClientKnownRequestError ? error.code : undefined }, "historical reservation operation failed");
-      return reply.code(500).send({ code: "HISTORY_FAILED", message: "処理を完了できませんでした。同じ移行データで再開できます。" });
+      return reply.code(500).send({ code: "HISTORY_FAILED", message: "処理を完了できませんでした。同じ取込データで再開できます。" });
     }
   };
 }
 function scope(context: OperationContext) { return { tenantId: context.tenant.id, salonId: context.salon.id }; }
 function assertTarget(context: OperationContext) {
-  if (context.tenant.slug !== SALONBOARD_TARGET_TENANT) throw operationError(403, "この移行元はミスミセス高松店だけに取り込めます。");
+  if (context.tenant.slug !== SALONBOARD_TARGET_TENANT) throw operationError(403, "このデータはミスミセス高松店だけに取り込めます。");
 }
 function assertWriteAuthority(context: OperationContext) {
-  if (!hasPermission(context, "chart.write")) throw operationError(403, "元の予約メモを保存するにはカルテの編集権限が必要です。");
+  if (!hasPermission(context, "chart.write")) throw operationError(403, "予約メモを保存するにはカルテの編集権限が必要です。");
 }
 function summary(run: HistoricalReservationImportRun) {
   const processedCount = run.createdCount + run.skippedCount;
@@ -46,7 +46,7 @@ function summary(run: HistoricalReservationImportRun) {
 }
 async function scopedRun(tx: Prisma.TransactionClient, context: OperationContext, id: string) {
   const run = await tx.historicalReservationImportRun.findFirst({ where: { id, ...scope(context), source: "SALONBOARD", sourceStoreId: SALONBOARD_SOURCE_STORE } });
-  if (!run) throw operationError(404, "この店舗の移行処理が見つかりません。");
+  if (!run) throw operationError(404, "この店舗の取込処理が見つかりません。");
   return run;
 }
 const listSelect = {
@@ -100,7 +100,7 @@ export async function registerHistoryImportRoutes(server: FastifyInstance, optio
       assertTarget(context); assertWriteAuthority(context);
       const run = await scopedRun(tx, context, id);
       const count = Math.min(HISTORY_IMPORT_CHUNK_SIZE, run.expectedCount - input.offset);
-      if (count <= 0 || input.records.length !== count || input.records.some((record, index) => importChecksum(record) !== run.recordHashes[input.offset + index])) throw operationError(400, "事前確認した移行データと一致しません。ファイルを選び直してください。");
+      if (count <= 0 || input.records.length !== count || input.records.some((record, index) => importChecksum(record) !== run.recordHashes[input.offset + index])) throw operationError(400, "事前確認した取込データと一致しません。ファイルを選び直してください。");
       if (run.processedOffsets.includes(input.offset)) return { ...summary(run), chunk: { offset: input.offset, count, created: 0, skipped: 0, alreadyProcessed: true } };
       let created = 0; let skipped = 0;
       for (const record of input.records) {

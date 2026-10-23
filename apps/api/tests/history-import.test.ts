@@ -146,3 +146,14 @@ test("history page queries validate actual dates, inclusive same-day ranges and 
     { status: "COMPLETED" }, { page: ["1", "2"] }
   ]) assert.equal(historyPageQuerySchema.safeParse(invalid).success, false);
 });
+
+test("unsupported import sources are rejected without displaying the internal source name", () => {
+  for (const source of ["OTHER", "", null, undefined, 0]) {
+    const result = historyImportEnvelopeSchema.safeParse({ ...envelope, source });
+    assert.equal(result.success, false);
+    if (result.success) continue;
+    const issue = result.error.issues.find((entry) => entry.path[0] === "source");
+    assert.equal(issue?.message, "取込ファイルの形式を確認してください。");
+    assert.equal(result.error.issues.some((entry) => /SALONBOARD/i.test(entry.message)), false);
+  }
+});

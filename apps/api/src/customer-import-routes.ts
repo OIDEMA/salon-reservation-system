@@ -17,22 +17,22 @@ function route(operation: Handler): Handler {
   return async (request, reply) => {
     try { return await operation(request, reply); }
     catch (error) {
-      if (error instanceof z.ZodError) return reply.code(400).send({ code: "INVALID_IMPORT", message: error.issues[0]?.message ?? "移行データを確認してください。" });
+      if (error instanceof z.ZodError) return reply.code(400).send({ code: "INVALID_IMPORT", message: error.issues[0]?.message ?? "取込データを確認してください。" });
       if (error instanceof Error && "statusCode" in error && typeof error.statusCode === "number" && [400, 403, 404, 409].includes(error.statusCode)) {
         return reply.code(error.statusCode).send({ code: "IMPORT_REJECTED", message: error.message });
       }
       request.log.error({ errorName: error instanceof Error ? error.name : "UnknownError",
         errorCode: error instanceof Prisma.PrismaClientKnownRequestError ? error.code : undefined }, "customer import failed");
-      return reply.code(500).send({ code: "IMPORT_FAILED", message: "移行処理を完了できませんでした。同じデータで再開できます。" });
+      return reply.code(500).send({ code: "IMPORT_FAILED", message: "取込処理を完了できませんでした。同じデータで再開できます。" });
     }
   };
 }
 function scoped(context: OperationContext) { return { tenantId: context.tenant.id, salonId: context.salon.id }; }
 function assertTarget(context: OperationContext) {
-  if (context.tenant.slug !== SALONBOARD_TARGET_TENANT) throw operationError(403, "この移行元はミスミセス高松店だけに取り込めます。");
+  if (context.tenant.slug !== SALONBOARD_TARGET_TENANT) throw operationError(403, "このデータはミスミセス高松店だけに取り込めます。");
 }
 function assertWriteAuthority(context: OperationContext) {
-  if (!hasPermission(context, "chart.write")) throw operationError(403, "移行元のお客様メモを保存するにはカルテの編集権限が必要です。");
+  if (!hasPermission(context, "chart.write")) throw operationError(403, "顧客メモを保存するにはカルテの編集権限が必要です。");
 }
 function summary(run: CustomerImportRun) {
   const processedCount = run.createdCount + run.skippedCount;
@@ -46,7 +46,7 @@ function summary(run: CustomerImportRun) {
 }
 async function scopedRun(tx: Prisma.TransactionClient, context: OperationContext, id: string) {
   const run = await tx.customerImportRun.findFirst({ where: { id, ...scoped(context), source: "SALONBOARD", sourceStoreId: SALONBOARD_SOURCE_STORE } });
-  if (!run) throw operationError(404, "この店舗の移行処理が見つかりません。");
+  if (!run) throw operationError(404, "この店舗の取込処理が見つかりません。");
   return run;
 }
 
@@ -98,7 +98,7 @@ export async function registerCustomerImportRoutes(server: FastifyInstance, opti
       const count = Math.min(CUSTOMER_IMPORT_CHUNK_SIZE, run.expectedCount - input.offset);
       if (count <= 0 || input.records.length !== count ||
         input.records.some((record, index) => importChecksum(record) !== run.recordHashes[input.offset + index])) {
-        throw operationError(400, "事前確認した移行データと一致しません。ファイルを選び直してください。");
+        throw operationError(400, "事前確認した取込データと一致しません。ファイルを選び直してください。");
       }
       if (run.processedOffsets.includes(input.offset)) {
         return { ...summary(run), chunk: { offset: input.offset, count, created: 0, skipped: 0, alreadyProcessed: true } };

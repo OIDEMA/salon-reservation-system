@@ -42,7 +42,7 @@ export function buildHistoryStaffLinkPlan(records: SourceRecord[], mappings: Sou
   const byKey = new Map(mappings.map((mapping) => [mapping.externalRecordKey, mapping.staff]));
   const grouped = new Map<string, { records: SourceRecord[]; target?: StaffTarget; publication: boolean }>();
   for (const record of records) {
-    if (!record.staffName || !record.staffName.trim()) { issues.push("担当名のない履歴があります。元情報を確認してください。"); continue; }
+    if (!record.staffName || !record.staffName.trim()) { issues.push("担当名のない履歴があります。予約履歴を確認してください。"); continue; }
     const key = record.externalStaffId ? staffPublicationKey(sourceStoreId, record.externalStaffId) : historyStaffSnapshotKey(sourceStoreId, record.staffName);
     const group = grouped.get(key) ?? { records: [], target: byKey.get(key), publication: Boolean(record.externalStaffId) };
     group.records.push(record); grouped.set(key, group);
@@ -51,12 +51,12 @@ export function buildHistoryStaffLinkPlan(records: SourceRecord[], mappings: Sou
   for (const [key, group] of grouped) {
     const names = new Set(group.records.map((record) => record.staffName));
     const sourceStaffName = group.records[0].staffName!;
-    if (names.size !== 1) issues.push("同じ担当の識別値に複数の名前があります。元情報を確認してください。");
-    if (group.publication && !group.target) issues.push("移行済み担当の参照先が見つかりません。スタッフの移行結果を確認してください。");
+    if (names.size !== 1) issues.push("同じ担当の識別値に複数の名前があります。担当情報を確認してください。");
+    if (group.publication && !group.target) issues.push("登録済み担当の参照先が見つかりません。スタッフの取込結果を確認してください。");
     if (!group.publication && !group.target && allStaff.some((staff) => staff.name.normalize("NFKC").replace(/\s/g, "") === sourceStaffName.normalize("NFKC").replace(/\s/g, ""))) {
       issues.push("過去担当と同名の登録済みスタッフがあります。担当の対応を確認してください。");
     }
-    if (group.records.some((record) => record.staffId && record.staffId !== group.target?.id)) issues.push("元情報と異なる担当に紐付いた履歴があります。担当の対応を確認してください。");
+    if (group.records.some((record) => record.staffId && record.staffId !== group.target?.id)) issues.push("予約履歴の担当情報と異なるスタッフに紐付いています。担当の対応を確認してください。");
     groups.push({ key, sourceStaffName, count: group.records.length, staffId: group.target?.id ?? null,
       staffName: group.target?.name ?? null, role: group.target?.role ?? historicalRole(sourceStaffName),
       action: group.target ? "LINK_EXISTING" : "CREATE_INACTIVE", active: group.target?.active ?? false,
@@ -121,7 +121,7 @@ export async function registerHistoryStaffLinkRoutes(server: FastifyInstance, op
     const result = await runSerializable(async (tx) => {
       await lockOperation(tx, context, "reservation.write"); assertAuthority(context);
       const { plan, records } = await readPlan(tx, context);
-      if (input.checksum !== plan.checksum) throw operationError(409, "元情報または担当の対応が変更されています。反映内容を再確認してください。");
+      if (input.checksum !== plan.checksum) throw operationError(409, "予約履歴または担当の対応が変更されています。反映内容を再確認してください。");
       if (!plan.ready) throw operationError(409, plan.issues.join(" "));
       const maximumOrder = await tx.staff.aggregate({ where: scope(context), _max: { sortOrder: true, allocationOrder: true } });
       let createdStaffCount = 0;
@@ -132,7 +132,7 @@ export async function registerHistoryStaffLinkRoutes(server: FastifyInstance, op
             color: "#64748b", active: false, nominationFee: 0, parallelCapacity: 1,
             sortOrder: (maximumOrder._max.sortOrder ?? 0) + createdStaffCount + 1,
             allocationOrder: (maximumOrder._max.allocationOrder ?? 0) + createdStaffCount + 1,
-            comment: "サロンボードの過去予約から移行した担当（予約受付停止）。元情報は担当名の記録です。" } });
+            comment: "予約履歴の担当名を記録したスタッフです（予約受付停止）。" } });
           staffId = staff.id; createdStaffCount++;
           await tx.staffExternalRecord.create({ data: { ...scope(context), staffId, source, sourceStoreId, externalRecordKey: group.key,
             profile: { identityKind: "SOURCE_HISTORY_STAFF_LABEL_SNAPSHOT", sourceStaffName: group.sourceStaffName, periodFrom: HISTORY_STAFF_PERIOD_FROM, periodTo: HISTORY_STAFF_PERIOD_TO, historyOnly: true, importedActive: false } } });
@@ -141,7 +141,7 @@ export async function registerHistoryStaffLinkRoutes(server: FastifyInstance, op
         await tx.historicalReservation.updateMany({ where: { ...historyScope(context), id: { in: ids }, staffId: null }, data: { staffId } });
       }
       const linkedCount = await tx.historicalReservation.count({ where: { ...historyScope(context), staffId: { not: null } } });
-      if (linkedCount !== plan.totalCount) throw operationError(409, "一部の担当を反映できませんでした。元情報を確認してください。");
+      if (linkedCount !== plan.totalCount) throw operationError(409, "一部の担当を反映できませんでした。予約履歴の担当情報を確認してください。");
       if (createdStaffCount || plan.pendingCount) await operationAudit(tx, context, request, { action: "reservation.history.staff-link", resource: "historicalReservation",
         metadata: { checksum: plan.checksum, totalCount: plan.totalCount, linkedCount, createdStaffCount, previouslyLinkedCount: plan.linkedCount } });
       return { totalCount: plan.totalCount, linkedCount, pendingCount: 0, createdStaffCount, alreadyLinkedCount: plan.linkedCount, completed: true };

@@ -1,5 +1,12 @@
 import type { MasterColumn, MasterField } from "@/components/master-data-manager";
 
+export function staffCommentForForm(comment: string | null) {
+  // Normalize only the old system-generated note; preserve staff-entered comments.
+  return comment === "サロンボードの過去予約から移行した担当（予約受付停止）。元情報は担当名の記録です。"
+    ? "予約履歴の担当名を記録したスタッフです（予約受付停止）。"
+    : comment;
+}
+
 export const staffFields: MasterField[] = [
   { key: "name", label: "スタッフ名", required: true, maxLength: 100 },
   { key: "kana", label: "カナ", maxLength: 100 },

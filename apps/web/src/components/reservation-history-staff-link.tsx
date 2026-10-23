@@ -23,7 +23,7 @@ export function ReservationHistoryStaffLinkPreview({ plan }: { plan: Reservation
     </dl>
     <p className="historyContext">過去の担当者は、予約受付を停止した状態で登録します。</p>
     <div className="historyRawScroll"><table className="adminTable historyStaffLinkTable">
-      <thead><tr><th>移行元の担当</th><th>紐付け先</th><th>件数</th><th>登録内容</th><th>予約受付</th></tr></thead>
+      <thead><tr><th>予約履歴の担当</th><th>紐付け先</th><th>件数</th><th>登録内容</th><th>予約受付</th></tr></thead>
       <tbody>{plan.groups.map((group) => <tr key={group.key}>
         <td>{group.sourceStaffName || "担当名なし"}</td>
         <td>{group.staffName || group.sourceStaffName || "担当名なし"}</td>
