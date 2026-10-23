@@ -89,7 +89,8 @@ test("cash and register API preserve accounting with real PostgreSQL", { skip: !
     function body(checkout: Receipt, payments: Payment[], extras: Record<string, unknown> = {}) {
       return { version: checkout.version,
         items: checkout.items.map(({ label, quantity, unitPriceYen, discountYen, taxRate }) => ({ label, quantity, unitPriceYen, discountYen, taxRate })),
-        payments, pointsDiscountYen: checkout.pointsDiscountYen, notes: checkout.notes, legacyPaidAcknowledged: false, ...extras };
+        payments: payments.map(({ method, amountYen, reference }) => ({ method, amountYen, reference })),
+        pointsDiscountYen: checkout.pointsDiscountYen, notes: checkout.notes, legacyPaidAcknowledged: false, ...extras };
     }
     async function update(checkout: Receipt, payments: Payment[], salonId: string, extras: Record<string, unknown> = {}) {
       return good<Receipt>("PUT", `/api/cash/checkouts/${checkout.id}`, body(checkout, payments, extras), owner.headers(salonId));

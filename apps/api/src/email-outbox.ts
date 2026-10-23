@@ -5,6 +5,8 @@ import { deriveInvitationToken } from "./invitation-token.js";
 import { sendTextEmail, SesMailError } from "./ses-mail.js";
 import { reservationNotificationEmail, reservationNotificationSchema } from "./reservation-notification.js";
 import { checkoutNotificationEmail, checkoutNotificationSchema } from "./checkout-notification.js";
+import { CashError } from "./cash-domain.js";
+import { buildReceiptEmail, RECEIPT_EVENT, receiptPayloadSchema } from "./receipt-email.js";
 
 const MAX_ATTEMPTS = 12;
 const RESERVATION_EVENT = "reservation.created";
@@ -104,6 +106,21 @@ async function deliver(database: PrismaClient, id: string, send: SendText, baseU
       `招待を承諾: ${acceptUrl}`,
       "招待先と同じ確認済みメールアドレスでログインしてください。"
     ].join("\n");
+  } else if (item.eventType === RECEIPT_EVENT) {
+    const payload = receiptPayloadSchema.parse(item.payload);
+    if (!item.salonId || item.eventKey !== `${RECEIPT_EVENT}:${payload.checkoutId}:${payload.requestId}` ||
+      payload.receipt.receiptNumber !== payload.checkoutId) throw new Error("Invalid receipt outbox scope");
+    const checkout = await database.cashCheckout.findFirst({
+      where: { id: payload.checkoutId, tenantId: item.tenantId, salonId: item.salonId }, select: { id: true, status: true }
+    });
+    if (!checkout) throw new Error("Invalid receipt checkout scope");
+    if (checkout.status !== "FINALIZED") {
+      await database.emailOutbox.update({ where: { id }, data: {
+        status: "SKIPPED", lockedUntil: null, lastErrorCode: "CHECKOUT_REVERSED"
+      } });
+      return "skipped";
+    }
+    ({ subject, text } = buildReceiptEmail(payload.receipt));
   } else {
     throw new Error("Unsupported outbox event type");
   }
@@ -139,9 +156,11 @@ export async function processEmailOutbox(database: PrismaClient, dependencies: D
       const item = await database.emailOutbox.findUnique({ where: { id }, select: { attempts: true } });
       const attempts = item?.attempts ?? MAX_ATTEMPTS;
       const terminal = attempts >= MAX_ATTEMPTS || error instanceof z.ZodError ||
+        error instanceof CashError && error.code === "RECEIPT_CONTENT_TOO_LONG" ||
         error instanceof SesMailError && !error.retryable ||
         error instanceof Error && (error.message.startsWith("Invalid ") || error.message.startsWith("Unsupported "));
       const code = error instanceof z.ZodError ? "INVALID_OUTBOX_PAYLOAD" :
+        error instanceof CashError && error.code === "RECEIPT_CONTENT_TOO_LONG" ? "INVALID_OUTBOX_PAYLOAD" :
         error instanceof SesMailError ? error.code :
         error instanceof Error && error.message.startsWith("Invalid invitation token") ? "INVITATION_KEY_MISMATCH" :
         error instanceof Error && (error.message.startsWith("Invalid ") || error.message.startsWith("Unsupported ")) ? "INVALID_OUTBOX_SCOPE" : "SEND_FAILED";
