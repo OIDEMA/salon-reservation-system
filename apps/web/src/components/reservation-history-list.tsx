@@ -47,7 +47,6 @@ export function ReservationHistoryList({ initialPage, initialFilters = emptyHist
   }
 
   return <div className="reservationManager">
-    <p className="historyContext">サロンボードから移行した予約履歴です。日時は日本時間で表示しています。</p>
     <form className="searchPanel reservationSearchControls historySearchControls" onSubmit={(event) => { event.preventDefault(); void loadPage(1, filters); }}>
       <label className="searchBox wide"><Search size={18} /><input aria-label="予約履歴を検索" value={filters.q} maxLength={100} onChange={(event) => setFilters({ ...filters, q: event.target.value })} placeholder="顧客名・カナ・担当・メニュー・予約番号" /></label>
       <select aria-label="移行元の予約状態" value={filters.sourceStatus} onChange={(event) => setFilters({ ...filters, sourceStatus: event.target.value })}>
