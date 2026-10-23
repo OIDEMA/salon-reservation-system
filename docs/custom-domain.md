@@ -4,7 +4,7 @@ The selected public hostname is `salon-reserve.beauty-gum.jp`. It maps directly 
 
 ## DNS and certificate setup
 
-1. Verify ownership of `salon-reserve.beauty-gum.jp` with the same Google account used to create the mapping. Search Console supports CNAME verification; retain its separate verification record so ownership remains valid. Verifying this subdomain does not require verifying ownership of the parent domain.
+1. Verify ownership of the base domain `beauty-gum.jp` with the same Google account used to create the mapping. Cloud Run requires base-domain ownership verification when mapping a subdomain, so verification of `salon-reserve.beauty-gum.jp` alone does not satisfy this prerequisite. Check `gcloud domains list-user-verified`, then use `gcloud domains verify beauty-gum.jp` if the base domain is not listed. Complete the Search Console flow and retain its instructed DNS verification record. The public serving mapping remains only `salon-reserve.beauty-gum.jp`; existing serving records for the parent domain and other hostnames are outside this setup.
 2. Create the mapping only for the approved service and hostname:
 
    ```sh
@@ -15,10 +15,10 @@ The selected public hostname is `salon-reserve.beauty-gum.jp`. It maps directly 
      --project=salon-reserve-bg
    ```
 
-3. Read the mapping's `status.resourceRecords` and configure those records at Xserver. For subdomains the serving record is a CNAME to `ghs.googlehosted.com`. Remove conflicting A/AAAA records for this exact hostname only. The Google ownership-verification CNAME has a different name and must also remain.
+3. Read the mapping's `status.resourceRecords` and configure those records at Xserver. For subdomains the serving record is a CNAME to `ghs.googlehosted.com`. Remove conflicting A/AAAA records for this exact hostname only. Retain the separate Google ownership-verification DNS record as well; its record type and name must match the Search Console instructions.
 4. Require the mapping to be ready, its Google-managed certificate to be provisioned, and HTTPS login/assets to succeed before changing the legacy redirect. Do not bypass certificate validation or redirect users to an unready hostname.
 
-Google documents the direct mapping feature as Preview with possible latency limitations. The user explicitly selected direct Cloud Run mapping without a load balancer. See [Google's domain mapping documentation](https://docs.cloud.google.com/run/docs/mapping-custom-domains) and [CNAME ownership verification](https://support.google.com/webmasters/answer/9008080).
+Google documents the direct mapping feature as Preview with possible latency limitations. The user explicitly selected direct Cloud Run mapping without a load balancer. See [Google's domain mapping documentation](https://docs.cloud.google.com/run/docs/mapping-custom-domains) and [Search Console ownership verification](https://support.google.com/webmasters/answer/9008080).
 
 ## Application and release settings
 
