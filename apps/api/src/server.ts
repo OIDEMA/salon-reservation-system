@@ -41,7 +41,7 @@ import { requestedSalonId, requireAuthenticatedUser, requireTenantContext, type 
 
 export const server = Fastify({
   logger: {
-    redact: ["req.headers.authorization", "req.headers.cookie", 'res.headers["set-cookie"]'],
+    redact: ["req.headers.authorization", "req.headers.cookie", 'res.headers["set-cookie"]', "req.body.password", "req.body.token"],
     transport:
       process.env.NODE_ENV === "production"
         ? undefined

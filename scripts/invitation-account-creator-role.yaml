@@ -1,0 +1,5 @@
+title: Salon invitation account creator
+description: Create Firebase users for validated SalonOps invitations; existing users cannot be changed or deleted.
+stage: GA
+includedPermissions:
+  - firebaseauth.users.create

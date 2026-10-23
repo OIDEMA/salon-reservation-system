@@ -92,6 +92,10 @@ The whole Cloud Build timeout is `10800s` (three hours), including validation, i
 
 ## IAM
 
+Invitation-only registration requires `firebaseauth.users.create` in addition to the API runtime's existing `roles/firebaseauth.viewer`. The project custom role `salonInvitationAccountCreator` is defined by `scripts/invitation-account-creator-role.yaml` and is assigned only to `reservation-api-runtime@salon-reserve-bg.iam.gserviceaccount.com`. It does not grant user updates or deletion. A registration failure never automatically deletes a Firebase account: the recipient can sign in and finish accepting the invitation, while tenant access remains absent until a valid membership is committed. Provisioning and deliberate account cleanup remain operator tasks.
+
+Deploy the additive `InvitationRequestLimit` table before the new API revision. It stores at most two counters per valid invitation so preview/registration limits apply across API instances; unknown tokens do not create database rows. Existing business and account records are not backfilled or changed by this schema addition.
+
 These native deployment grants are applied to the build identity above, in addition to its existing App Hosting, Cloud Run, Artifact Registry, runtime-service-account, and infrastructure metadata deployment access:
 
 The source permissions are project-scoped and cover both repository links in this project.

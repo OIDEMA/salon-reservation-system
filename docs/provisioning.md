@@ -1,6 +1,6 @@
 # Tenant provisioning
 
-Tenant creation and the first `OWNER` assignment are operator-only operations. The public web application has no sign-up or tenant-creation path, and the public API does not expose a tenant-creation endpoint.
+Tenant creation and the first `OWNER` assignment are operator-only operations. The public web application has no unrestricted sign-up or tenant-creation path, and the public API does not expose a tenant-creation endpoint. Existing tenants can invite staff by SES email; a valid, unused invitation allows its recipient to create an account with exactly the invitation's current permissions. This does not create a new tenant or bypass the inviter's current authority.
 
 ## Provisioning behavior
 

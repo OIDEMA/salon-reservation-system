@@ -103,8 +103,10 @@ async function deliver(database: PrismaClient, id: string, send: SendText, baseU
       `${cleanLine(payload.tenantName)}の管理アカウントへ招待されています。`,
       `役割: ${cleanLine(payload.role)}`,
       `有効期限: ${japanDateTime(invitation.expiresAt)}`,
-      `招待を承諾: ${acceptUrl}`,
-      "招待先と同じ確認済みメールアドレスでログインしてください。"
+      `登録・招待の承諾: ${acceptUrl}`,
+      "初めて利用する方は、リンク先でお名前とパスワードを設定してください。",
+      "アカウントをお持ちの方は、招待先と同じメールアドレスでログインして承諾してください。",
+      "このリンクはご本人専用です。他の方へ転送しないでください。"
     ].join("\n");
   } else if (item.eventType === RECEIPT_EVENT) {
     const payload = receiptPayloadSchema.parse(item.payload);

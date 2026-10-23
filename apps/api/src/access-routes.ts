@@ -6,6 +6,7 @@ import { prisma } from "./database.js";
 import { requireAuthenticatedUser, requestedSalonId, type TenantContext } from "./tenant-context.js";
 import { AccessPolicyError, assertAccessAssignment, canManageMember, effectivePermissions, hasPermission, PERMISSIONS, requirePermission } from "./permissions.js";
 import { deriveInvitationToken } from "./invitation-token.js";
+import { registerInvitationRegistrationRoutes } from "./invitation-registration.js";
 
 const assignmentSchema = z.object({
   role: z.enum(["OWNER", "ADMIN", "MANAGER", "STAFF", "VIEWER"]),
@@ -65,6 +66,7 @@ export function registerAccessRoutes(server: FastifyInstance, dependencies: Acce
   const db = dependencies.database ?? prisma;
   const authorize = dependencies.authorize ?? requirePermission;
   const authenticate = dependencies.authenticate ?? requireAuthenticatedUser;
+  registerInvitationRegistrationRoutes(server, { database: db });
 
   server.get("/api/access/members", async (request, reply) => {
     const context = await authorize(request, reply, "access.manage");

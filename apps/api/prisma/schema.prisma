@@ -143,9 +143,21 @@ model TenantInvitation {
   createdAt       DateTime   @default(now())
   tenant          Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   invitedBy       AppUser    @relation("InvitationSender", fields: [invitedByUserId], references: [id])
+  requestLimits   InvitationRequestLimit[]
 
   @@index([tenantId, email])
   @@index([email, expiresAt])
+}
+
+// At most two bounded counters per invitation; unknown tokens never create rows.
+model InvitationRequestLimit {
+  invitationId  String
+  action        String
+  windowStartsAt DateTime
+  attempts      Int
+  invitation    TenantInvitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+
+  @@id([invitationId, action])
 }
 
 model AuditLog {

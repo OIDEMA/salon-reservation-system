@@ -5,56 +5,15 @@ import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { firebaseAuth, firebaseAuthReady } from "@/lib/firebase-client";
+import { createBrowserSession, loginFailureMessage, SessionRequestError } from "@/lib/login-session";
 
 type Feedback = {
   text: string;
   tone: "error" | "success";
 };
 
-type ErrorPayload = {
-  code?: string;
-  message?: string;
-};
-
-const firebaseErrorMessages: Record<string, string> = {
-  "auth/invalid-email": "メールアドレスの形式が正しくありません。",
-  "auth/missing-password": "パスワードを入力してください。",
-  "auth/invalid-credential": "メールアドレスまたはパスワードが正しくありません。",
-  "auth/user-not-found": "メールアドレスまたはパスワードが正しくありません。",
-  "auth/wrong-password": "メールアドレスまたはパスワードが正しくありません。",
-  "auth/user-disabled": "このアカウントは無効になっています。管理者にお問い合わせください。",
-  "auth/too-many-requests": "試行回数が多すぎます。しばらく待ってから再度お試しください。",
-  "auth/network-request-failed": "通信に失敗しました。ネットワーク接続を確認してください。",
-  "auth/operation-not-allowed": "メールアドレスとパスワードによるログインは現在利用できません。",
-  "auth/weak-password": "パスワードの強度が不足しています。"
-};
-
-function firebaseErrorCode(error: unknown) {
-  return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : "";
-}
-
-function localizedFirebaseError(error: unknown) {
-  const code = firebaseErrorCode(error);
-  return firebaseErrorMessages[code] ?? "ログインに失敗しました。入力内容を確認して、もう一度お試しください。";
-}
-
-function localizedApiError(payload: ErrorPayload | null) {
-  switch (payload?.code) {
-    case "INVALID_ORIGIN":
-      return "アクセス元が正しくありません。現在のページからもう一度お試しください。";
-    case "INVALID_CSRF_TOKEN":
-      return "セキュリティ確認に失敗しました。ページを再読み込みしてからお試しください。";
-    case "EMAIL_NOT_VERIFIED":
-      return "メールアドレスの確認が完了していません。管理者にお問い合わせください。";
-    case "USER_DISABLED":
-      return "このアカウントは無効になっています。管理者にお問い合わせください。";
-    default:
-      return payload?.message ?? "ログインセッションを作成できませんでした。";
-  }
-}
-
-export function LoginForm() {
-  const [email, setEmail] = useState("");
+export function LoginForm({ initialEmail = "", onAuthenticated }: { initialEmail?: string; onAuthenticated?: () => Promise<void> } = {}) {
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -73,27 +32,18 @@ export function LoginForm() {
         return;
       }
 
-      const [{ csrfToken }, idToken] = await Promise.all([
-        fetch("/api/session", { cache: "no-store" }).then((response) => response.json()) as Promise<{ csrfToken: string }>,
-        credential.user.getIdToken(true)
-      ]);
-      const response = await fetch("/api/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idToken, csrfToken })
-      });
+      await createBrowserSession(await credential.user.getIdToken(true));
       await signOut(firebaseAuth);
-      if (!response.ok) {
-        const result = (await response.json().catch(() => null)) as ErrorPayload | null;
-        throw new Error(localizedApiError(result));
-      }
-      window.location.assign("/select-tenant");
+      setPassword("");
+      if (onAuthenticated) await onAuthenticated();
+      else window.location.assign("/select-tenant");
     } catch (error) {
       setFeedback({
         tone: "error",
-        text: error instanceof Error && !firebaseErrorCode(error) ? error.message : localizedFirebaseError(error)
+        text: error instanceof SessionRequestError ? error.message : loginFailureMessage(error)
       });
     } finally {
+      await signOut(firebaseAuth).catch(() => undefined);
       setSubmitting(false);
     }
   }
@@ -124,7 +74,7 @@ export function LoginForm() {
         {submitting ? "処理中…" : "ログイン"}
       </button>
       <Link className="authResetLink" href="/password-reset">
-        初めて利用する方・パスワードをお忘れの方
+        パスワードをお忘れの方
       </Link>
     </form>
   );
