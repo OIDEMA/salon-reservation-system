@@ -23,6 +23,13 @@ test("receipt email API safely queues immutable receipts in real PostgreSQL", { 
     import("../src/database.js"), import("../src/auth.js"), import("../src/server.js"), import("@aws-sdk/client-sesv2")
   ]);
   server.log.level = "silent";
+  const databaseErrors: { code?: string; target?: unknown }[] = [];
+  server.addHook("onError", async (_request, _reply, error) => {
+    if (error.name === "PrismaClientKnownRequestError") {
+      const problem = error as Error & { code?: string; meta?: { target?: unknown } };
+      databaseErrors.push({ code: problem.code, target: problem.meta?.target });
+    }
+  });
   const prefix = `receipt-${randomUUID().slice(0, 8)}`;
   const tenantIds: string[] = [];
   const userIds: string[] = [];
@@ -145,7 +152,8 @@ test("receipt email API safely queues immutable receipts in real PostgreSQL", { 
     await t.test("concurrent retries commit one outbox snapshot and one audit event", async () => {
       sentInput = queued();
       const responses = await Promise.all([call("POST", base(), sentInput, writer.headers()), call("POST", base(), sentInput, writer.headers())]);
-      assert.deepEqual(responses.map((response) => response.statusCode), [202, 202], responses.map((response) => response.body).join("\n"));
+      assert.deepEqual(responses.map((response) => response.statusCode), [202, 202],
+        responses.map((response) => response.body).join("\n") + JSON.stringify(databaseErrors));
       assert.deepEqual(responses[0].json(), responses[1].json());
       sentItem = responses[0].json();
       assert.equal(sentItem.status, "PENDING"); assert.equal(sentItem.recipientEmail, input.recipientEmail);

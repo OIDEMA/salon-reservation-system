@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { Prisma, EmailOutbox } from "@prisma/client";
+import { Prisma, type EmailOutbox } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "./database.js";
 import { cashAssert, cashRequestHash } from "./cash-domain.js";
@@ -11,6 +11,22 @@ const checkoutInclude = { items: { orderBy: { lineNumber: "asc" as const } }, pa
 const previewInputSchema = receiptInputSchema.omit({ requestId: true });
 const scope = (context: OperationContext) => ({ tenantId: context.tenant.id, salonId: context.salon.id });
 const eventPrefix = (checkoutId: string) => `${RECEIPT_EVENT}:${checkoutId}:`;
+
+async function receiptTransaction<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+  try { return await runSerializable(operation); }
+  catch (error) {
+    // A waiter can retain a snapshot from before the first enqueue committed:
+    // locking an unchanged tenant row does not invalidate that snapshot. The
+    // unique event key still prevents duplication. Retry in a fresh transaction
+    // so permissions and the stored request hash are checked before replaying it.
+    const target = error instanceof Prisma.PrismaClientKnownRequestError ? error.meta?.target : undefined;
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002" &&
+      (Array.isArray(target) && target.includes("eventKey") || target === "EmailOutbox_eventKey_key")) {
+      return runSerializable(operation);
+    }
+    throw error;
+  }
+}
 
 async function checkoutFor(database: Prisma.TransactionClient, context: OperationContext, id: string) {
   const checkout = await database.cashCheckout.findFirst({ where: { ...scope(context), id }, include: checkoutInclude });
@@ -59,7 +75,7 @@ export function registerReceiptEmailRoutes(server: FastifyInstance) {
     const { requestId, ...content } = input;
     const requestHash = cashRequestHash(content);
     const eventKey = `${eventPrefix(id)}${requestId}`;
-    const result = await runSerializable(async (tx) => {
+    const result = await receiptTransaction(async (tx) => {
       await lockOperation(tx, context, "checkout.write");
       const checkout = await checkoutFor(tx, context, id);
       const previous = await tx.emailOutbox.findFirst({ where: { ...scope(context), eventType: RECEIPT_EVENT, eventKey } });
