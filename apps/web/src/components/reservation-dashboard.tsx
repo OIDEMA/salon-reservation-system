@@ -18,13 +18,14 @@ import {
   UserRound,
   XCircle
 } from "lucide-react";
-import { format, isValid, parseISO } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { DismissibleMessage } from "@/components/dismissible-message";
 import { AdminSidebar } from "@/components/admin-shell";
 import { fetchDashboard } from "@/lib/api";
-import { useTenantSlug, usePermissions } from "@/components/tenant-provider";
+import { dashboardPreloadState, dashboardToday, matchingDashboardPreload, takeDashboardPreload, validDashboardDate, type DashboardPreload, type DashboardRequest } from "@/lib/dashboard-preload";
+import { useTenant, usePermissions } from "@/components/tenant-provider";
 import { TenantSwitcher } from "@/components/tenant-switcher";
 import { HistoricalScheduleAgenda, HistoricalScheduleCard } from "@/components/historical-schedule";
 import { buildScheduleLayout, scheduleCardKey, scheduleRowAcceptsNewReservation, SCHEDULE_HOUR_WIDTH, SCHEDULE_LANE_HEIGHT } from "@/lib/schedule-layout";
@@ -37,6 +38,9 @@ import { createEmptyDashboard, type DashboardData, type ReservationStatus, type 
 const HOUR_WIDTH = SCHEDULE_HOUR_WIDTH;
 const ROW_HEIGHT = SCHEDULE_LANE_HEIGHT;
 const HEADER_HEIGHT = 42;
+const subscribeToHydration = () => () => {};
+const clientHydrationSnapshot = () => false;
+const serverHydrationSnapshot = () => true;
 
 type TimelineInteraction = (
   | {
@@ -116,12 +120,6 @@ function addDays(date: string, days: number) {
   return format(next, "yyyy-MM-dd");
 }
 
-function validDateParam(value: string | null) {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const parsed = parseISO(value);
-  return isValid(parsed) && format(parsed, "yyyy-MM-dd") === value ? value : null;
-}
-
 function iconButtonLabel(label: string, icon: React.ReactNode) {
   return (
     <>
@@ -131,18 +129,22 @@ function iconButtonLabel(label: string, icon: React.ReactNode) {
   );
 }
 
-export function ReservationDashboard() {
-  const tenantSlug = useTenantSlug();
+export function ReservationDashboard({ initialData, renderId }: { initialData?: DashboardPreload; renderId?: string } = {}) {
+  const { tenantSlug, activeSalonId } = useTenant();
   const { can } = usePermissions();
   const canRead = can("reservation.read");
   const canWrite = can("reservation.write");
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const today = format(new Date(), "yyyy-MM-dd");
-  const date = validDateParam(searchParams.get("date")) ?? today;
-  const [dashboard, setDashboard] = useState<DashboardData>(() => createEmptyDashboard(date));
-  const [selectedId, setSelectedId] = useState("");
+  const today = dashboardToday();
+  const date = validDashboardDate(searchParams.get("date")) ?? today;
+  // getServerSnapshot is used for SSR/hydration, while client navigations use
+  // getSnapshot. Cached RSC data must never replace a fresh client navigation.
+  const hydrating = useSyncExternalStore(subscribeToHydration, clientHydrationSnapshot, serverHydrationSnapshot);
+  const initialDashboard = hydrating ? matchingDashboardPreload(initialData, { tenantSlug, salonId: activeSalonId, date, q: "", status: "ALL", refreshKey: 0, canRead }) : undefined;
+  const [dashboard, setDashboard] = useState<DashboardData>(() => initialDashboard ?? createEmptyDashboard(date));
+  const [selectedId, setSelectedId] = useState(() => initialDashboard?.reservations[0]?.id ?? "");
   const [statusFilter, setStatusFilter] = useState<"ALL" | ReservationStatus>("ALL");
   const [query, setQuery] = useState("");
   const [appliedQuery, setAppliedQuery] = useState("");
@@ -161,7 +163,9 @@ export function ReservationDashboard() {
   const suppressHistoryClick = useRef(false);
   const savingScheduleRef = useRef(false);
   const [historyUndo, setHistoryUndo] = useState<HistoryMoveUndo | null>(null);
-  const context = `${tenantSlug}:${date}:${viewMode}:${appliedQuery}:${statusFilter}`;
+  const request: DashboardRequest = { tenantSlug, salonId: activeSalonId, date, q: appliedQuery, status: statusFilter, refreshKey, canRead, renderId };
+  const preloadState = useRef(dashboardPreloadState(initialData, request, hydrating));
+  const context = `${tenantSlug}:${activeSalonId}:${date}:${viewMode}:${appliedQuery}:${statusFilter}`;
   const contextRef = useRef(context);
   contextRef.current = context;
 
@@ -202,8 +206,20 @@ export function ReservationDashboard() {
   useEffect(() => {
     let ignore = false;
     const controller = new AbortController();
+    const preloaded = takeDashboardPreload(preloadState.current, initialData, { tenantSlug, salonId: activeSalonId, date, q: appliedQuery, status: statusFilter, refreshKey, canRead, renderId });
     if (!canRead) {
       setDashboard(createEmptyDashboard(date));
+      setSelectedId("");
+      setIsLoading(false);
+      return;
+    }
+    if (preloaded) {
+      setDashboard(preloaded);
+      setSelectedId((current) => preloaded.reservations.some((reservation) => reservation.id === current) ? current : preloaded.reservations[0]?.id ?? "");
+      setLoadError("");
+      setIsLoading(false);
+      updateInteraction(null);
+      setEditor(null);
       return;
     }
     setIsLoading(true);
@@ -234,7 +250,7 @@ export function ReservationDashboard() {
       ignore = true;
       controller.abort();
     };
-  }, [date, refreshKey, tenantSlug, appliedQuery, statusFilter, canRead]);
+  }, [date, refreshKey, tenantSlug, activeSalonId, appliedQuery, statusFilter, canRead, initialData, renderId]);
 
   useEffect(() => {
     if (!canRead || !canWrite) {
@@ -252,7 +268,7 @@ export function ReservationDashboard() {
       .then((data) => { if (!ignore) setMenus(data); })
       .catch(() => { if (!ignore) setMenus([]); });
     return () => { ignore = true; };
-  }, [canRead, canWrite, tenantSlug]);
+  }, [canRead, canWrite, tenantSlug, activeSalonId]);
 
   const timeline = useMemo(() => {
     const start = toMinutes(dashboard.hours.start);
@@ -557,7 +573,7 @@ export function ReservationDashboard() {
                 <button className="secondaryButton" type="button" onClick={() => changeDate(addDays(date, -1))}>
                   {iconButtonLabel("前日", <ChevronLeft size={18} />)}
                 </button>
-                <input className="dashboardDateInput" aria-label="予約表の日付" type="date" value={date} onChange={(event) => { const selectedDate = validDateParam(event.target.value); if (selectedDate) changeDate(selectedDate); }} />
+                <input className="dashboardDateInput" aria-label="予約表の日付" type="date" value={date} onChange={(event) => { const selectedDate = validDashboardDate(event.target.value); if (selectedDate) changeDate(selectedDate); }} />
                 <button className="secondaryButton" type="button" onClick={() => changeDate(today)}>
                   本日
                 </button>

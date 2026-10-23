@@ -29,7 +29,8 @@ REDIRECT_REPOSITORY = WEB_REPOSITORY.replace('/reservation-web', '/reservation-r
 REDIRECT_DIGEST = f'{REDIRECT_REPOSITORY}@sha256:{"d" * 64}'
 RELAY_REPOSITORY = WEB_REPOSITORY.replace('/reservation-web', '/reservation-api-relay')
 RELAY_DIGEST = f'{RELAY_REPOSITORY}@sha256:{"e" * 64}'
-WEB_URL = 'https://salon-reserve-web-42401528382.asia-northeast1.run.app'
+WEB_URL = 'https://salon-reserve.beauty-gum.jp'
+WEB_FALLBACK_URL = 'https://salon-reserve-web-42401528382.asia-northeast1.run.app'
 LEGACY_URL = 'https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app'
 WEB_RESOURCE = 'projects/salon-reserve-bg/locations/asia-northeast1/services/salon-reserve-web'
 WEB_REVISION = WEB_RESOURCE + '/revisions/salon-reserve-web-00002-new'
@@ -251,6 +252,8 @@ class NativeDeploymentTests(unittest.TestCase):
             if '/rollouts/' in url:
                 return Response({'state': 'SUCCEEDED', 'build': active_build_path})
             if url.endswith('/login'):
+                if bad == 'fallback-login' and url.startswith(WEB_FALLBACK_URL):
+                    return Response('unavailable')
                 return Response('サロン管理へログイン')
             if url.endswith('/ready'):
                 return Response('ready')
@@ -291,11 +294,38 @@ class NativeDeploymentTests(unittest.TestCase):
 
     def test_web_configuration_retains_public_firebase_settings(self):
         self.assertEqual(WEB_ENV['APP_PUBLIC_ORIGIN'], WEB_URL)
+        self.assertEqual(WEB_ENV['APP_PUBLIC_ORIGINS'], WEB_URL + ',' + WEB_FALLBACK_URL)
         self.assertEqual(WEB_ENV['NEXT_PUBLIC_FIREBASE_PROJECT_ID'], ENV['PROJECT_ID'])
+        self.assertEqual(WEB_ENV['NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN'], 'salon-reserve-bg.firebaseapp.com')
         self.assertEqual(REDIRECT_CONFIG['env'], [{'variable': 'REDIRECT_ORIGIN', 'value': WEB_URL, 'availability': ['RUNTIME']}])
 
+    def test_unapproved_public_origin_fallback_or_auth_domain_stops_before_cloud_access(self):
+        read_text = Path.read_text
+        for key, value in (
+            ('APP_PUBLIC_ORIGIN', WEB_FALLBACK_URL),
+            ('APP_PUBLIC_ORIGINS', WEB_URL),
+            ('APP_PUBLIC_ORIGINS', WEB_URL + ',*'),
+            ('APP_PUBLIC_ORIGINS', WEB_URL + ',https://untrusted.example'),
+            ('NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN', 'salon-reserve.beauty-gum.jp'),
+        ):
+            with self.subTest(key=key, value=value):
+                config = dict(WEB_ENV, **{key: value})
+                def read_runtime(path, *args, **kwargs):
+                    if str(path) == 'scripts/web-runtime-env.json':
+                        return json.dumps(config)
+                    return read_text(path, *args, **kwargs)
+                with patch.object(Path, 'read_text', new=read_runtime), self.assertRaisesRegex(SystemExit, 'approved public settings and origins'):
+                    self.run_deploy()
+                self.assertEqual(self.commands, [])
+                self.assertEqual(self.requests, [])
+
+    def test_missing_cloud_run_fallback_stops_before_changing_the_legacy_redirect(self):
+        with self.assertRaisesRegex(RuntimeError, 'fallback login'):
+            self.run_deploy(bad='fallback-login')
+        self.assertFalse(any(method == 'POST' and 'validateOnly=true' not in url for method, url, _ in self.requests))
+
     def test_unapproved_runtime_limits_or_environment_are_rejected_before_cloud_access(self):
-        for change in ('memory', 'secret', 'extra-variable', 'duplicate-variable', 'runtime-build-flag'):
+        for change in ('memory', 'secret', 'extra-variable', 'duplicate-variable', 'runtime-build-flag', 'redirect-target'):
             with self.subTest(change=change):
                 config = json.loads(json.dumps(REDIRECT_CONFIG))
                 if change == 'memory':
@@ -306,6 +336,8 @@ class NativeDeploymentTests(unittest.TestCase):
                     config['env'].append({'variable': 'FIREBASE_AUTH_EMULATOR_HOST', 'value': 'localhost:9099', 'availability': ['RUNTIME']})
                 elif change == 'duplicate-variable':
                     config['env'].append(config['env'][0])
+                elif change == 'redirect-target':
+                    config['env'][0]['value'] = WEB_FALLBACK_URL
                 else:
                     config['env'][0]['availability'] = ['BUILD', 'RUNTIME']
                 with patch.object(Path, 'read_text', return_value=json.dumps(config)), self.assertRaises(SystemExit):
@@ -555,9 +587,10 @@ class NativeDeploymentTests(unittest.TestCase):
             self.assertIn(value, command)
         environment = next(value for value in command if value.startswith('--set-env-vars='))
         self.assertIn('APP_PUBLIC_ORIGIN=' + WEB_URL, environment)
+        self.assertIn('APP_PUBLIC_ORIGINS=' + WEB_URL + ',' + WEB_FALLBACK_URL, environment)
         self.assertFalse(any('secret' in value.lower() for value in command))
         api = next(command for command in self.commands if command[1:4] == ['run', 'deploy', 'reservation-api'])
-        self.assertTrue(any('CORS_ORIGINS=' + LEGACY_URL + ',' + WEB_URL in value for value in api))
+        self.assertTrue(any('CORS_ORIGINS=' + LEGACY_URL + ',' + WEB_FALLBACK_URL + ',' + WEB_URL in value for value in api))
 
     def test_tokyo_revisions_accept_canonical_project_and_short_traffic_name(self):
         self.run_deploy(bad='web-canonical')

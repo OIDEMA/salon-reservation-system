@@ -12,10 +12,44 @@ export type TenantContext = {
   user: AppUser;
 };
 
+// The permission hook and the route handler share one request. Reuse only that
+// request's successful checks; every new HTTP request still verifies revocation
+// and reads the current user, membership, tenant and salon from the database.
+const authenticatedUsers = new WeakMap<FastifyRequest, { authorization: string | undefined; user: AuthenticatedUser }>();
+type ContextScope = { authorization: string | undefined; tenantSlug: string | undefined; tenantId: string | undefined; salonId: string | undefined };
+const tenantContexts = new WeakMap<FastifyRequest, { scope: ContextScope; context: TenantContext }>();
+
+function contextScope(request: FastifyRequest): ContextScope {
+  const slug = request.headers["x-tenant-slug"];
+  const tenant = request.headers["x-tenant-id"];
+  return { authorization: request.headers.authorization,
+    tenantSlug: Array.isArray(slug) ? slug[0] : slug,
+    tenantId: Array.isArray(tenant) ? tenant[0] : tenant,
+    salonId: requestedSalonId(request) };
+}
+
+function sameScope(left: ContextScope, right: ContextScope) {
+  return left.authorization === right.authorization && left.tenantSlug === right.tenantSlug &&
+    left.tenantId === right.tenantId && left.salonId === right.salonId;
+}
+
+function roleAllowed(context: TenantContext, reply: FastifyReply, allowedRoles?: TenantRole[]) {
+  if (allowedRoles && !allowedRoles.includes(context.membership.role)) {
+    reply.code(403).send({ code: "ROLE_ACCESS_DENIED", message: "この操作を行う権限がありません。" });
+    return false;
+  }
+  return true;
+}
+
 export async function requireAuthenticatedUser(request: FastifyRequest, reply: FastifyReply): Promise<AuthenticatedUser | null> {
+  const authorization = request.headers.authorization;
+  const cached = authenticatedUsers.get(request);
+  if (cached && cached.authorization === authorization) return cached.user;
+  authenticatedUsers.delete(request);
+  tenantContexts.delete(request);
   let claims: Awaited<ReturnType<typeof verifyFirebaseCredential>>;
   try {
-    claims = await verifyFirebaseCredential(request.headers.authorization);
+    claims = await verifyFirebaseCredential(authorization);
   } catch {
     reply.code(401).send({ code: "UNAUTHENTICATED", message: "ログインが必要です。" });
     return null;
@@ -46,6 +80,13 @@ export async function requireAuthenticatedUser(request: FastifyRequest, reply: F
     return null;
   }
 
+  // An internal asynchronous hook must not associate a different credential
+  // with the identity that was actually verified.
+  if (request.headers.authorization !== authorization) {
+    reply.code(401).send({ code: "UNAUTHENTICATED", message: "ログインが必要です。" });
+    return null;
+  }
+  authenticatedUsers.set(request, { authorization, user });
   return user;
 }
 
@@ -57,10 +98,15 @@ export async function requireTenantContext(
   const user = await requireAuthenticatedUser(request, reply);
   if (!user) return null;
 
-  const tenantSlugHeader = request.headers["x-tenant-slug"];
-  const tenantSlug = Array.isArray(tenantSlugHeader) ? tenantSlugHeader[0] : tenantSlugHeader;
-  const tenantIdHeader = request.headers["x-tenant-id"];
-  const tenantId = Array.isArray(tenantIdHeader) ? tenantIdHeader[0] : tenantIdHeader;
+  const scopeKey = contextScope(request);
+  const cached = tenantContexts.get(request);
+  if (cached && sameScope(cached.scope, scopeKey)) {
+    return roleAllowed(cached.context, reply, allowedRoles) ? cached.context : null;
+  }
+  // Header changes must resolve their own scope, even when an earlier scope was
+  // allowed. Do not retain an earlier success after a failed scope change.
+  tenantContexts.delete(request);
+  const { tenantSlug, tenantId } = scopeKey;
   if (!tenantSlug && !tenantId) {
     reply.code(400).send({ code: "TENANT_REQUIRED", message: "利用するテナントを選択してください。" });
     return null;
@@ -85,10 +131,8 @@ export async function requireTenantContext(
     return null;
   }
 
-  if (allowedRoles && !allowedRoles.includes(membership.role)) {
-    reply.code(403).send({ code: "ROLE_ACCESS_DENIED", message: "この操作を行う権限がありません。" });
-    return null;
-  }
+  const context = { tenant: membership.tenant, membership, user };
+  if (!roleAllowed(context, reply, allowedRoles)) return null;
 
   // Resolve the salon before legacy handlers apply their first-salon fallback.
   const scope = membership.role === "OWNER" ? [] : membership.salonIds;
@@ -108,7 +152,10 @@ export async function requireTenantContext(
   }
   if (salon) request.headers["x-salon-id"] = salon.id;
 
-  return { tenant: membership.tenant, membership, user };
+  // Store the normalized salon header so the route reuses the same authorized
+  // salon chosen by its permission hook when no explicit salon was supplied.
+  tenantContexts.set(request, { scope: contextScope(request), context });
+  return context;
 }
 
 export function requestedSalonId(request: FastifyRequest) {

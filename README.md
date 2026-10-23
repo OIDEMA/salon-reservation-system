@@ -52,7 +52,7 @@ External acquisition and publishing integrations are intentionally out of scope 
 
 ## Deploy Notes
 
-The frontend runs on Cloud Run in Tokyo (`asia-northeast1`) at [the production login](https://salon-reserve-web-42401528382.asia-northeast1.run.app/login). The API and private Cloud SQL also run in Tokyo. The former API origin remains available through a compatibility relay so existing member apps keep their reservation idempotency keys. The previous App Hosting URL redirects page visits to the Tokyo frontend; users sign in again because session cookies belong to each hostname.
+The frontend runs on Cloud Run in Tokyo (`asia-northeast1`) at [the production login](https://salon-reserve.beauty-gum.jp/login). Its [Cloud Run URL](https://salon-reserve-web-42401528382.asia-northeast1.run.app/login) remains available as a fallback. The API and private Cloud SQL also run in Tokyo. The former API origin remains available through a compatibility relay so existing member apps keep their reservation idempotency keys. The previous App Hosting URL redirects page visits to the production domain; users sign in again because session cookies belong to each hostname.
 
 The native deployment pipeline in [docs/native-deployment.md](docs/native-deployment.md) validates the application, builds unique container images, and applies the schema, API, Tokyo frontend, and App Hosting redirect under a production lease from the same Git SHA. Production GitHub Actions deployment has been removed.
 

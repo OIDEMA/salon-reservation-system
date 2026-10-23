@@ -9,7 +9,7 @@
   "env": [
     {
       "variable": "REDIRECT_ORIGIN",
-      "value": "https://salon-reserve-web-42401528382.asia-northeast1.run.app",
+      "value": "https://salon-reserve.beauty-gum.jp",
       "availability": ["RUNTIME"]
     }
   ]

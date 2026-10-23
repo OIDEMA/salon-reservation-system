@@ -6,7 +6,7 @@ The regional trigger `reservation-production` (`250509ed-9528-4a9f-8b32-2ef5cbfc
 
 The production GitHub Actions workflow and archive helper were removed in commit `cd64823`. Historical native pipeline validation of that commit succeeded in Cloud Build `0c274cb5-50db-4c8c-a573-1599d01d8b3b`. App Hosting build/rollout `native-8b5a65699eb7aebd3b23d18` reached `READY` / `SUCCEEDED` with 100% traffic; API revision `reservation-api-00047-k89`, migration execution `reservation-db-migrate-7hh9z`, login HTTP 200, and lease removal were verified. That run predates the Tokyo frontend migration; verify a current release using the checks below.
 
-The frontend now targets Tokyo Cloud Run. The existing App Hosting backend serves a redirect container for old URLs. This document describes the deployment configuration and acceptance checks; the configuration alone is not proof that a particular commit has reached production or improved latency.
+The frontend targets Tokyo Cloud Run through `https://salon-reserve.beauty-gum.jp`, while retaining its `run.app` origin as a fallback. The existing App Hosting backend serves a redirect container for old URLs. This document describes the deployment configuration and acceptance checks; the configuration alone is not proof that a particular commit has reached production or improved latency.
 
 The separate **Provision tenant** workflow remains manual and is never triggered by a push. See [provisioning.md](provisioning.md).
 
@@ -21,7 +21,9 @@ The separate **Provision tenant** workflow remains manual and is never triggered
 | Build identity | `github-deploy@salon-reserve-bg.iam.gserviceaccount.com` |
 | Logs | Cloud Logging, `CLOUD_LOGGING_ONLY` |
 | Web | Cloud Run `salon-reserve-web`, region `asia-northeast1` |
-| Web public origin | `https://salon-reserve-web-42401528382.asia-northeast1.run.app` |
+| Web public origin | `https://salon-reserve.beauty-gum.jp` |
+| Web domain routing | Direct Cloud Run Domain Mapping in `asia-northeast1`, mapping-provided DNS CNAME, Google-managed TLS certificate |
+| Web fallback origin | `https://salon-reserve-web-42401528382.asia-northeast1.run.app` |
 | Web runtime identity | `firebase-app-hosting-compute@salon-reserve-bg.iam.gserviceaccount.com` |
 | Web limits | 1 CPU, 512 MiB, min 0 / max 1 instances |
 | Previous URL | `https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app` |
@@ -63,7 +65,7 @@ App Hosting's automatic rollout policy stays **disabled**. Cloud Build performs 
 4. Run deployment tests, acquire the production lease, and verify current `main`. Skip a triggering commit that has become obsolete before deployment starts. Resolve immutable web and redirect image digests and validate the App Hosting redirect request before modifying production services.
 5. Record intent, update the private-VPC schema job, record execution intent, and wait for the schema operation.
 6. Record intent, deploy the same image to the API with `native-deploy-build=BUILD_ID`, and verify VPC configuration and `/ready`.
-7. Record `webDeployRequested` with the existing Tokyo service generation and expected web digest. Deploy the web digest to Cloud Run in `asia-northeast1` using `scripts/web-runtime-env.json`. Require the created revision to be ready, match the digest and build label, receive 100% traffic, and pass public login/routing checks.
+7. Record `webDeployRequested` with the existing Tokyo service generation and expected web digest. Deploy the web digest to Cloud Run in `asia-northeast1` using `scripts/web-runtime-env.json`. Require the created revision to be ready, match the digest and build label, receive 100% traffic, and pass production-domain login/routing checks and fallback login checks. The domain mapping, DNS, and HTTPS certificate must already be ready before this rollout.
 8. Record intent and request App Hosting `source.container.image` with the redirect digest and `scripts/apphosting-redirect-config.json`. Wait for `BUILT` or `READY`, verify the container source, then validate the rollout request.
 9. Record rollout intent, create the rollout, wait for both operations, require build `READY` and rollout `SUCCEEDED`, recheck Tokyo frontend routing and old-URL redirects, and release the lease after its child operations settle.
 
@@ -71,7 +73,7 @@ App Hosting build and rollout IDs are both `native-` followed by the first 23 he
 
 The web and redirect tags must identify the triggering SHA and Cloud Build UUID in the approved registry. The web digest must match the ready Tokyo Cloud Run revision receiving traffic. The redirect digest must match the App Hosting container source before rollout and again after the build reaches `READY`. The backend's repository/root and Developer Connect clone URI are checked independently. App Hosting container-source builds do not populate Git source metadata; retain the Cloud Build source SHA, both image digests, Tokyo revision and App Hosting rollout ID together as release evidence.
 
-The job and API use `API_REGION=asia-northeast1`, the Tokyo subnet, and the pinned Tokyo database secret. `REGION=asia-east1` remains the build/registry/App Hosting region; never globally replace it. The existing API runtime identity, limits, and startup checks remain. The legacy API relay has a separate identity with no DB secret or network attachment, and its deployment intent records generation, build owner, and digest under the same lease. Older lease owners without an API region retain the historical east1 interpretation. Build workers and the Tokyo web service do not connect directly to the production database. The web service retains the Firebase runtime identity. The API CORS allowlist includes both frontend origins during the transition.
+The job and API use `API_REGION=asia-northeast1`, the Tokyo subnet, and the pinned Tokyo database secret. `REGION=asia-east1` remains the build/registry/App Hosting region; never globally replace it. The existing API runtime identity, limits, and startup checks remain. The legacy API relay has a separate identity with no DB secret or network attachment, and its deployment intent records generation, build owner, and digest under the same lease. Older lease owners without an API region retain the historical east1 interpretation. Build workers and the Tokyo web service do not connect directly to the production database. The web service retains the Firebase runtime identity. The API CORS allowlist includes the production domain, Tokyo Cloud Run fallback, and previous App Hosting origins.
 
 ### Build environments and budgets
 
@@ -83,7 +85,7 @@ Both Google Cloud CLI steps use `gcr.io/google.com/cloudsdktool/google-cloud-cli
 
 The web Docker build sets `APP_HOSTING_BUILD=1` for build time only; the name now describes the independent app-directory build mode rather than its deployment destination. The web prebuild installs its own dependencies with `npm ci --workspaces=false`; Next.js uses the app directory for tracing and Turbopack roots. The final non-root container includes standalone `server.js`, public files and Next.js static assets. Tokyo runtime configuration comes from `scripts/web-runtime-env.json`; keep public build-time Firebase configuration consistent with `cloudbuild.yaml`. Regular workspace builds retain the repository root behavior.
 
-The App Hosting redirect uses `apps/redirect/Dockerfile` and `scripts/apphosting-redirect-config.json`. It returns non-cacheable 302 responses for GET/HEAD, preserving paths and queries and leaving fragments for browser inheritance. Other methods return 409 `SERVICE_MOVED`, without forwarding a mutation body. `/healthz` is a local process health check. The redirect target is the fixed Tokyo HTTPS origin and must never be derived from a request header.
+The App Hosting redirect uses `apps/redirect/Dockerfile` and `scripts/apphosting-redirect-config.json`. It returns non-cacheable 302 responses for GET/HEAD, preserving paths and queries and leaving fragments for browser inheritance. Other methods return 409 `SERVICE_MOVED`, without forwarding a mutation body. `/healthz` is a local process health check. The redirect target is the fixed production origin `https://salon-reserve.beauty-gum.jp` and must never be derived from a request header. `APP_PUBLIC_ORIGIN` uses the same origin; `APP_PUBLIC_ORIGINS` additionally allows the fixed Tokyo `run.app` fallback. Firebase's auth domain and email action callback remain on `salon-reserve-bg.firebaseapp.com`.
 
 The whole Cloud Build timeout is `10800s` (three hours), including validation, image construction, a lease wait of up to `3600s` (one hour), API/schema work, Tokyo deployment, and App Hosting checks. Uncontended deployments acquire the lease immediately. A timed-out parent can leave asynchronous work active; do not treat timeout as proof of completion.
 

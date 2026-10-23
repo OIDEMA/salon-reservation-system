@@ -23,9 +23,10 @@ async function withServer(t) {
 }
 
 test('only the approved HTTPS origin can be configured', () => {
+  assert.equal(EXPECTED_ORIGIN, 'https://salon-reserve.beauty-gum.jp');
   assert.equal(validateRedirectOrigin(EXPECTED_ORIGIN), EXPECTED_ORIGIN);
   assert.equal(validateRedirectOrigin(`${EXPECTED_ORIGIN}/`), EXPECTED_ORIGIN);
-  for (const value of [undefined, '', 'https://evil.example', EXPECTED_ORIGIN.replace('https:', 'http:'), `${EXPECTED_ORIGIN}.evil.example`, `${EXPECTED_ORIGIN}/login`, `${EXPECTED_ORIGIN}?q=1`, `${EXPECTED_ORIGIN}#token=1`]) {
+  for (const value of [undefined, '', 'https://evil.example', 'https://salon-reserve-web-42401528382.asia-northeast1.run.app', EXPECTED_ORIGIN.replace('https:', 'http:'), `${EXPECTED_ORIGIN}.evil.example`, `${EXPECTED_ORIGIN}/login`, `${EXPECTED_ORIGIN}?q=1`, `${EXPECTED_ORIGIN}#token=1`]) {
     assert.throws(() => validateRedirectOrigin(value));
   }
 });

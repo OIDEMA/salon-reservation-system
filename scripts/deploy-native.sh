@@ -85,7 +85,8 @@ relay_image_repository = f"{region}-docker.pkg.dev/{project}/cloud-run-source-de
 relay_image = f"{relay_image_repository}:{commit}-{build_id}"
 if required("API_RELAY_IMAGE") != relay_image:
     raise SystemExit("API_RELAY_IMAGE must identify the triggering commit and build in the approved registry.")
-frontend_url = "https://salon-reserve-web-42401528382.asia-northeast1.run.app"
+frontend_url = "https://salon-reserve.beauty-gum.jp"
+frontend_fallback_url = "https://salon-reserve-web-42401528382.asia-northeast1.run.app"
 legacy_url = "https://salon-reserve-web--salon-reserve-bg.asia-east1.hosted.app"
 if os.environ.get("DEPLOY_PREFLIGHT_ONLY") != "1" and not re.fullmatch(r"[1-9][0-9]*", os.environ.get("NATIVE_DEPLOY_LOCK_GENERATION", "")):
     raise SystemExit("A production deployment lease generation is required; invoke native-deploy.py.")
@@ -98,13 +99,13 @@ if redirect_config != {
     raise SystemExit("App Hosting redirect configuration must use the approved destination and runtime limits.")
 web_env = json.loads(Path("scripts/web-runtime-env.json").read_text())
 approved_env = {
-    "APP_PUBLIC_ORIGIN", "NEXT_PUBLIC_API_BASE_URL", "NEXT_PUBLIC_FIREBASE_API_KEY",
+    "APP_PUBLIC_ORIGIN", "APP_PUBLIC_ORIGINS", "NEXT_PUBLIC_API_BASE_URL", "NEXT_PUBLIC_FIREBASE_API_KEY",
     "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN", "NEXT_PUBLIC_FIREBASE_PROJECT_ID",
     "NEXT_PUBLIC_FIREBASE_APP_ID", "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
 }
 if not isinstance(web_env, dict) or set(web_env) != approved_env or any(
     not isinstance(value, str) or not value or "|" in value for value in web_env.values()
-) or web_env["APP_PUBLIC_ORIGIN"] != frontend_url or web_env["NEXT_PUBLIC_API_BASE_URL"] != api_url or web_env["NEXT_PUBLIC_FIREBASE_PROJECT_ID"] != project:
+) or web_env["APP_PUBLIC_ORIGIN"] != frontend_url or web_env["APP_PUBLIC_ORIGINS"] != f"{frontend_url},{frontend_fallback_url}" or web_env["NEXT_PUBLIC_API_BASE_URL"] != api_url or web_env["NEXT_PUBLIC_FIREBASE_PROJECT_ID"] != project or web_env["NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"] != f"{project}.firebaseapp.com":
     raise SystemExit("Cloud Run web environment must contain only approved public settings and origins.")
 
 
@@ -326,7 +327,7 @@ gcloud(
     f"--labels=native-deploy-build={build_id}",
     "--allow-unauthenticated", f"--network={expected['VPC_NETWORK']}", f"--subnet={expected['VPC_SUBNET']}",
     "--vpc-egress=private-ranges-only", f"--set-secrets=DATABASE_URL={expected['DATABASE_URL_SECRET']}",
-    f"--set-env-vars=^|^NODE_ENV=production|DB_CONNECTIVITY=private-ip|CHART_PHOTOS_BUCKET={expected['CHART_PHOTOS_BUCKET']}|CORS_ORIGINS={legacy_url},{frontend_url}|MEMBER_BOOKING_TENANTS=mens-gentle:gentle;missmrs-takamatsu:missmrs",
+    f"--set-env-vars=^|^NODE_ENV=production|DB_CONNECTIVITY=private-ip|CHART_PHOTOS_BUCKET={expected['CHART_PHOTOS_BUCKET']}|CORS_ORIGINS={legacy_url},{frontend_fallback_url},{frontend_url}|MEMBER_BOOKING_TENANTS=mens-gentle:gentle;missmrs-takamatsu:missmrs",
     "--cpu=1", "--memory=512Mi", "--min-instances=0", "--max-instances=1", "--concurrency=40",
     "--timeout=60", "--port=8080",
     "--startup-probe=httpGet.path=/ready,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=5,failureThreshold=24",
@@ -546,6 +547,8 @@ web_ready_revision = verify_web_revision()
 
 if "サロン管理へログイン" not in read_url(f"{frontend_url}/login"):
     raise RuntimeError("Frontend login page health check failed.")
+if "サロン管理へログイン" not in read_url(f"{frontend_fallback_url}/login"):
+    raise RuntimeError("Cloud Run fallback login page health check failed.")
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -609,10 +612,10 @@ verify_web_revision()
 for path in ("/login", "/mens-gentle/reservations?view=week"):
     try:
         with opener.open(legacy_url + path, timeout=60):
-            raise RuntimeError("The legacy frontend must redirect to Tokyo Cloud Run.")
+            raise RuntimeError("The legacy frontend must redirect to the production domain.")
     except urllib.error.HTTPError as error:
         if error.code != 302 or error.headers.get("Location") != frontend_url + path or "no-store" not in error.headers.get("Cache-Control", ""):
-            raise RuntimeError("The legacy frontend must preserve paths and query strings when redirecting to Tokyo.") from None
+            raise RuntimeError("The legacy frontend must preserve paths and query strings when redirecting to the production domain.") from None
 
 print(f"Native production deployment succeeded for {commit} ({build_id}).")
 print(f"Tokyo Cloud Run ready revision: {web_ready_revision}")

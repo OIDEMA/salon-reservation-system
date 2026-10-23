@@ -104,7 +104,7 @@ steps:
     args:
       - -euc
       - |
-        docker run --detach --name reservation-redirect-smoke --env REDIRECT_ORIGIN=https://salon-reserve-web-42401528382.asia-northeast1.run.app "$$REDIRECT_IMAGE"
+        docker run --detach --name reservation-redirect-smoke --env REDIRECT_ORIGIN=https://salon-reserve.beauty-gum.jp "$$REDIRECT_IMAGE"
         trap 'docker logs reservation-redirect-smoke; docker rm --force reservation-redirect-smoke >/dev/null' EXIT
         docker exec reservation-redirect-smoke node --input-type=module -e '
           import { setTimeout } from "node:timers/promises";

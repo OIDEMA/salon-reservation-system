@@ -25,11 +25,13 @@ docker run --detach --name "$postgres_container" \
 # Production Cloud SQL reports pg_jit_available() = false. The official Docker
 # image includes LLVM, so disable JIT to match the production execution mode.
 for attempt in $(seq 1 60); do
-  if docker exec "$postgres_container" pg_isready --username=reservation_test --dbname=reservation_test >/dev/null 2>&1; then break; fi
+  # The image starts a temporary Unix-socket-only server during initialization.
+  # Wait for TCP so a ready check cannot race that temporary server's shutdown.
+  if docker exec "$postgres_container" pg_isready --host=127.0.0.1 --username=reservation_test --dbname=reservation_test >/dev/null 2>&1; then break; fi
   if [[ "$attempt" == 60 ]]; then echo "Disposable PostgreSQL did not become ready." >&2; exit 1; fi
   sleep 1
 done
-docker exec "$postgres_container" psql --username=reservation_test --dbname=reservation_test --no-align --tuples-only \
+docker exec "$postgres_container" psql --host=127.0.0.1 --username=reservation_test --dbname=reservation_test --no-align --tuples-only \
   --command="SELECT version(), current_setting('jit') AS jit;"
 
 # Reuse the production image construction, adding only tests to this disposable

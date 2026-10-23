@@ -88,7 +88,9 @@ test("reservation and checkout pages keep lists bounded and searchable across th
     const get = (url: string, headers: Record<string, string> = reservationReader.headers) => server.inject({ method: "GET", url, headers });
 
     await t.test("reservation page is bounded, complete and does not serialize detail fields", async () => {
+      const checksBefore = auth.mock.callCount();
       const first = await get("/api/reservations/page"); assert.equal(first.statusCode, 200, first.body);
+      assert.equal(auth.mock.callCount() - checksBefore, 1, "the real permission hook and page handler share one Firebase check per HTTP request");
       assert.equal(first.headers["cache-control"], "private, no-store");
       assert.deepEqual([first.json().total, first.json().page, first.json().pageSize, first.json().totalPages, first.json().reservations.length], [1005, 1, 50, 21, 50]);
       const seen = new Set<string>();

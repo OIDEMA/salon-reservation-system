@@ -1,11 +1,11 @@
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 
-export const EXPECTED_ORIGIN = 'https://salon-reserve-web-42401528382.asia-northeast1.run.app';
+export const EXPECTED_ORIGIN = 'https://salon-reserve.beauty-gum.jp';
 
 export function validateRedirectOrigin(value) {
   if (value !== EXPECTED_ORIGIN && value !== `${EXPECTED_ORIGIN}/`) {
-    throw new Error('REDIRECT_ORIGIN must be the approved Tokyo Cloud Run origin');
+    throw new Error('REDIRECT_ORIGIN must be the approved production origin');
   }
   return EXPECTED_ORIGIN;
 }
