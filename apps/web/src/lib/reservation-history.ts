@@ -38,6 +38,16 @@ export function historyAmount(value: number | null) {
   return value === null ? "未登録" : new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 }).format(value);
 }
 
+/** Neutralize only the known visit-count annotation; keep all other recorded text unchanged. */
+export function historyRawDisplayValue(header: string, value: string) {
+  const visitCountLine = header === "詳細：来店回数"
+    ? /^([ \t]*\d+回[ \t]*)\(サロンボード登録以前：([0-9]+)回\)([ \t]*\r?)$/gm
+    : /^詳細明細表 \d+$/.test(header)
+      ? /^([ \t]*来店回数[ \t]+\d+回[ \t]*)\(サロンボード登録以前：([0-9]+)回\)([ \t]*\r?)$/gm
+      : null;
+  return visitCountLine ? value.replace(visitCountLine, "$1(過去の来店回数：$2回)$3") : value;
+}
+
 export function validateHistoryImportPreview(value: unknown): ReservationHistoryImportFile {
   const data = value as Partial<ReservationHistoryImportFile> | null;
   const validDate = (date: unknown) => typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date) &&

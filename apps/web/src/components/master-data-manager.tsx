@@ -8,6 +8,7 @@ import { DismissibleMessage } from "@/components/dismissible-message";
 import { TenantLink } from "@/components/tenant-link";
 import { useTenantSlug, usePermissions } from "@/components/tenant-provider";
 import { tenantApiPath, tenantPath } from "@/lib/tenant-routing";
+import { equipmentMemoForDisplay } from "@/lib/equipment-form";
 
 export type MasterField = {
   key: string;
@@ -237,7 +238,9 @@ export function MasterDataManager({ resource, initialPage, columns, itemLabel, c
           {!listBusy && result.items.length === 0 ? <tr><td colSpan={columns.length + (canWrite ? 1 : 0)}><div className="emptyState">{hasFilters ? `検索に一致する${itemLabel}がありません。` : `${itemLabel}はまだ登録されていません。`}</div></td></tr> : null}
           {result.items.map((item) => <tr key={item.id}>
             {columns.map((column) => {
-              const value = item[column.key];
+              const value = resource === "equipment" && column.key === "memo"
+                ? equipmentMemoForDisplay(item[column.key])
+                : item[column.key];
               return <td key={column.key}>{column.format === "color" ? <span className="colorValue"><span className="menuColor" aria-hidden="true" style={{ background: String(value) }} /><span className="colorCode">{String(value)}</span></span> : formatted(value, column.format)}</td>;
             })}
             {canWrite ? <td><div className="tableActions"><TenantLink className="miniButton" href={`${editBaseHref}/${encodeURIComponent(item.id)}/edit`}><Edit3 size={15} />編集</TenantLink><button className="dangerButton" disabled={busy || listBusy} type="button" onClick={() => void remove(item)}><Trash2 size={15} /></button></div></td> : null}

@@ -14,9 +14,11 @@ import { ReservationEditForm } from "../src/components/reservation-edit-form";
 import { ReservationStaffTools } from "../src/components/reservation-staff-tools";
 import { TimelineReservationEditor } from "../src/components/timeline-reservation-editor";
 import { ReservationCustomerFields } from "../src/components/reservation-customer-fields";
+import { MasterDataEditForm, MasterDataManager } from "../src/components/master-data-manager";
 import { TenantProvider, type TenantMembership } from "../src/components/tenant-provider";
 import { firstAccessibleAdminPath } from "../src/lib/admin-navigation";
 import type { AdminMenu, AdminReservation, AdminStaff } from "../src/lib/admin-types";
+import { equipmentColumns, equipmentFields, equipmentMemoForDisplay } from "../src/lib/equipment-form";
 
 const router: AppRouterInstance = {
   back() {}, forward() {}, refresh() {}, push() {}, replace() {}, prefetch() {}, bfcacheId: "test"
@@ -40,6 +42,31 @@ function renderFor(permissions: string[], children: ReactNode, role: TenantMembe
     </AppRouterContext.Provider>
   );
 }
+
+test("設備の旧定型メモだけを表示から除き、手入力と元データを保持する", () => {
+  const generatedMemo = "サロンボード H000551123 の設備設定から移行。元の同時受付数・振り分け順を保持。";
+  assert.equal(equipmentMemoForDisplay(generatedMemo), "");
+  for (const memo of [null, "", "毎月清掃", "移行元のお客様へ確認済み", `${generatedMemo}追記あり`]) {
+    assert.equal(equipmentMemoForDisplay(memo), memo);
+  }
+  const generated = Object.freeze({ id: "equipment-generated", name: "定型メモの設備", memo: generatedMemo, active: true });
+  const manual = Object.freeze({ id: "equipment-manual", name: "手入力メモの設備", memo: "毎月清掃<script>メモ</script>", active: true });
+  for (const page of [1, 2]) {
+    const initialPage = { items: [generated, manual], total: 4, page, pageSize: 2, totalPages: 2 };
+    const html = renderFor(["master.read"], <MasterDataManager resource="equipment" initialPage={initialPage}
+      columns={equipmentColumns} itemLabel="設備" createHref="/equipment/new" editBaseHref="/equipment" />);
+    assert.doesNotMatch(html, /サロンボード|設備設定から移行/);
+    assert.match(html, /毎月清掃&lt;script&gt;メモ&lt;\/script&gt;/);
+    assert.equal(initialPage.items[0].memo, generatedMemo);
+  }
+  for (const item of [generated, manual]) {
+    const html = renderFor(["master.read", "master.write"], <MasterDataEditForm resource="equipment" fields={equipmentFields}
+      initialValues={{ ...item, memo: equipmentMemoForDisplay(item.memo) }} itemId={item.id} itemLabel="設備" returnHref="/equipment" />);
+    if (item === generated) assert.match(html, /<textarea[^>]*><\/textarea>/);
+    else assert.match(html, /<textarea[^>]*>毎月清掃&lt;script&gt;メモ&lt;\/script&gt;<\/textarea>/);
+  }
+  assert.equal(generated.memo, generatedMemo);
+});
 
 test("初期画面は閲覧可能なモジュールへ進み、無権限では予約表を選ばない", () => {
   assert.equal(firstAccessibleAdminPath({ role: "OWNER", permissions: [] }), "/");

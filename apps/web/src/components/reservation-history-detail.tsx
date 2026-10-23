@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReservationHistoryDetail as HistoryDetail } from "@/lib/admin-types";
-import { historyAmount, historyDate } from "@/lib/reservation-history";
+import { historyAmount, historyDate, historyRawDisplayValue } from "@/lib/reservation-history";
 import { TenantLink } from "./tenant-link";
 import { usePermissions } from "./tenant-provider";
 
@@ -49,7 +49,7 @@ export function ReservationHistoryDetail({ history }: { history: HistoryDetail }
       <h2>詳細情報</h2>
       {hasRawData ? <div className="historyRawScroll"><table className="adminTable historyRawTable">
         <thead><tr><th>項目</th><th>内容</th></tr></thead>
-        <tbody>{history.rawHeaders!.map((header, index) => <tr key={index}><th scope="row"><small>{index + 1}</small>{header || "項目名なし"}</th><td>{history.rawValues![index] || "未登録"}</td></tr>)}</tbody>
+        <tbody>{history.rawHeaders!.map((header, index) => <tr key={index}><th scope="row"><small>{index + 1}</small>{header || "項目名なし"}</th><td>{historyRawDisplayValue(header, history.rawValues![index]) || "未登録"}</td></tr>)}</tbody>
       </table></div> : <p>{allowedOriginal ? "詳細情報を取得できませんでした。" : "詳細情報を閲覧するには、電子カルテの閲覧権限が必要です。"}</p>}
     </section>
   </div>;

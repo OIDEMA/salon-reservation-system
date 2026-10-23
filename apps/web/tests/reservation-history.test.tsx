@@ -8,7 +8,7 @@ import { ReservationHistoryImport } from "../src/components/reservation-history-
 import { TenantProvider } from "../src/components/tenant-provider";
 import { adminNavigation } from "../src/lib/admin-navigation";
 import type { ReservationHistoryDetail as Detail, ReservationHistoryImportFile, ReservationHistoryImportProgress, ReservationHistoryPage } from "../src/lib/admin-types";
-import { historyAmount, historyDate, importReservationHistory, requestReservationHistoryPage, validateHistoryImportPreview } from "../src/lib/reservation-history";
+import { historyAmount, historyDate, historyRawDisplayValue, importReservationHistory, requestReservationHistoryPage, validateHistoryImportPreview } from "../src/lib/reservation-history";
 
 function render(children: ReactNode, permissions: string[], tenantSlug = "missmrs-takamatsu") {
   return renderToStaticMarkup(createElement(TenantProvider, {
@@ -149,4 +149,30 @@ test("移動済み履歴の詳細は有効な予約表の日付へ戻り、移�
   assert.match(html, /予約表の表示位置/); assert.match(html, /移動先の担当/);
   assert.match(html, /2025\/10\/16.*11:30/); assert.match(html, /2025\/10\/14.*10:00/); assert.match(html, /過去の担当/);
   assert.doesNotMatch(html, /移行元の予約情報|<button|checkout/);
+});
+
+test("来店回数の既知の注記だけを中立化し、回数と他の記録・手入力メモを保持する", () => {
+  const visitCount = "11回 (サロンボード登録以前：0回)";
+  const multiLine = "来店回数\t11回 (サロンボード登録以前：0回)\r\n予約状態\t来店済み\r\nメモ\tサロンボードで確認済み\r\nメモ\t11回 (サロンボード登録以前：9回)";
+  const expectedMultiLine = multiLine.replace("来店回数\t11回 (サロンボード登録以前：0回)", "来店回数\t11回 (過去の来店回数：0回)");
+  assert.equal(historyRawDisplayValue("詳細：来店回数", visitCount), "11回 (過去の来店回数：0回)");
+  assert.equal(historyRawDisplayValue("詳細明細表 5", multiLine), expectedMultiLine);
+  assert.equal(historyRawDisplayValue("詳細明細表 12", " 来店回数  28回 (サロンボード登録以前：17回)  "), " 来店回数  28回 (過去の来店回数：17回)  ");
+  for (const header of ["メモ", "同意事項", "来店回数", "詳細明細表", "詳細明細表 5 メモ"]) {
+    assert.equal(historyRawDisplayValue(header, visitCount), visitCount);
+    assert.equal(historyRawDisplayValue(header, multiLine), multiLine);
+  }
+  for (const value of ["メモ：11回 (サロンボード登録以前：0回)", "11回 (サロンボード登録以前：不明)", "11回 (サロンボード登録以前：0回) 確認メモ", "サロンボードで確認済み"]) {
+    assert.equal(historyRawDisplayValue("詳細：来店回数", value), value);
+    assert.equal(historyRawDisplayValue("詳細明細表 5", value), value);
+  }
+  const history = { ...detail, rawHeaders: ["詳細：来店回数", "詳細明細表 5", "メモ"], rawValues: [visitCount, multiLine, visitCount] };
+  const before = JSON.stringify(history);
+  const html = render(createElement(ReservationHistoryDetail, { history }), ["reservation.read", "chart.read"]);
+  assert.equal((html.match(/11回 \(過去の来店回数：0回\)/g) ?? []).length, 2);
+  assert.match(html, /予約状態\t来店済み/);
+  assert.match(html, /メモ\tサロンボードで確認済み/);
+  assert.match(html, /メモ\t11回 \(サロンボード登録以前：9回\)/);
+  assert.match(html, /11回 \(サロンボード登録以前：0回\)/);
+  assert.equal(JSON.stringify(history), before, "Stored raw values remain unchanged");
 });

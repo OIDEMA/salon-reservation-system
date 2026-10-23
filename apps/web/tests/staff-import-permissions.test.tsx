@@ -39,3 +39,22 @@ test("取得元の設定は現在の予約設定と区別し、HTMLを実行せ�
   assert.doesNotMatch(html, /初期値を設定|現在の予約設定とは別に保存/);
   assert.equal(renderToStaticMarkup(createElement(StaffSourceDetails, { records: [] })), "");
 });
+
+test("スタッフ詳細の内部メタデータだけを非表示にし、プロフィールと元データは保持する", () => {
+  const sourceProfile = {
+    migrationStatusReason: "移行元の対応メニュー登録あり",
+    "スタッフ紹介": "接客を担当しています。",
+    "対応メニュー": ["脱毛", "痩身"],
+    "補足": [{ migrationStatusReason: "ユーザー指定・移行元の対応メニュー登録なしにより予約受付停止", "受付について": "個別に確認してください。" }],
+    "お知らせ": "移行元のお客様への確認メモ"
+  };
+  const original = structuredClone(sourceProfile);
+  const html = renderToStaticMarkup(createElement(StaffSourceDetails, { records: [{
+    source: "SALONBOARD", sourceStoreId: "H000551123", importedAt: "2026-10-14T00:00:00Z", profile: { sourceProfile }
+  }] }));
+  assert.doesNotMatch(html, /migrationStatusReason|移行元の対応メニュー登録あり|ユーザー指定・移行元の対応メニュー登録なしにより予約受付停止/);
+  for (const value of ["スタッフ紹介", "接客を担当しています。", "対応メニュー", "脱毛", "痩身", "受付について", "個別に確認してください。", "移行元のお客様への確認メモ"]) {
+    assert.ok(html.includes(value));
+  }
+  assert.deepEqual(sourceProfile, original);
+});
