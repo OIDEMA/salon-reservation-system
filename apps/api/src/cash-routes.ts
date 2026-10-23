@@ -135,7 +135,7 @@ export function registerCashRoutes(server: FastifyInstance) {
         supersedesCheckoutId: previous?.id,
         reservationSnapshot: { customerName: reservation.customer.name, serviceName: reservation.service.name,
           customerId: reservation.customerId, serviceId: reservation.serviceId, staffId: reservation.staffId,
-          staffName: reservation.staff?.name ?? "指名なし", salonName: context.salon.name,
+          staffName: reservation.staff?.name ?? "指名なし", salonName: context.salon.name, timezone: context.salon.timezone,
           startsAt: reservation.startsAt.toISOString(), endsAt: reservation.endsAt.toISOString() },
         subtotalYen: totals.subtotalYen, discountYen: totals.discountYen, totalYen: totals.totalYen,
         taxYen: totals.taxYen, taxBreakdown: totals.taxBreakdown, cashYen: 0 } });
@@ -265,7 +265,7 @@ export function registerCashRoutes(server: FastifyInstance) {
         taxBreakdown: totals.taxBreakdown, cashYen: 0,
         reservationSnapshot: { customerId: reservation.customerId, serviceId: reservation.serviceId, staffId: reservation.staffId,
           customerName: reservation.customer.name, serviceName: reservation.service.name, staffName: reservation.staff?.name ?? "指名なし",
-          salonName: context.salon.name, startsAt: reservation.startsAt.toISOString(), endsAt: reservation.endsAt.toISOString() } } });
+          salonName: context.salon.name, timezone: context.salon.timezone, startsAt: reservation.startsAt.toISOString(), endsAt: reservation.endsAt.toISOString() } } });
       await storeLines(tx, context, id, draft, totals);
       await operationAudit(tx, context, request, { action: "checkout.draft.refresh-reservation", resource: "cashCheckout", resourceId: id,
         metadata: { reservationId: reservation.id, paymentRecordsCleared: true } });

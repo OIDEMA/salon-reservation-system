@@ -17,6 +17,7 @@ import { runSerializable, lockOperation, operationAudit, operationError } from "
 import { assertReservationCapacity, ReservationCapacityError } from "./reservation-capacity.js";
 import { legacyPermission } from "./legacy-permissions.js";
 import { registerCashRoutes } from "./cash-routes.js";
+import { registerReceiptEmailRoutes } from "./receipt-email-routes.js";
 import { registerChartRoutes } from "./chart-routes.js";
 import { registerStaffImportRoutes } from "./staff-import-routes.js";
 import { registerHistoryImportRoutes } from "./history-import-routes.js";
@@ -1348,6 +1349,7 @@ server.patch("/api/reservations/:id/status", async (request, reply) => {
 
 registerMemberBookingRoutes(server);
 await registerCashRoutes(server);
+registerReceiptEmailRoutes(server);
 await registerChartRoutes(server);
 await registerStaffImportRoutes(server);
 await registerHistoryImportRoutes(server);
