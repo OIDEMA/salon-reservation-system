@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { createHash } from "node:crypto";
 import { CashError, calculateCashDraft, cashDraftSchema } from "../src/cash-domain.js";
-import { buildReceiptEmail, createReceiptSnapshot, receiptInputSchema, receiptPayloadSchema } from "../src/receipt-email.js";
+import { buildReceiptEmail, createReceiptSnapshot, receiptInputSchema, receiptPayloadSchema, receiptAttachmentSchema, RECEIPT_PDF_MAX_BYTES } from "../src/receipt-email.js";
 
 const checkoutId = "102e7470-74df-4cab-822f-a3c532a77d00";
 const requestId = "7b1c75ba-41fe-48fe-902f-54b0eb35f035";
@@ -18,6 +19,16 @@ function finalizedCheckout() {
   };
 }
 const input = { requestId, version: 2, recipientEmail: "customer@example.com", recipientName: "山田 花子", description: "施術代として" };
+
+test("maximum-size PDF attachment validates without regex stack overflow and rejects damaged bytes", () => {
+  const bytes = Buffer.alloc(RECEIPT_PDF_MAX_BYTES, 65);
+  bytes.write("%PDF-1.7\n");
+  const attachment = { fileName: `receipt-${checkoutId}.pdf`, contentBase64: bytes.toString("base64"), sha256: createHash("sha256").update(bytes).digest("hex") };
+  assert.equal(receiptAttachmentSchema.safeParse(attachment).success, true);
+  for (const contentBase64 of [attachment.contentBase64.slice(0, -4) + "!!!!", attachment.contentBase64.slice(0, -4) + "AAAA", attachment.contentBase64 + "AAAA"]) {
+    assert.equal(receiptAttachmentSchema.safeParse({ ...attachment, contentBase64 }).success, false);
+  }
+});
 
 test("receipt contains captured finalized amounts, Japanese dates and only customer-facing fields", () => {
   const receipt = createReceiptSnapshot(finalizedCheckout(), input);

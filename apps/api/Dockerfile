@@ -14,6 +14,7 @@ RUN npm run prisma:generate
 
 COPY tsconfig.json ./
 COPY src ./src
+COPY assets ./assets
 RUN npm run build
 
 ENV NODE_ENV=production

@@ -95,3 +95,26 @@ test("SES rejection is a non-retryable sanitized error", async () => {
     (error: unknown) => error instanceof SesMailError && error.code === "MESSAGE_REJECTED" && !error.retryable &&
       !error.message.includes("admin@example.com"));
 });
+
+test("PDF is attached as binary with explicit MIME, attachment disposition and base64 transfer", async () => {
+  let command: SendEmailCommand | undefined;
+  const content = Buffer.from("%PDF-1.7\nattachment test\n%%EOF\n");
+  await sendTextEmail({ to: "customer@example.com", subject: "領収書PDF", text: "添付をご確認ください。",
+    attachments: [{ fileName: "receipt-test.pdf", contentType: "application/pdf", content }] },
+  { transport: sesTextTransport({ send: async (value) => { command = value; return { MessageId: "pdf-test" }; } }) });
+  assert.deepEqual(command?.input.Content?.Simple?.Attachments, [{ FileName: "receipt-test.pdf", ContentType: "application/pdf",
+    RawContent: content, ContentDisposition: "ATTACHMENT", ContentTransferEncoding: "BASE64" }]);
+  assert.deepEqual(command?.input.Destination, { ToAddresses: ["customer@example.com"] });
+});
+
+test("invalid PDF, oversized attachment and unsafe filename are rejected before sending", async () => {
+  const valid = { fileName: "receipt-test.pdf", contentType: "application/pdf" as const, content: Buffer.from("%PDF-1.7\n%%EOF") };
+  for (const attachment of [{ ...valid, fileName: "a.pdf\r\nBcc: other@example.com" }, { ...valid, fileName: "../receipt.pdf" },
+    { ...valid, content: Buffer.from("not a pdf") }, { ...valid, content: Buffer.alloc(4 * 1024 * 1024 + 1) }]) {
+    let sends = 0;
+    await assert.rejects(() => sendTextEmail({ to: "customer@example.com", subject: "PDF", text: "body", attachments: [attachment] },
+      { transport: async () => { sends++; return { messageId: "unexpected" }; } }),
+    (error: unknown) => error instanceof SesMailError && error.code === "INVALID_MESSAGE");
+    assert.equal(sends, 0);
+  }
+});

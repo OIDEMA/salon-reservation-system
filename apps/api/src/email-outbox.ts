@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { deriveInvitationToken } from "./invitation-token.js";
-import { sendTextEmail, SesMailError } from "./ses-mail.js";
+import { sendTextEmail, SesMailError, type EmailAttachment } from "./ses-mail.js";
 import { reservationNotificationEmail, reservationNotificationSchema } from "./reservation-notification.js";
 import { checkoutNotificationEmail, checkoutNotificationSchema } from "./checkout-notification.js";
 import { CashError } from "./cash-domain.js";
@@ -70,6 +70,7 @@ async function deliver(database: PrismaClient, id: string, send: SendText, baseU
   const recipient = z.string().email().max(254).parse(item.recipientEmail);
   let subject: string;
   let text: string;
+  let attachments: EmailAttachment[] | undefined;
 
   if (item.eventType === RESERVATION_EVENT) {
     const payload = reservationNotificationSchema.parse(item.payload);
@@ -120,12 +121,14 @@ async function deliver(database: PrismaClient, id: string, send: SendText, baseU
       } });
       return "skipped";
     }
-    ({ subject, text } = buildReceiptEmail(payload.receipt));
+    ({ subject, text } = payload.message ?? buildReceiptEmail(payload.receipt));
+    if (payload.attachment) attachments = [{ fileName: payload.attachment.fileName, contentType: "application/pdf",
+      content: Buffer.from(payload.attachment.contentBase64, "base64") }];
   } else {
     throw new Error("Unsupported outbox event type");
   }
 
-  const result = await send({ to: recipient, subject, text });
+  const result = await send({ to: recipient, subject, text, ...(attachments ? { attachments } : {}) });
   if (!result.messageId) throw new Error("SES returned no message id");
   await database.emailOutbox.update({ where: { id }, data: {
     status: "SENT", sentAt: new Date(), lockedUntil: null, providerMessageId: result.messageId,

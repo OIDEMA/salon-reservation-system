@@ -30,6 +30,8 @@ export type SalonSettings = {
   calendarDefaultView: string;
   calendarDisplayMode: string;
   notificationEmail: string | null;
+  receiptIssuerName: string | null;
+  invoiceRegistrationNumber: string | null;
   notifyReservationEmail: boolean;
   notifyReservationLine: boolean;
   notifyCancellation: boolean;

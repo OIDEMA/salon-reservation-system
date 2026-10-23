@@ -7,7 +7,8 @@ const SES_AWS_ACCOUNT = "243110548344";
 const WEB_IDENTITY_AUDIENCE = "sts.amazonaws.com";
 const CREDENTIAL_REFRESH_MARGIN_MS = 5 * 60_000;
 
-export type TextEmail = { to: string; subject: string; text: string };
+export type EmailAttachment = { fileName: string; contentType: "application/pdf"; content: Uint8Array };
+export type TextEmail = { to: string; subject: string; text: string; attachments?: EmailAttachment[] };
 export type SesTextMessage = TextEmail & { from: typeof SES_FROM_EMAIL };
 export type TextEmailTransport = (message: SesTextMessage) => Promise<{ messageId: string }>;
 type AwsCredentials = Awaited<ReturnType<ReturnType<typeof fromWebToken>>>;
@@ -29,7 +30,14 @@ function validateMessage(input: TextEmail): TextEmail {
   if (typeof input.text !== "string" || !input.text.trim() || input.text.length > 10_000 || input.text.includes("\0")) {
     throw new SesMailError("INVALID_MESSAGE", false);
   }
-  return { to, subject: input.subject, text: input.text };
+  if (input.attachments !== undefined && (!Array.isArray(input.attachments) || input.attachments.length !== 1 ||
+    input.attachments.some((attachment) => !attachment || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.pdf$/.test(attachment.fileName) ||
+      attachment.contentType !== "application/pdf" || !(attachment.content instanceof Uint8Array) ||
+      attachment.content.byteLength < 8 || attachment.content.byteLength > 4 * 1024 * 1024 ||
+      Buffer.from(attachment.content.subarray(0, 5)).toString() !== "%PDF-"))) {
+    throw new SesMailError("INVALID_MESSAGE", false);
+  }
+  return { to, subject: input.subject, text: input.text, ...(input.attachments ? { attachments: input.attachments } : {}) };
 }
 
 /** Metadata tokens are signed for the Cloud Run service identity, never persisted or logged. */
@@ -96,7 +104,11 @@ export function sesTextTransport(client: SesClient): TextEmailTransport {
       Destination: { ToAddresses: [message.to] },
       Content: { Simple: {
         Subject: { Data: message.subject, Charset: "UTF-8" },
-        Body: { Text: { Data: message.text, Charset: "UTF-8" } }
+        Body: { Text: { Data: message.text, Charset: "UTF-8" } },
+        ...(message.attachments ? { Attachments: message.attachments.map((attachment) => ({
+          FileName: attachment.fileName, ContentType: attachment.contentType, RawContent: attachment.content,
+          ContentDisposition: "ATTACHMENT" as const, ContentTransferEncoding: "BASE64" as const
+        })) } : {})
       } }
     }));
     if (!result.MessageId) throw new SesMailError("SEND_FAILED", true);

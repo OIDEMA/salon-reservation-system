@@ -1,6 +1,8 @@
 import type { CashCheckout, CashCheckoutItem, CashPaymentAllocation } from "@prisma/client";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { CASH_MAX_YEN, CashError, cashAssert, cashPaymentMethods } from "./cash-domain.js";
+import { receiptIssuerNameSchema, invoiceRegistrationNumberSchema } from "./receipt-settings.js";
 
 export const RECEIPT_EVENT = "checkout.receipt";
 const controls = /[\x00-\x1f\x7f-\x9f\u2028\u2029]/;
@@ -8,6 +10,7 @@ const safeLine = (maximum: number) => z.string().refine((value) => !controls.tes
   .transform((value) => value.trim()).pipe(z.string().min(1).max(maximum));
 export const receiptInputSchema = z.object({
   requestId: z.string().uuid(),
+  previewHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   version: z.number().int().positive(),
   recipientEmail: z.string().refine((value) => !controls.test(value), "制御文字は使用できません。")
     .transform((value) => value.trim()).pipe(z.string().email().max(254)),
@@ -29,12 +32,17 @@ const timezoneSchema = z.string().min(1).max(100).refine((value) => {
 
 /** This allowlist is the entire persisted, customer-visible receipt. */
 export const receiptSnapshotSchema = z.object({
+  documentVersion: z.literal(1).optional(),
+  issuerLegalName: receiptIssuerNameSchema.optional(), invoiceRegistrationNumber: invoiceRegistrationNumberSchema.optional(),
   receiptNumber: z.string().uuid(), issuerName: safeLine(300), paidAt: z.string().datetime(),
   treatmentAt: z.string().datetime(), timezone: timezoneSchema, recipientName: safeLine(100), description: safeLine(200),
   subtotalYen: yen, discountYen: yen, pointsDiscountYen: yen.optional(), taxYen: yen, totalYen: yen,
   items: z.array(receiptItemSchema).min(1).max(100), taxBreakdown: taxBreakdownSchema,
   payments: z.array(z.object({ method: z.enum(cashPaymentMethods), amountYen: yen.refine((amount) => amount > 0) }).strict()).max(20)
 }).strict().superRefine((receipt, context) => {
+  if (receipt.documentVersion === 1 && (!receipt.issuerLegalName || !receipt.invoiceRegistrationNumber)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "領収書の発行事業者名と登録番号が必要です。" });
+  }
   const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
   const groupRates = new Set(receipt.taxBreakdown.map((group) => group.taxRate));
   // Already queued receipts predate points support. Missing fields mean zero and
@@ -57,10 +65,30 @@ export const receiptSnapshotSchema = z.object({
   if (!consistent) context.addIssue({ code: z.ZodIssueCode.custom, message: "領収書の金額内訳が一致していません。" });
 });
 export type ReceiptSnapshot = z.infer<typeof receiptSnapshotSchema>;
+export const RECEIPT_PDF_MAX_BYTES = 4 * 1024 * 1024;
+export const receiptAttachmentSchema = z.object({
+  fileName: z.string().regex(/^receipt-[0-9a-f-]{36}\.pdf$/),
+  contentBase64: z.string().min(1).max(Math.ceil(RECEIPT_PDF_MAX_BYTES / 3) * 4),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/)
+}).strict().superRefine((attachment, context) => {
+  if (attachment.contentBase64.length > Math.ceil(RECEIPT_PDF_MAX_BYTES / 3) * 4) return;
+  const bytes = Buffer.from(attachment.contentBase64, "base64");
+  if (bytes.length < 8 || bytes.length > RECEIPT_PDF_MAX_BYTES || bytes.subarray(0, 5).toString() !== "%PDF-" ||
+    bytes.toString("base64") !== attachment.contentBase64 || createHash("sha256").update(bytes).digest("hex") !== attachment.sha256) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "領収書PDFのデータを確認できません。" });
+  }
+});
 export const receiptPayloadSchema = z.object({
   checkoutId: z.string().uuid(), requestId: z.string().uuid(), requestHash: z.string().regex(/^[a-f0-9]{64}$/),
-  receipt: receiptSnapshotSchema
-}).strict();
+  receipt: receiptSnapshotSchema, attachment: receiptAttachmentSchema.optional(),
+  message: z.object({ subject: safeLine(160), text: z.string().min(1).max(10_000).refine((text) => !text.includes("\0")) }).strict().optional()
+}).strict().superRefine((payload, context) => {
+  if ((payload.receipt.documentVersion === 1) !== Boolean(payload.attachment) ||
+    (payload.receipt.documentVersion === 1) !== Boolean(payload.message) ||
+    payload.attachment && payload.attachment.fileName !== `receipt-${payload.checkoutId}.pdf`) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "領収書の添付ファイルが一致しません。" });
+  }
+});
 export type ReceiptPayload = z.infer<typeof receiptPayloadSchema>;
 
 type ReceiptCheckout = Pick<CashCheckout,
@@ -74,12 +102,14 @@ function cleanStoredLine(value: unknown): unknown {
   return typeof value === "string" ? value.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, " ").trim() : value;
 }
 
-export function createReceiptSnapshot(checkout: ReceiptCheckout, input: Pick<ReceiptInput, "recipientName" | "description">): ReceiptSnapshot {
+export function createReceiptSnapshot(checkout: ReceiptCheckout, input: Pick<ReceiptInput, "recipientName" | "description">,
+  issuer?: { receiptIssuerName: string; invoiceRegistrationNumber: string }): ReceiptSnapshot {
   cashAssert(checkout.status === "FINALIZED" && checkout.finalizedAt,
     "RECEIPT_UNAVAILABLE", "確定済みの会計から領収書を作成してください。", 409);
   const reservation = checkout.reservationSnapshot && typeof checkout.reservationSnapshot === "object" && !Array.isArray(checkout.reservationSnapshot)
     ? checkout.reservationSnapshot : {};
   const result = receiptSnapshotSchema.safeParse({
+    ...(issuer ? { documentVersion: 1, issuerLegalName: issuer.receiptIssuerName, invoiceRegistrationNumber: issuer.invoiceRegistrationNumber } : {}),
     receiptNumber: checkout.id, issuerName: cleanStoredLine(reservation.salonName), paidAt: checkout.finalizedAt.toISOString(),
     treatmentAt: reservation.startsAt, timezone: reservation.timezone ?? "Asia/Tokyo",
     recipientName: input.recipientName, description: input.description,
@@ -109,6 +139,19 @@ const paymentLabels: Record<ReceiptSnapshot["payments"][number]["method"], strin
 /** Both preview and delivery render the captured snapshot through this function. */
 export function buildReceiptEmail(input: ReceiptSnapshot): { subject: string; text: string } {
   const receipt = receiptSnapshotSchema.parse(input);
+  if (receipt.documentVersion === 1) {
+    const subject = `【領収書PDF】${receipt.issuerName}`;
+    if (subject.length > 160) throw new CashError("RECEIPT_CONTENT_TOO_LONG", "店舗名がメール送信の上限を超えています。店舗名を確認してください。", 409);
+    return {
+      subject,
+      text: [
+        `${receipt.recipientName} 様`, "", "ご利用いただきありがとうございます。", "施術の領収書をPDFで添付いたします。",
+        "", `領収書番号: ${receipt.receiptNumber}`, `領収金額（税込）: ${money(receipt.totalYen)}`,
+        `発行事業者: ${receipt.issuerLegalName}`, `登録番号: ${receipt.invoiceRegistrationNumber}`,
+        "", "宛名・明細・税率別内訳は添付PDFをご確認ください。", "領収書PDFはお手元に保存してご利用ください。"
+      ].join("\n")
+    };
+  }
   const hasPoints = (receipt.pointsDiscountYen ?? 0) > 0;
   const subject = `【領収書】${receipt.issuerName}`;
   const text = [

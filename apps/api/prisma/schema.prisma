@@ -329,6 +329,8 @@ model SalonSettings {
   calendarDisplayMode       String   @default("collapsed")
   notifyReservationEmail    Boolean  @default(true)
   notificationEmail         String?
+  receiptIssuerName         String?
+  invoiceRegistrationNumber String?
   notifyReservationLine     Boolean  @default(false)
   notifyCancellation        Boolean  @default(true)
   notifyCancellationEmail   Boolean  @default(true)

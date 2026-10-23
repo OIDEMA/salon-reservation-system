@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:operations": "node --import tsx --test tests/admin-permissions.test.tsx src/components/chart-types.test.tsx src/components/chart-permissions.test.tsx src/lib/reservation-menu-catalog.test.ts src/lib/reservation-customer.test.ts tests/customer-import-permissions.test.tsx tests/staff-import-permissions.test.tsx tests/reservation-history.test.tsx tests/history-calendar.test.tsx tests/dashboard-preload.test.tsx tests/reservation-calendar.test.tsx tests/request-security.test.ts tests/password-recovery.test.ts tests/cash-points.test.tsx tests/receipt-email.test.tsx"
+    "test:operations": "node --import tsx --test tests/admin-permissions.test.tsx src/components/chart-types.test.tsx src/components/chart-permissions.test.tsx src/lib/reservation-menu-catalog.test.ts src/lib/reservation-customer.test.ts tests/customer-import-permissions.test.tsx tests/staff-import-permissions.test.tsx tests/reservation-history.test.tsx tests/history-calendar.test.tsx tests/dashboard-preload.test.tsx tests/reservation-calendar.test.tsx tests/request-security.test.ts tests/password-recovery.test.ts tests/cash-points.test.tsx tests/receipt-email.test.tsx tests/receipt-settings.test.tsx"
   },
   "dependencies": {
     "date-fns": "^4.1.0",

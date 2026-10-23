@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import { reservationPrice } from "./reservation-price.js";
 import { reservationNotificationPayload } from "./reservation-notification.js";
+import { receiptSettingsInputSchema } from "./receipt-settings.js";
 import { registerMemberBookingRoutes } from "./member-booking-routes.js";
 import {
   CategoryType,
@@ -114,6 +115,7 @@ const customerSearchSchema = z.object({
 });
 
 const settingsInputSchema = z.object({
+  ...receiptSettingsInputSchema.shape,
   salonName: z.string().trim().min(1).max(120).optional(),
   timezone: z.string().trim().min(1).max(80).optional(),
   storeId: z.string().trim().min(1).max(80).optional(),
