@@ -95,6 +95,31 @@ test("receipt sends exactly the previewed immutable snapshot and checks tenant p
   assert.equal(updates[0]?.status, "SENT");
 });
 
+test("PDF receipt worker sends stored bytes without regenerating from current checkout or settings", async () => {
+  const legacy = receiptRow();
+  const content = Buffer.from("%PDF-1.7\nimmutable approved PDF\n%%EOF\n");
+  const attachment = { fileName: `receipt-${checkoutId}.pdf`, contentBase64: content.toString("base64"),
+    sha256: createHash("sha256").update(content).digest("hex") };
+  const row = { ...legacy, payload: { ...legacy.payload, attachment,
+    message: { subject: "確認時の件名", text: "確認時の本文 株式会社サンプル T1234567890123" }, receipt: { ...legacy.payload.receipt,
+    documentVersion: 1 as const, issuerLegalName: "株式会社サンプル", invoiceRegistrationNumber: "T1234567890123" } } };
+  const { database } = fakeDatabase(row, undefined, receiptCheckout());
+  const sent: TextEmail[] = [];
+  const result = await processEmailOutbox(database, { now: () => now,
+    send: async (message) => { sent.push(message); return { messageId: "pdf-accepted" }; } });
+  assert.equal(result.sent, 1);
+  assert.deepEqual(sent[0]?.attachments, [{ fileName: attachment.fileName, contentType: "application/pdf", content }]);
+  assert.match(sent[0]!.text, /株式会社サンプル/); assert.match(sent[0]!.text, /T1234567890123/);
+  assert.equal(sent[0]!.subject, "確認時の件名"); assert.equal(sent[0]!.text, row.payload.message.text);
+  assert.doesNotMatch(sent[0]!.text, /changed source|private/);
+  const corrupt = { ...row, status: "PROCESSING", payload: { ...row.payload, attachment: { ...attachment, sha256: "0".repeat(64) } } };
+  let corruptSends = 0;
+  const rejected = await processEmailOutbox(fakeDatabase(corrupt, undefined, receiptCheckout()).database, {
+    now: () => now, send: async () => { corruptSends++; return { messageId: "unexpected" }; }
+  });
+  assert.equal(rejected.failed, 1); assert.equal(corruptSends, 0);
+});
+
 test("receipt for reversed or otherwise non-finalized checkout is skipped before SES", async () => {
   for (const status of ["REVERSED", "DRAFT"]) {
     const { database, updates } = fakeDatabase(receiptRow(), undefined, { ...receiptCheckout(), status });

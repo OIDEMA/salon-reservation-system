@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import test from "node:test";
 import { calculateCashDraft, cashDraftSchema } from "../src/cash-domain.js";
 
@@ -12,8 +12,9 @@ if (testDatabaseUrl) {
 
 type Headers = { authorization: string; "x-tenant-slug": string; "x-salon-id": string };
 type HistoryItem = { id: string; recipientEmail: string; recipientName: string; description: string; status: string;
-  createdAt: string; sentAt: string | null; lastErrorCode: string | null };
+  createdAt: string; sentAt: string | null; lastErrorCode: string | null; format: "PDF" | "TEXT" };
 type History = { defaultRecipientEmail: string; defaultRecipientName: string; defaultDescription: string; history: HistoryItem[] };
+type Preview = { subject: string; text: string; pdf: { fileName: string; contentBase64: string }; previewHash: string };
 
 // Only identity and the external SES transport are replaced. Routes, permissions,
 // tenant/salon isolation, transactions, row locks and persistence use PostgreSQL.
@@ -47,6 +48,8 @@ test("receipt email API safely queues immutable receipts in real PostgreSQL", { 
     const otherSalon = await prisma.salon.create({ data: { tenantId: tenant.id, name: "別店舗" } });
     const foreignSalon = await prisma.salon.create({ data: { tenantId: foreignTenant.id, name: "他テナント店舗" } });
     const scope = { tenantId: tenant.id, salonId: salon.id };
+    await prisma.salonSettings.create({ data: { ...scope, storeId: salon.id, cancellationMessage: "", friendMessage: "",
+      receiptIssuerName: "株式会社サンプル", invoiceRegistrationNumber: "T1234567890123" } });
     async function account(name: string, role: "OWNER" | "STAFF" | "VIEWER", permissions?: string[], salonIds: string[] = [], foreign = false) {
       const uid = `${prefix}-${name}`;
       const selectedTenant = foreign ? foreignTenant : tenant;
@@ -102,7 +105,8 @@ test("receipt email API safely queues immutable receipts in real PostgreSQL", { 
       assert.equal(response.headers["cache-control"], "private, no-store");
       return response.json() as T;
     }
-    const queued = (extra: Record<string, unknown> = {}) => ({ ...input, requestId: randomUUID(), ...extra });
+    const initialPreview = await good<Preview>("POST", `${base()}/preview`, input);
+    const queued = (extra: Record<string, unknown> = {}) => ({ ...input, previewHash: initialPreview.previewHash, requestId: randomUUID(), ...extra });
 
     await t.test("identity, cash permissions and tenant/salon scope protect all endpoints", async () => {
       assert.equal((await server.inject({ url: base() })).statusCode, 401);
@@ -124,15 +128,30 @@ test("receipt email API safely queues immutable receipts in real PostgreSQL", { 
     });
 
     await t.test("preview uses settled amounts and excludes every internal note and payment reference", async () => {
-      const preview = await good<{ subject: string; text: string }>("POST", `${base()}/preview`, input);
+      const preview = await good<Preview>("POST", `${base()}/preview`, input);
       assert.match(preview.subject, /領収書/); assert.match(preview.subject, /確定時の店舗名/);
-      for (const expected of [input.recipientName, input.description, "確定した施術", "確定した店販", "2,200", "178", "カード", "現金", finalized.id]) {
+      for (const expected of [input.recipientName, "2,200", "株式会社サンプル", "T1234567890123", finalized.id]) {
         assert.ok(preview.text.includes(expected), `Preview must include ${expected}`);
       }
+      assert.equal(preview.pdf.fileName, `receipt-${finalized.id}.pdf`);
+      assert.equal(Buffer.from(preview.pdf.contentBase64, "base64").subarray(0, 5).toString(), "%PDF-");
+      assert.deepEqual(preview, initialPreview);
       assert.doesNotMatch(JSON.stringify(preview), /PRIVATE-|現在の店舗名|現在の顧客名|現在のメニュー名|9999/);
       assert.equal(await prisma.emailOutbox.count({ where: scope }), 0);
       assert.equal(await prisma.auditLog.count({ where: { tenantId: tenant.id, action: "checkout.receipt.queue" } }), 0);
       assert.equal(mail.mock.callCount(), 0);
+    });
+
+    await t.test("missing issuer and changed preview cannot enqueue a different PDF", async () => {
+      await prisma.salonSettings.update({ where: { tenantId_salonId: scope }, data: { invoiceRegistrationNumber: null } });
+      assert.equal((await call("POST", `${base()}/preview`, input)).statusCode, 409);
+      assert.equal((await call("POST", base(), queued())).statusCode, 409);
+      await prisma.salonSettings.update({ where: { tenantId_salonId: scope }, data: { invoiceRegistrationNumber: "T9999999999999" } });
+      const changed = await call("POST", base(), queued());
+      assert.equal(changed.statusCode, 409); assert.match(changed.json().message, /内容または発行者設定が変わりました/);
+      await prisma.salonSettings.update({ where: { tenantId_salonId: scope }, data: { invoiceRegistrationNumber: "T1234567890123" } });
+      assert.equal((await call("POST", base(), queued({ previewHash: undefined }))).statusCode, 409);
+      assert.equal(await prisma.emailOutbox.count({ where: scope }), 0);
     });
 
     await t.test("invalid input, stale versions and unfinalized/reversed checkouts cannot queue mail", async () => {
@@ -168,9 +187,13 @@ test("receipt email API safely queues immutable receipts in real PostgreSQL", { 
       assert.equal(await prisma.emailOutbox.count({ where: { ...scope, eventKey } }), 1);
       const outbox = await prisma.emailOutbox.findUniqueOrThrow({ where: { eventKey } });
       assert.equal(outbox.eventType, "checkout.receipt"); assert.equal(outbox.attempts, 0); assert.equal(outbox.sentAt, null);
-      const payload = outbox.payload as { checkoutId: string; requestId: string; requestHash: string; receipt: Record<string, unknown> };
+      const payload = outbox.payload as { checkoutId: string; requestId: string; requestHash: string; receipt: Record<string, unknown>; attachment: { fileName: string; contentBase64: string; sha256: string } };
       assert.equal(payload.checkoutId, finalized.id); assert.equal(payload.requestId, sentInput.requestId); assert.match(payload.requestHash, /^[a-f0-9]{64}$/);
       assert.equal(payload.receipt.totalYen, 2200); assert.equal(payload.receipt.issuerName, "確定時の店舗名");
+      assert.equal(payload.receipt.issuerLegalName, "株式会社サンプル");
+      assert.equal(payload.receipt.invoiceRegistrationNumber, "T1234567890123");
+      assert.equal(payload.attachment.contentBase64, initialPreview.pdf.contentBase64);
+      assert.equal(payload.attachment.sha256, createHash("sha256").update(Buffer.from(initialPreview.pdf.contentBase64, "base64")).digest("hex"));
       assert.doesNotMatch(JSON.stringify(payload.receipt), /PRIVATE-|customerId|staffName|reference|notes|memo/);
       const audits = await prisma.auditLog.findMany({ where: { tenantId: tenant.id, resourceId: finalized.id, action: "checkout.receipt.queue" } });
       assert.equal(audits.length, 1); assert.equal(audits[0].actorUserId, writer.id);
@@ -186,9 +209,11 @@ test("receipt email API safely queues immutable receipts in real PostgreSQL", { 
       await prisma.salon.update({ where: { id: salon.id }, data: { name: "送付後に変更した店舗" } });
       await prisma.customer.update({ where: { id: customer.id }, data: { name: "送付後に変更した顧客" } });
       await prisma.service.update({ where: { id: service.id }, data: { name: "送付後のメニュー", price: 50000 } });
+      await prisma.salonSettings.update({ where: { tenantId_salonId: scope }, data: { receiptIssuerName: "変更後の事業者" } });
       const replay = await good<HistoryItem>("POST", base(), sentInput, owner.headers(), 202);
       assert.deepEqual(replay, sentItem);
       assert.deepEqual((await prisma.emailOutbox.findUniqueOrThrow({ where: { id: sentItem.id } })).payload, before.payload);
+      await prisma.salonSettings.update({ where: { tenantId_salonId: scope }, data: { receiptIssuerName: "株式会社サンプル" } });
       const history = await good<History>("GET", base());
       assert.equal(history.defaultRecipientEmail, input.recipientEmail);
       assert.equal(history.defaultRecipientName, "確定時のお客様");
@@ -198,6 +223,8 @@ test("receipt email API safely queues immutable receipts in real PostgreSQL", { 
 
     await t.test("an audit failure rolls back its outbox insertion", async () => {
       const body = queued({ recipientEmail: "rollback@example.test" });
+      const preview = await good<Preview>("POST", `${base()}/preview`, { ...input, recipientEmail: body.recipientEmail });
+      body.previewHash = preview.previewHash;
       const originalTransaction = prisma.$transaction;
       const executeTransaction = originalTransaction.bind(prisma);
       // Prisma exposes dynamic methods through proxy descriptors whose value is
@@ -222,14 +249,22 @@ test("receipt email API safely queues immutable receipts in real PostgreSQL", { 
       assert.equal(await prisma.auditLog.count({ where: { tenantId: tenant.id, resourceId: finalized.id, action: "checkout.receipt.queue" } }), 1);
     });
 
-    await t.test("history returns the latest 50 scoped entries and current delivery status", async () => {
+    await t.test("history projects only display metadata for the latest 50 scoped PDF and legacy entries", async () => {
       const original = await prisma.emailOutbox.findUniqueOrThrow({ where: { id: sentItem.id } });
       const snapshot = original.payload as Record<string, any>;
+      const legacy: Record<string, any> = { ...snapshot, receipt: { ...snapshot.receipt } };
+      delete legacy.attachment; delete legacy.message;
+      delete legacy.receipt.documentVersion; delete legacy.receipt.issuerLegalName; delete legacy.receipt.invoiceRegistrationNumber;
+      const largePdf = Buffer.alloc(2 * 1024 * 1024, 65);
+      largePdf.write("%PDF-1.7\n"); largePdf.write("\n%%EOF\n", largePdf.length - 7);
+      const largeAttachment = { ...snapshot.attachment, contentBase64: largePdf.toString("base64"),
+        sha256: createHash("sha256").update(largePdf).digest("hex") };
       const recent = new Date(Date.now() + 60_000);
       const entries = Array.from({ length: 52 }, (_, index) => {
         const requestId = randomUUID();
         return { ...scope, eventType: "checkout.receipt", eventKey: `checkout.receipt:${finalized.id}:${requestId}`,
-          recipientEmail: `history-${index}@example.test`, payload: { ...snapshot, requestId },
+          recipientEmail: `history-${index}@example.test`, payload: { ...(index === 49 ? legacy : snapshot), requestId,
+            ...(index === 51 ? { attachment: largeAttachment } : {}) },
           status: index === 51 ? "SENT" : index === 50 ? "FAILED" : "PENDING",
           sentAt: index === 51 ? recent : null, lastErrorCode: index === 50 ? "MESSAGE_REJECTED" : null,
           createdAt: new Date(recent.getTime() + index * 1000) };
@@ -240,22 +275,37 @@ test("receipt email API safely queues immutable receipts in real PostgreSQL", { 
         await prisma.emailOutbox.create({ data: { ...foreign, eventType: "checkout.receipt", eventKey: `checkout.receipt:${finalized.id}:${randomUUID()}`,
           recipientEmail: "PRIVATE-FOREIGN@example.test", payload: snapshot, createdAt: new Date(recent.getTime() + 100_000) } });
       }
-      const history = await good<History>("GET", base(), undefined, reader.headers());
+      // Observe the actual PostgreSQL-to-application result, not only the HTTP
+      // response, so a regression cannot silently load PDF bodies then omit them.
+      const databaseRows: unknown[] = [];
+      const originalQuery = prisma.$queryRaw;
+      const query = originalQuery.bind(prisma);
+      prisma.$queryRaw = (async (...args: Parameters<typeof originalQuery>) => {
+        const rows = await query(...args);
+        if (Array.isArray(rows)) databaseRows.push(...rows);
+        return rows;
+      }) as typeof prisma.$queryRaw;
+      let history: History;
+      try { history = await good<History>("GET", base(), undefined, reader.headers()); }
+      finally { prisma.$queryRaw = originalQuery; }
+      assert.equal(databaseRows.length, 50);
+      const metadataKeys = ["id", "recipientEmail", "recipientName", "description", "status", "createdAt", "sentAt", "lastErrorCode", "format"].sort();
+      for (const row of databaseRows) assert.deepEqual(Object.keys(row as object).sort(), metadataKeys);
+      assert.ok(Buffer.byteLength(JSON.stringify(databaseRows)) < 50_000, "PostgreSQL must not transfer receipt PDFs to the history route");
       assert.equal(history.history.length, 50); assert.equal(history.defaultRecipientEmail, "history-51@example.test");
       assert.deepEqual(history.history.map((item) => item.recipientEmail), Array.from({ length: 50 }, (_, index) => `history-${51 - index}@example.test`));
       assert.equal(history.history[0].status, "SENT"); assert.equal(history.history[0].sentAt, recent.toISOString());
       assert.equal(history.history[1].status, "FAILED"); assert.equal(history.history[1].lastErrorCode, "MESSAGE_REJECTED");
+      assert.equal(history.history[0].format, "PDF"); assert.equal(history.history[2].format, "TEXT");
       assert.doesNotMatch(JSON.stringify(history), /PRIVATE-|requestHash|providerMessageId|payload/);
       assert.equal(mail.mock.callCount(), 0);
     });
     await t.test("point discounts survive receipt preview and queue while reversed receipts stay unavailable", async () => {
       const discounted = await checkout("FINALIZED", 200);
       const request = { ...input, version: discounted.version };
-      const preview = await good<{ subject: string; text: string }>("POST", `${base(discounted.id)}/preview`, request);
+      const preview = await good<Preview>("POST", `${base(discounted.id)}/preview`, request);
       assert.match(preview.text, /領収金額（税込）: ￥2,000/);
-      assert.match(preview.text, /通常値引き: ￥100/); assert.match(preview.text, /ポイント利用値引き: ￥200/);
-      assert.match(preview.text, /うち消費税: ￥162/);
-      const requested = { ...request, requestId: randomUUID() };
+      const requested = { ...request, requestId: randomUUID(), previewHash: preview.previewHash };
       const history = await good<HistoryItem>("POST", base(discounted.id), requested, owner.headers(), 202);
       const stored = await prisma.emailOutbox.findUniqueOrThrow({ where: { id: history.id } });
       const payload = stored.payload as { receipt: { pointsDiscountYen: number; totalYen: number; items: { pointsDiscountYen: number }[]; payments: { amountYen: number }[] } };
@@ -268,7 +318,7 @@ test("receipt email API safely queues immutable receipts in real PostgreSQL", { 
       assert.deepEqual((await prisma.emailOutbox.findUniqueOrThrow({ where: { id: history.id } })).payload, stored.payload);
       const allPoints = await checkout("FINALIZED", 2200);
       const zero = await good<{ text: string }>("POST", `${base(allPoints.id)}/preview`, { ...input, version: allPoints.version });
-      assert.match(zero.text, /領収金額（税込）: ￥0/); assert.match(zero.text, /ポイント利用値引き: ￥2,200/);
+      assert.match(zero.text, /領収金額（税込）: ￥0/);
       assert.doesNotMatch(zero.text, /現金:|カード:/); assert.equal(mail.mock.callCount(), 0);
     });
 

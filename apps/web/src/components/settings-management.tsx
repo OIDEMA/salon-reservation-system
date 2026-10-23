@@ -111,6 +111,11 @@ export function SettingsManagement({ initialData }: { initialData: AdminSettings
           <label className="settingField"><span>営業時間 開始</span><input readOnly={!canWrite} type="time" value={settings.openTime} onChange={(event) => setSetting("openTime", event.target.value)} /></label>
           <label className="settingField"><span>営業時間 終了</span><input readOnly={!canWrite} type="time" value={settings.closeTime} onChange={(event) => setSetting("closeTime", event.target.value)} /></label>
         </div>
+        <h3>領収書の発行者情報</h3>
+        <div className="cashTwoPanels">
+          <label className="settingField"><span>正式事業者名</span><input aria-describedby="receipt-issuer-name-help" autoComplete="organization" disabled={busy} maxLength={300} readOnly={!canWrite} value={settings.receiptIssuerName ?? ""} onChange={(event) => setSetting("receiptIssuerName", event.target.value || null)} /><small id="receipt-issuer-name-help">領収書に記載する法人名・個人事業者名を入力してください。</small></label>
+          <label className="settingField"><span>適格請求書発行事業者の登録番号</span><input aria-describedby="invoice-registration-number-help" autoCapitalize="characters" autoComplete="off" disabled={busy} maxLength={30} pattern="[Tt][0-9]{13}" readOnly={!canWrite} value={settings.invoiceRegistrationNumber ?? ""} onChange={(event) => setSetting("invoiceRegistrationNumber", event.target.value.trim().toUpperCase() || null)} /><small id="invoice-registration-number-help">半角のT＋13桁の数字を入力してください。<a href="https://www.invoice-kohyo.nta.go.jp/" target="_blank" rel="noopener noreferrer">国税庁の公表サイト</a>で、正式事業者名と登録の有効性を確認してください。</small></label>
+        </div>
         <div className="settingsLine"><span className="settingsLabel">定休日</span><div className="daySelector">{days.map((day) => <button disabled={!canWrite || busy} aria-pressed={settings.closedDays.includes(day)} className={settings.closedDays.includes(day) ? "dayButton isSelected" : "dayButton"} key={day} type="button" onClick={() => setSetting("closedDays", settings.closedDays.includes(day) ? settings.closedDays.filter((item) => item !== day) : [...settings.closedDays, day])}>{day}</button>)}</div></div>
       </section>
 

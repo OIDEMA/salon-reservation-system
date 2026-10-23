@@ -43,7 +43,7 @@ PostgreSQL is the source of truth. When no store has been registered, the applic
 - CRUD for staff, menus, categories, and equipment
 - Tenant-scoped roles and audit logs for write operations
 - Checkout receipt/refund records, cash register opening/closing, and fixed closing reports
-- Customer receipt emails from finalized checkouts, with a message preview and delivery queue history
+- Customer PDF receipt emails from finalized checkouts, with a qualified issuer registration number, PDF preview, and delivery queue history
 - Per-reservation treatment charts with finalized revisions and authenticated before/after photos
 - Member invitations, per-action permissions, and salon access limits
 
