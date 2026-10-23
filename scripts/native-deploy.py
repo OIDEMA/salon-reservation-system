@@ -212,6 +212,59 @@ def run_resource_finished(resource):
     return True
 
 
+def unfinished_old_email_executions(request, expected_image, api_region=API_REGION, deadline=None):
+    """Inspect every execution, including deleted resources, before new producers.
+
+    Job reconciliation does not stop executions already running the previous
+    image. New executions of the compatible image may continue while we drain
+    old ones; unknown images or incomplete pagination must never count as clear.
+    """
+    image_pattern = rf"{REGION}-docker\.pkg\.dev/{PROJECT}/cloud-run-source-deploy/reservation-api@sha256:[0-9a-f]{{64}}"
+    if api_region != API_REGION or not re.fullmatch(image_pattern, expected_image):
+        raise RuntimeError("Invalid email worker drain target.")
+    parent = f"projects/{PROJECT}/locations/{api_region}/jobs/reservation-email-outbox"
+    execution_pattern = rf"projects/(?:{PROJECT}|42401528382)/locations/{api_region}/jobs/reservation-email-outbox/executions/[a-z0-9-]+"
+    next_token = ""
+    seen_tokens = set()
+    pending = set()
+    for _ in range(100):
+        if deadline is not None and time.monotonic() >= deadline:
+            raise RuntimeError("Email worker drain deadline exceeded; API deployment remains blocked.")
+        query = {"pageSize": "1000", "showDeleted": "true"}
+        if next_token:
+            query["pageToken"] = next_token
+        page = request("GET", f"https://run.googleapis.com/v2/{parent}/executions?" + urllib.parse.urlencode(query))
+        if not isinstance(page, dict) or not isinstance(page.get("executions", []), list):
+            raise RuntimeError("Unrecognized email worker execution listing.")
+        for execution in page.get("executions", []):
+            if (not isinstance(execution, dict) or not isinstance(execution.get("name"), str)
+                    or not re.fullmatch(execution_pattern, execution["name"])):
+                raise RuntimeError("Unrecognized email worker execution resource.")
+            template = execution.get("template", {})
+            containers = template.get("containers", []) if isinstance(template, dict) else []
+            if (not isinstance(containers, list) or len(containers) != 1 or not isinstance(containers[0], dict)
+                    or not isinstance(containers[0].get("image"), str) or not re.fullmatch(image_pattern, containers[0]["image"])):
+                raise RuntimeError("Email worker execution has an unknown image; deployment remains fenced.")
+            if containers[0]["image"] == expected_image:
+                continue
+            # Protobuf omits false/zero fields; completionTime is only present
+            # after completion. A queued old execution is also unsafe to bypass.
+            if (not isinstance(execution.get("completionTime"), str) or not execution["completionTime"]
+                    or execution.get("reconciling", False) is not False
+                    or type(execution.get("runningCount", 0)) is not int
+                    or execution.get("runningCount", 0) != 0):
+                pending.add(execution["name"])
+        next_token = page.get("nextPageToken", "")
+        if not isinstance(next_token, str) or next_token in seen_tokens:
+            raise RuntimeError("Unrecognized email worker execution pagination.")
+        if not next_token:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise RuntimeError("Email worker drain deadline exceeded; API deployment remains blocked.")
+            return sorted(pending)
+        seen_tokens.add(next_token)
+    raise RuntimeError("Email worker execution listing exceeded its page limit.")
+
+
 def deployment_children_finished(api, build_id, commit=None, intents=None, api_region=REGION):
     """A stopped Cloud Build does not imply its asynchronous children stopped.
 
@@ -319,6 +372,8 @@ def deployment_children_finished(api, build_id, commit=None, intents=None, api_r
                 or len(containers) != 1 or containers[0].get("image") != image):
             return False
         if not run_resource_finished(email_job):
+            return False
+        if unfinished_old_email_executions(api.request, image, api_region):
             return False
 
     # Older leases remain recoverable without new-region or relay resources.

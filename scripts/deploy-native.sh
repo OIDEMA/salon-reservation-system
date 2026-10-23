@@ -322,6 +322,92 @@ if execution_baseline and not (
 mark_intent("jobExecutionRequested", execution_baseline)
 gcloud("run", "jobs", "execute", "reservation-db-migrate", f"--project={project}", f"--region={api_region}", "--wait")
 
+
+def verify_private_run(resource):
+    annotations = resource.get("spec", {}).get("template", {}).get("metadata", {}).get("annotations", {})
+    interfaces = json.loads(annotations.get("run.googleapis.com/network-interfaces", "[]"))
+    if annotations.get("run.googleapis.com/cloudsql-instances", "") or not interfaces:
+        raise RuntimeError("Cloud Run must use Direct VPC without Cloud SQL socket mounts.")
+    if interfaces[0].get("network") != expected["VPC_NETWORK"] or interfaces[0].get("subnetwork") != expected["VPC_SUBNET"]:
+        raise RuntimeError("Cloud Run must use the approved VPC network and subnet.")
+
+
+# Deploy the backward-compatible consumer before the API can emit new payloads.
+# Updating a Job leaves its previous executions alive, so verify and drain those
+# executions before deploying any producer. The scheduler may keep running.
+email_job_url = f"{run_api}/jobs/{email_job_name}"
+email_job_baseline = generation_before_create(email_job_url)
+mark_intent("emailJobDeployRequested", email_job_baseline)
+gcloud(
+    "run", "jobs", "deploy", email_job_name,
+    f"--project={project}", f"--region={api_region}", f"--image={api_image_digest}",
+    f"--service-account={expected['EMAIL_RUNTIME_SERVICE_ACCOUNT']}",
+    f"--labels=native-deploy-build={build_id}",
+    f"--network={expected['VPC_NETWORK']}", f"--subnet={expected['VPC_SUBNET']}",
+    "--vpc-egress=private-ranges-only",
+    f"--set-secrets=DATABASE_URL={expected['DATABASE_URL_SECRET']},INVITATION_TOKEN_KEY={expected['INVITATION_TOKEN_KEY_SECRET']}",
+    f"--set-env-vars=NODE_ENV=production,DB_CONNECTIVITY=private-ip,AWS_SES_ROLE_ARN={expected['SES_ROLE_ARN']},PUBLIC_BASE_URL={frontend_url}",
+    "--command=node", "--args=dist/src/scripts/send-email-outbox.js",
+    "--tasks=1", "--max-retries=0", "--task-timeout=10m", "--cpu=1", "--memory=512Mi", "--quiet",
+)
+verify_private_run(gcloud_json("run", "jobs", "describe", email_job_name, f"--project={project}", f"--region={api_region}"))
+
+
+def verify_email_job():
+    job = api_request("GET", email_job_url)
+    if int(resource_generation(job)) <= int(email_job_baseline) or job.get("labels", {}).get("native-deploy-build") != build_id:
+        raise RuntimeError("Email Job must belong to this build and advance its generation.")
+    if job.get("reconciling", False) is not False or job.get("terminalCondition", {}).get("state") != "CONDITION_SUCCEEDED" or str(job.get("observedGeneration", "")) != str(job.get("generation", "")):
+        raise RuntimeError("Email Job must finish reconciling successfully.")
+    execution = job.get("template", {})
+    task = execution.get("template", {})
+    containers = task.get("containers", [])
+    if execution.get("taskCount", 1) != 1 or task.get("maxRetries", 0) != 0 or len(containers) != 1 or task.get("serviceAccount") != expected["EMAIL_RUNTIME_SERVICE_ACCOUNT"]:
+        raise RuntimeError("Email Job task count, retries, container, or identity changed.")
+    network = task.get("vpcAccess", {})
+    interfaces = network.get("networkInterfaces", [])
+    if network.get("egress") != "PRIVATE_RANGES_ONLY" or len(interfaces) != 1 or interfaces[0].get("network") != expected["VPC_NETWORK"] or interfaces[0].get("subnetwork") != expected["VPC_SUBNET"]:
+        raise RuntimeError("Email Job must use the approved Tokyo private network.")
+    container = containers[0]
+    if container.get("image") != api_image_digest or container.get("command") != ["node"] or container.get("args") != ["dist/src/scripts/send-email-outbox.js"]:
+        raise RuntimeError("Email Job must use this build's exact API digest and outbox command.")
+    environment = {item.get("name"): item for item in container.get("env", [])}
+    if set(environment) != {"NODE_ENV", "DB_CONNECTIVITY", "AWS_SES_ROLE_ARN", "PUBLIC_BASE_URL", "DATABASE_URL", "INVITATION_TOKEN_KEY"}:
+        raise RuntimeError("Email Job has unapproved environment settings.")
+    expected_values = {"NODE_ENV": "production", "DB_CONNECTIVITY": "private-ip", "AWS_SES_ROLE_ARN": expected["SES_ROLE_ARN"], "PUBLIC_BASE_URL": frontend_url}
+    if any(environment[name].get("value") != value or "valueSource" in environment[name] for name, value in expected_values.items()):
+        raise RuntimeError("Email Job must use the approved role and public origin.")
+    for name, secret_name in (("DATABASE_URL", "reservation-database-url-tokyo"), ("INVITATION_TOKEN_KEY", "reservation-invitation-token-key")):
+        item = environment[name]
+        secret = item.get("valueSource", {}).get("secretKeyRef", {})
+        if secret.get("secret") not in (secret_name, f"projects/{project}/secrets/{secret_name}", f"projects/{expected['PROJECT_NUMBER']}/secrets/{secret_name}") or secret.get("version") != "1" or "value" in item:
+            raise RuntimeError("Email Job must use only the approved pinned secrets.")
+
+
+verify_email_job()
+
+
+# Share the same fail-closed execution inspection with lease recovery.
+import importlib.util
+worker_spec = importlib.util.spec_from_file_location("native_deploy", "scripts/native-deploy.py")
+worker_deployment = importlib.util.module_from_spec(worker_spec)
+worker_spec.loader.exec_module(worker_deployment)
+clear_observations = 0
+drain_deadline = time.monotonic() + 12 * 60
+for drain_attempt in range(73):
+    verify_email_job()
+    pending = worker_deployment.unfinished_old_email_executions(api_request, api_image_digest, api_region, deadline=drain_deadline)
+    clear_observations = clear_observations + 1 if not pending else 0
+    if clear_observations >= 2:
+        verify_email_job()
+        break
+    if drain_attempt == 72:
+        raise RuntimeError("Previous email worker executions did not drain within 12 minutes; API deployment is blocked.")
+    if pending:
+        print("Waiting for previous email worker executions: " + ", ".join(pending), flush=True)
+    time.sleep(10)
+
+
 api_resource = f"projects/{project}/locations/{api_region}/services/{expected['API_SERVICE']}"
 api_baseline = generation_before_create("https://run.googleapis.com/v2/" + api_resource)
 mark_intent("apiDeployRequested", api_baseline)
@@ -337,15 +423,6 @@ gcloud(
     "--startup-probe=httpGet.path=/ready,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=5,failureThreshold=24",
     "--quiet",
 )
-
-
-def verify_private_run(resource):
-    annotations = resource.get("spec", {}).get("template", {}).get("metadata", {}).get("annotations", {})
-    interfaces = json.loads(annotations.get("run.googleapis.com/network-interfaces", "[]"))
-    if annotations.get("run.googleapis.com/cloudsql-instances", "") or not interfaces:
-        raise RuntimeError("Cloud Run must use Direct VPC without Cloud SQL socket mounts.")
-    if interfaces[0].get("network") != expected["VPC_NETWORK"] or interfaces[0].get("subnetwork") != expected["VPC_SUBNET"]:
-        raise RuntimeError("Cloud Run must use the approved VPC network and subnet.")
 
 
 verify_private_run(gcloud_json("run", "services", "describe", expected["API_SERVICE"], f"--project={project}", f"--region={api_region}"))
@@ -412,60 +489,6 @@ def read_url(url):
 
 
 read_url(api_url + "/ready")
-
-# A separate scheduled Job drains committed email outbox records. It is never
-# executed by this deployment; the scheduler and one-off delivery checks are
-# managed separately after the exact job revision is verified.
-email_job_url = f"{run_api}/jobs/{email_job_name}"
-email_job_baseline = generation_before_create(email_job_url)
-mark_intent("emailJobDeployRequested", email_job_baseline)
-gcloud(
-    "run", "jobs", "deploy", email_job_name,
-    f"--project={project}", f"--region={api_region}", f"--image={api_image_digest}",
-    f"--service-account={expected['EMAIL_RUNTIME_SERVICE_ACCOUNT']}",
-    f"--labels=native-deploy-build={build_id}",
-    f"--network={expected['VPC_NETWORK']}", f"--subnet={expected['VPC_SUBNET']}",
-    "--vpc-egress=private-ranges-only",
-    f"--set-secrets=DATABASE_URL={expected['DATABASE_URL_SECRET']},INVITATION_TOKEN_KEY={expected['INVITATION_TOKEN_KEY_SECRET']}",
-    f"--set-env-vars=NODE_ENV=production,DB_CONNECTIVITY=private-ip,AWS_SES_ROLE_ARN={expected['SES_ROLE_ARN']},PUBLIC_BASE_URL={frontend_url}",
-    "--command=node", "--args=dist/src/scripts/send-email-outbox.js",
-    "--tasks=1", "--max-retries=0", "--task-timeout=10m", "--cpu=1", "--memory=512Mi", "--quiet",
-)
-verify_private_run(gcloud_json("run", "jobs", "describe", email_job_name, f"--project={project}", f"--region={api_region}"))
-
-
-def verify_email_job():
-    job = api_request("GET", email_job_url)
-    if int(resource_generation(job)) <= int(email_job_baseline) or job.get("labels", {}).get("native-deploy-build") != build_id:
-        raise RuntimeError("Email Job must belong to this build and advance its generation.")
-    if job.get("reconciling", False) is not False or job.get("terminalCondition", {}).get("state") != "CONDITION_SUCCEEDED" or str(job.get("observedGeneration", "")) != str(job.get("generation", "")):
-        raise RuntimeError("Email Job must finish reconciling successfully.")
-    execution = job.get("template", {})
-    task = execution.get("template", {})
-    containers = task.get("containers", [])
-    if execution.get("taskCount", 1) != 1 or task.get("maxRetries", 0) != 0 or len(containers) != 1 or task.get("serviceAccount") != expected["EMAIL_RUNTIME_SERVICE_ACCOUNT"]:
-        raise RuntimeError("Email Job task count, retries, container, or identity changed.")
-    network = task.get("vpcAccess", {})
-    interfaces = network.get("networkInterfaces", [])
-    if network.get("egress") != "PRIVATE_RANGES_ONLY" or len(interfaces) != 1 or interfaces[0].get("network") != expected["VPC_NETWORK"] or interfaces[0].get("subnetwork") != expected["VPC_SUBNET"]:
-        raise RuntimeError("Email Job must use the approved Tokyo private network.")
-    container = containers[0]
-    if container.get("image") != api_image_digest or container.get("command") != ["node"] or container.get("args") != ["dist/src/scripts/send-email-outbox.js"]:
-        raise RuntimeError("Email Job must use this build's exact API digest and outbox command.")
-    environment = {item.get("name"): item for item in container.get("env", [])}
-    if set(environment) != {"NODE_ENV", "DB_CONNECTIVITY", "AWS_SES_ROLE_ARN", "PUBLIC_BASE_URL", "DATABASE_URL", "INVITATION_TOKEN_KEY"}:
-        raise RuntimeError("Email Job has unapproved environment settings.")
-    expected_values = {"NODE_ENV": "production", "DB_CONNECTIVITY": "private-ip", "AWS_SES_ROLE_ARN": expected["SES_ROLE_ARN"], "PUBLIC_BASE_URL": frontend_url}
-    if any(environment[name].get("value") != value or "valueSource" in environment[name] for name, value in expected_values.items()):
-        raise RuntimeError("Email Job must use the approved role and public origin.")
-    for name, secret_name in (("DATABASE_URL", "reservation-database-url-tokyo"), ("INVITATION_TOKEN_KEY", "reservation-invitation-token-key")):
-        item = environment[name]
-        secret = item.get("valueSource", {}).get("secretKeyRef", {})
-        if secret.get("secret") not in (secret_name, f"projects/{project}/secrets/{secret_name}", f"projects/{expected['PROJECT_NUMBER']}/secrets/{secret_name}") or secret.get("version") != "1" or "value" in item:
-            raise RuntimeError("Email Job must use only the approved pinned secrets.")
-
-
-verify_email_job()
 
 
 legacy_api_resource = f"projects/{project}/locations/{region}/services/{expected['API_SERVICE']}"

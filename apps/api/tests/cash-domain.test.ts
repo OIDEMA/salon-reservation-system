@@ -33,6 +33,58 @@ test("quantity and line discount affect the net paid total and tax without float
   assert.equal(totals.taxYen, 181);
 });
 
+test("point redemption is a separate order discount allocated after normal discounts across tax rates", () => {
+  const input = draft({ items: [
+    { label: "施術", quantity: 1, unitPriceYen: 1200, discountYen: 100, taxRate: 10 },
+    { label: "店販", quantity: 1, unitPriceYen: 1080, discountYen: 0, taxRate: 8 },
+    { label: "無料", quantity: 1, unitPriceYen: 100, discountYen: 100, taxRate: 0 }
+  ], pointsDiscountYen: 180, payments: [{ method: "CARD", amountYen: 2000 }] });
+  const totals = calculateCashDraft(input);
+  assert.deepEqual([totals.subtotalYen, totals.discountYen, totals.pointsDiscountYen, totals.totalYen], [2380, 200, 180, 2000]);
+  assert.deepEqual(totals.items.map((item) => item.pointsDiscountYen), [91, 89, 0]);
+  assert.deepEqual(totals.items.map((item) => item.totalYen), [1009, 991, 0]);
+  assert.equal(totals.taxYen, 164);
+  assert.doesNotThrow(() => assertCashSettlement(input, totals, "UNPAID"));
+  assert.deepEqual(input.items.map((item) => item.discountYen), [100, 0, 100]);
+});
+
+test("point discount remainders use stable line order and exact arithmetic at the yen limit", () => {
+  const equalItems = Array.from({ length: 3 }, (_, index) => ({ label: `item-${index}`, quantity: 1, unitPriceYen: 1, discountYen: 0, taxRate: 10 }));
+  assert.deepEqual(calculateCashDraft(draft({ items: equalItems, pointsDiscountYen: 2, payments: [] })).items.map((item) => item.pointsDiscountYen), [1, 1, 0]);
+  const high = calculateCashDraft(draft({ items: [
+    { label: "large", quantity: 1, unitPriceYen: 99_999_999, discountYen: 0, taxRate: 10 },
+    { label: "small", quantity: 1, unitPriceYen: 1, discountYen: 0, taxRate: 8 }
+  ], pointsDiscountYen: 99_999_999, payments: [] }));
+  assert.deepEqual(high.items.map((item) => item.pointsDiscountYen), [99_999_998, 1]);
+  assert.equal(high.totalYen, 1);
+});
+
+test("all-points and zero-value settlements allow empty payments while legacy drafts remain unchanged", () => {
+  assert.equal(draft().pointsDiscountYen, 0);
+  const allPoints = draft({ pointsDiscountYen: 9800, payments: [] });
+  const totals = calculateCashDraft(allPoints);
+  assert.deepEqual([totals.totalYen, totals.taxYen, totals.cashYen, totals.allocatedYen], [0, 0, 0, 0]);
+  assert.doesNotThrow(() => assertCashSettlement(allPoints, totals, "UNPAID"));
+  assert.equal(calculateCashDraft({ items: draft().items, payments: [] }).pointsDiscountYen, 0);
+  for (const pointsDiscountYen of [-1, 0.5, 100_000_001]) assert.throws(() => draft({ pointsDiscountYen }));
+  assert.throws(() => calculateCashDraft(draft({ pointsDiscountYen: 9801 })), { code: "CASH_POINTS_DISCOUNT_LIMIT" });
+  assert.throws(() => calculateCashDraft(draft({ items: [{ label: "discounted", quantity: 1, unitPriceYen: 100, discountYen: 40, taxRate: 10 }], pointsDiscountYen: 61 })), { code: "CASH_POINTS_DISCOUNT_LIMIT" });
+});
+
+test("point allocation conserves yen and per-rate taxes across deterministic mixed-tax baskets", () => {
+  for (let seed = 1; seed <= 100; seed++) {
+    const items = Array.from({ length: 7 }, (_, index) => ({ label: `item-${index}`, quantity: index + 1,
+      unitPriceYen: (seed * 97 + index * 53) % 1000, discountYen: 0, taxRate: [0, 8, 10][index % 3] }));
+    const gross = items.reduce((sum, item) => sum + item.quantity * item.unitPriceYen, 0);
+    const pointsDiscountYen = (seed * 337) % (gross + 1);
+    const totals = calculateCashDraft(draft({ items, pointsDiscountYen, payments: [] }));
+    assert.equal(totals.items.reduce((sum, item) => sum + item.pointsDiscountYen, 0), pointsDiscountYen);
+    assert.equal(totals.items.reduce((sum, item) => sum + item.totalYen, 0), gross - pointsDiscountYen);
+    assert.equal(totals.items.reduce((sum, item) => sum + item.taxYen, 0), totals.taxYen);
+    assert.ok(totals.items.every((item) => item.totalYen >= 0 && item.pointsDiscountYen <= item.quantity * item.unitPriceYen));
+  }
+});
+
 test("drafts may have incomplete allocations but finalization requires exact payment totals", () => {
   for (const amountYen of [9799, 9801]) {
     const input = draft({ payments: [{ method: "CASH", amountYen }] });

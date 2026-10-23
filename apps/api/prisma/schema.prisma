@@ -628,6 +628,7 @@ model CashCheckout {
   legacyPaidAcknowledged   Boolean            @default(false)
   subtotalYen              Int                @default(0)
   discountYen              Int                @default(0)
+  pointsDiscountYen        Int                @default(0)
   taxYen                   Int                @default(0)
   taxBreakdown             Json
   totalYen                 Int                @default(0)
@@ -674,6 +675,7 @@ model CashCheckoutItem {
   quantity     Int
   unitPriceYen Int
   discountYen  Int
+  pointsDiscountYen Int      @default(0)
   taxRate      Int
   taxYen       Int
   totalYen     Int

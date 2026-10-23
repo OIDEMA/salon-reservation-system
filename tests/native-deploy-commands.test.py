@@ -22,6 +22,7 @@ API_REPOSITORY = 'asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-de
 API_DIGEST = f'{API_REPOSITORY}@sha256:{"f" * 64}'
 API_RESOURCE = 'projects/salon-reserve-bg/locations/asia-northeast1/services/reservation-api'
 API_REVISION = API_RESOURCE + '/revisions/reservation-api-00021-tokyo'
+EMAIL_EXECUTION = 'projects/salon-reserve-bg/locations/asia-northeast1/jobs/reservation-email-outbox/executions/reservation-email-outbox-test'
 DB_ENV = {'name': 'DATABASE_URL', 'valueSource': {'secretKeyRef': {'secret': 'reservation-database-url-tokyo', 'version': '1'}}}
 INVITATION_ENV = {'name': 'INVITATION_TOKEN_KEY', 'valueSource': {'secretKeyRef': {'secret': 'reservation-invitation-token-key', 'version': '1'}}}
 WEB_REPOSITORY = 'asia-east1-docker.pkg.dev/salon-reserve-bg/cloud-run-source-deploy/reservation-web'
@@ -76,6 +77,7 @@ class NativeDeploymentTests(unittest.TestCase):
         self.relay_deployed = False
         self.job_deployed = False
         self.email_job_deployed = False
+        self.email_execution_reads = 0
         env = dict(ENV, **(changes or {}))
         active_app_id = 'native-' + hashlib.sha256(env['BUILD_ID'].encode('utf-8')).hexdigest()[:23]
         active_build_path = f'{BACKEND}/builds/{active_app_id}'
@@ -169,6 +171,23 @@ class NativeDeploymentTests(unittest.TestCase):
                     'generation': None if bad == 'job-generation-missing' else '10',
                     'latestCreatedExecution': latest,
                 })
+            if '/jobs/reservation-email-outbox/executions?' in url:
+                self.email_execution_reads += 1
+                if bad == 'email-execution-list-denied':
+                    raise urllib.error.HTTPError(url, 403, 'denied', {}, Response({}))
+                current = {'name': EMAIL_EXECUTION, 'template': {'containers': [{'image': API_DIGEST}]}, 'runningCount': 1}
+                old = {'name': EMAIL_EXECUTION + '-old', 'template': {'containers': [{'image': API_DIGEST.replace('f' * 64, 'a' * 64)}]}, 'completionTime': '2026-10-23T00:00:00Z'}
+                if bad in ('email-old-running', 'email-old-second-page', 'email-old-queued') or bad == 'email-old-draining' and self.email_execution_reads == 1:
+                    old.pop('completionTime')
+                    if bad != 'email-old-queued':
+                        old['runningCount'] = 1
+                if bad == 'email-execution-unknown-image':
+                    old['template']['containers'][0]['image'] = 'unrecognized'
+                if bad in ('email-old-second-page', 'email-execution-page-loop'):
+                    if 'pageToken=' not in url:
+                        return Response({'executions': [current], 'nextPageToken': 'next'})
+                    return Response({'executions': [old], **({'nextPageToken': 'next'} if bad == 'email-execution-page-loop' else {})})
+                return Response({'executions': [current, old]})
             if url.endswith('/jobs/reservation-email-outbox'):
                 if bad == 'new-email-job' and not self.email_job_deployed:
                     raise urllib.error.HTTPError(url, 404, 'missing', {}, Response({}))
@@ -185,7 +204,7 @@ class NativeDeploymentTests(unittest.TestCase):
                 if bad == 'email-secret':
                     container['env'][-1]['valueSource']['secretKeyRef']['version'] = 'latest'
                 return Response({'generation': generation, 'observedGeneration': '5' if bad == 'email-unobserved' else generation,
-                    'labels': {'native-deploy-build': 'wrong' if bad == 'email-owner' else env['BUILD_ID']},
+                    'labels': {'native-deploy-build': 'wrong' if bad == 'email-owner' or bad == 'email-changed-during-drain' and self.email_execution_reads else env['BUILD_ID']},
                     'reconciling': bad == 'email-reconciling',
                     'terminalCondition': {'state': 'CONDITION_FAILED' if bad == 'email-failed' else 'CONDITION_SUCCEEDED'},
                     'template': {'taskCount': 1, 'template': {'maxRetries': 0,
@@ -397,20 +416,20 @@ class NativeDeploymentTests(unittest.TestCase):
     def test_production_commands_and_rollout_use_one_commit(self):
         self.run_deploy()
         mutations = [command for command in self.commands if command[1:2] == ['run'] and (command[2] == 'deploy' or command[3] in ('deploy', 'execute'))]
-        self.assertEqual([command[1:4] for command in mutations], [['run', 'jobs', 'deploy'], ['run', 'jobs', 'execute'], ['run', 'deploy', 'reservation-api'], ['run', 'jobs', 'deploy'], ['run', 'deploy', 'reservation-api'], ['run', 'deploy', 'salon-reserve-web']])
+        self.assertEqual([command[1:4] for command in mutations], [['run', 'jobs', 'deploy'], ['run', 'jobs', 'execute'], ['run', 'jobs', 'deploy'], ['run', 'deploy', 'reservation-api'], ['run', 'deploy', 'reservation-api'], ['run', 'deploy', 'salon-reserve-web']])
         self.assertIn(f"--image={ENV['API_IMAGE']}", mutations[0])
         self.assertIn('--set-secrets=DATABASE_URL=reservation-database-url-tokyo:1', mutations[0])
         self.assertIn('--max-retries=0', mutations[0])
         self.assertIn(f'--labels=native-deploy-build={BUILD}', mutations[0])
         self.assertIn('--wait', mutations[1])
-        self.assertIn(f"--image={ENV['API_IMAGE']}", mutations[2])
-        self.assertIn(f'--labels=native-deploy-build={BUILD}', mutations[2])
+        self.assertIn(f"--image={ENV['API_IMAGE']}", mutations[3])
+        self.assertIn(f'--labels=native-deploy-build={BUILD}', mutations[3])
         for value in (f'--image={API_DIGEST}', f"--service-account={ENV['EMAIL_RUNTIME_SERVICE_ACCOUNT']}",
                       '--set-secrets=DATABASE_URL=reservation-database-url-tokyo:1,INVITATION_TOKEN_KEY=reservation-invitation-token-key:1',
                       f'--set-env-vars=NODE_ENV=production,DB_CONNECTIVITY=private-ip,AWS_SES_ROLE_ARN={ENV["SES_ROLE_ARN"]},PUBLIC_BASE_URL={WEB_URL}',
                       '--command=node', '--args=dist/src/scripts/send-email-outbox.js', '--tasks=1', '--max-retries=0'):
-            self.assertIn(value, mutations[3])
-        api_environment = next(value for value in mutations[2] if value.startswith("--set-env-vars="))
+            self.assertIn(value, mutations[2])
+        api_environment = next(value for value in mutations[3] if value.startswith("--set-env-vars="))
         self.assertIn("MEMBER_BOOKING_TENANTS=mens-gentle:gentle;missmrs-takamatsu:missmrs", api_environment)
         self.assertNotIn("FIREBASE_AUTH_EMULATOR_HOST", api_environment)
         writes = [data for method, url, data in self.requests if method == 'POST' and 'validateOnly=true' not in url]
@@ -421,8 +440,8 @@ class NativeDeploymentTests(unittest.TestCase):
         expected = [
             ('jobDeployRequested', '10'),
             ('jobExecutionRequested', 'projects/salon-reserve-bg/locations/asia-northeast1/jobs/reservation-db-migrate/executions/previous'),
-            ('apiDeployRequested', '20'),
             ('emailJobDeployRequested', '5'),
+            ('apiDeployRequested', '20'),
             ('apiRelayDeployRequested', '40'),
             ('webDeployRequested', '30'),
             ('appBuildRequested', None),
@@ -450,7 +469,7 @@ class NativeDeploymentTests(unittest.TestCase):
                 self.assertEqual(following[1][0:2], ['gcloud', 'run'])
 
     def test_failed_intent_record_never_runs_its_mutation(self):
-        phases = ['jobDeployRequested', 'jobExecutionRequested', 'apiDeployRequested', 'emailJobDeployRequested', 'apiRelayDeployRequested', 'webDeployRequested', 'appBuildRequested', 'appRolloutRequested']
+        phases = ['jobDeployRequested', 'jobExecutionRequested', 'emailJobDeployRequested', 'apiDeployRequested', 'apiRelayDeployRequested', 'webDeployRequested', 'appBuildRequested', 'appRolloutRequested']
         for completed, phase in enumerate(phases):
             with self.subTest(phase=phase):
                 with self.assertRaises(subprocess.CalledProcessError):
@@ -677,13 +696,35 @@ class NativeDeploymentTests(unittest.TestCase):
             self.assertFalse(self.real_rollout_created)
             self.assertFalse(any('apiRelayDeployRequested' in command for command in self.commands))
 
-    def test_unverified_email_job_never_switches_legacy_relay(self):
+    def test_unverified_email_job_never_deploys_producer_api(self):
         for bad in ('email-image', 'email-owner', 'email-unobserved', 'email-reconciling', 'email-failed', 'email-sa', 'email-secret'):
             with self.subTest(bad=bad), self.assertRaises(RuntimeError):
                 self.run_deploy(bad=bad)
+            self.assertFalse(self.api_deployed)
             self.assertFalse(self.relay_deployed)
             self.assertFalse(self.web_deployed)
             self.assertFalse(self.real_rollout_created)
+
+    def test_previous_email_executions_drain_before_api_while_new_worker_keeps_running(self):
+        self.run_deploy(bad='email-old-draining')
+        self.assertEqual(self.email_execution_reads, 3)
+        first_api = next(index for index, event in enumerate(self.events)
+            if event[0] == 'command' and event[1][1:4] == ['run', 'deploy', 'reservation-api'])
+        lists = [index for index, event in enumerate(self.events)
+            if event[0] == 'request' and '/jobs/reservation-email-outbox/executions?' in event[2]]
+        self.assertEqual(len(lists), 3)
+        self.assertTrue(all(index < first_api for index in lists))
+
+    def test_unknown_or_undrained_email_executions_block_all_producer_mutations(self):
+        for bad in ('email-old-running', 'email-old-queued', 'email-old-second-page',
+                    'email-execution-unknown-image', 'email-execution-list-denied',
+                    'email-execution-page-loop', 'email-changed-during-drain'):
+            with self.subTest(bad=bad), self.assertRaises(RuntimeError):
+                self.run_deploy(bad=bad)
+            self.assertFalse(self.api_deployed)
+            self.assertFalse(self.relay_deployed)
+            self.assertFalse(self.web_deployed)
+            self.assertFalse(any('apiDeployRequested' in command for command in self.commands))
 
     def test_invalid_tokyo_configuration_prevents_cloud_access(self):
         for key in ('WEB_REGION', 'WEB_SERVICE', 'WEB_RUNTIME_SERVICE_ACCOUNT', 'REDIRECT_IMAGE'):

@@ -41,6 +41,7 @@ WEB_IMAGE = IMAGE.replace("/reservation-api:", "/reservation-web:")
 WEB_DIGEST_IMAGE = WEB_IMAGE.rsplit(":", 1)[0] + "@" + DIGEST
 RELAY_IMAGE = IMAGE.replace("/reservation-api:", "/reservation-api-relay:")
 RELAY_DIGEST_IMAGE = RELAY_IMAGE.rsplit(":", 1)[0] + "@" + DIGEST
+EMAIL_EXECUTION_NAME = EXECUTION_NAME.replace("reservation-db-migrate", "reservation-email-outbox")
 
 
 class FakeClock:
@@ -88,6 +89,7 @@ class FakeGoogleApi:
                 "containers": [{"image": EXECUTION_IMAGE}]}},
             "terminalCondition": {"state": "CONDITION_SUCCEEDED"},
         }
+        self.email_execution_pages = {"": {}}
         self.execution = {
             "completionTime": "2026-10-13T00:00:00Z",
             "template": {"containers": [{"image": EXECUTION_IMAGE}]},
@@ -154,6 +156,9 @@ class FakeGoogleApi:
                 return self.relay
             if parsed.path.startswith(run_base + "/jobs/reservation-db-migrate/executions/"):
                 resource = self.execution
+            elif parsed.path == run_base + "/jobs/reservation-email-outbox/executions":
+                assert query["showDeleted"] == ["true"]
+                resource = self.email_execution_pages[query.get("pageToken", [""])[0]]
             else:
                 resource = {
                     run_base + "/jobs/reservation-db-migrate": self.job,
@@ -646,6 +651,55 @@ class ProductionLeaseTests(unittest.TestCase):
                 })
                 lease.release()
                 self.assertEqual(api.deletes(), [])
+
+    def test_email_job_recovery_keeps_lease_for_previous_running_or_ambiguous_executions(self):
+        for bad in ("running", "queued", "reconciling", "unknown-image", "missing-image", "wrong-job", "unreadable", "pagination-loop"):
+            with self.subTest(bad=bad):
+                api = FakeGoogleApi()
+                lease = self.lease(api)
+                lease.acquire()
+                native_deploy.mark_deployment_intent(api, lease.generation, "emailJobDeployRequested", "9")
+                old = {"name": EMAIL_EXECUTION_NAME, "completionTime": "2026-10-23T00:00:00Z",
+                    "template": {"containers": [{"image": EXECUTION_IMAGE.replace("c" * 64, "d" * 64)}]}}
+                if bad == "running":
+                    old["runningCount"] = 1
+                elif bad == "queued":
+                    old.pop("completionTime")
+                elif bad == "reconciling":
+                    old["reconciling"] = True
+                elif bad == "unknown-image":
+                    old["template"]["containers"][0]["image"] = IMAGE
+                elif bad == "missing-image":
+                    old["template"]["containers"] = []
+                elif bad == "wrong-job":
+                    old["name"] = EXECUTION_NAME
+                api.email_execution_pages = {"": {"executions": [], "nextPageToken": "next"}, "next": {"executions": [old]}}
+                if bad == "unreadable":
+                    api.email_execution_pages["next"] = native_deploy.ApiError(403)
+                elif bad == "pagination-loop":
+                    api.email_execution_pages["next"]["nextPageToken"] = "next"
+                lease.release()
+                self.assertEqual(api.deletes(), [])
+
+    def test_email_job_recovery_allows_active_current_worker_and_completed_old_executions(self):
+        api = FakeGoogleApi()
+        lease = self.lease(api)
+        lease.acquire()
+        native_deploy.mark_deployment_intent(api, lease.generation, "emailJobDeployRequested", "9")
+        current = {"name": EMAIL_EXECUTION_NAME, "runningCount": 1,
+            "template": {"containers": [{"image": EXECUTION_IMAGE}]}}
+        old = {"name": EMAIL_EXECUTION_NAME + "-old", "completionTime": "2026-10-23T00:00:00Z",
+            "template": {"containers": [{"image": EXECUTION_IMAGE.replace("c" * 64, "d" * 64)}]}}
+        api.email_execution_pages = {"": {"executions": [current], "nextPageToken": "next"}, "next": {"executions": [old]}}
+        lease.release()
+        self.assertIsNone(api.owner)
+
+    def test_email_worker_drain_deadline_blocks_before_another_page_request(self):
+        request = mock.Mock(return_value={"nextPageToken": "next"})
+        with mock.patch.object(native_deploy.time, "monotonic", side_effect=[9, 10]):
+            with self.assertRaisesRegex(RuntimeError, "deadline exceeded"):
+                native_deploy.unfinished_old_email_executions(request, EXECUTION_IMAGE, deadline=10)
+        self.assertEqual(request.call_count, 1)
 
     def test_provisioning_owner_is_never_automatically_reclaimed(self):
         api = FakeGoogleApi({"kind": "tenantProvisioning", "workflowRun": "12345-1", "apiRegion": native_deploy.API_REGION})

@@ -1,10 +1,10 @@
-export type CashItem = { label: string; quantity: number; unitPriceYen: number; discountYen: number; taxRate: number; taxYen?: number; totalYen?: number };
+export type CashItem = { label: string; quantity: number; unitPriceYen: number; discountYen: number; pointsDiscountYen?: number; taxRate: number; taxYen?: number; totalYen?: number };
 export type CashPayment = { method: "CASH" | "CARD" | "BANK" | "EXTERNAL_PREPAYMENT" | "OTHER"; amountYen: number; reference: string };
 export type CashCheckout = {
   id: string; reservationId: string; status: "DRAFT" | "FINALIZED" | "REVERSED"; version: number;
   reservationSnapshot: { customerName: string; serviceName: string; staffName: string; salonName: string; startsAt: string };
   items: CashItem[]; payments: CashPayment[]; legacyPaymentStatus: string; legacyPaidAcknowledged: boolean;
-  subtotalYen: number; discountYen: number; taxYen: number; totalYen: number; cashYen: number; notes: string;
+  subtotalYen: number; discountYen: number; pointsDiscountYen?: number; taxYen: number; totalYen: number; cashYen: number; notes: string;
   taxBreakdown: { taxRate: number; taxableTotalYen: number; taxYen: number }[];
   finalizedAt: string | null; reversedAt: string | null; reversalReason: string | null;
 };
@@ -14,7 +14,7 @@ export type CashRegister = {
   openingCashYen: number; expectedCashYen: number; countedCashYen: number | null; differenceYen: number | null;
   note: string; closedAt: string | null; movements: CashMovement[];
   closeSnapshot: null | { salesCount: number; refundsCount: number; salesTotalYen: number; refundsTotalYen: number;
-    netTotalYen: number; discountYen: number; taxYen: number; refundsTaxYen: number;
+    netTotalYen: number; discountYen: number; pointsDiscountYen?: number; refundsPointsDiscountYen?: number; taxYen: number; refundsTaxYen: number;
     paymentTotals: { method: string; salesYen: number; refundsYen: number; netYen: number }[] };
 };
 export const cashMethodLabels: Record<CashPayment["method"], string> = { CASH: "現金", CARD: "カード", BANK: "振込", EXTERNAL_PREPAYMENT: "確認済みの事前入金", OTHER: "その他" };

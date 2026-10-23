@@ -2,6 +2,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { prisma } from "./database.js";
+import { reservationNotificationPayload } from "./reservation-notification.js";
 import { requireMemberIdentity } from "./member-auth.js";
 import { capacityReservationStatuses, assertReservationCapacity, ReservationCapacityError } from "./reservation-capacity.js";
 import {
@@ -206,8 +207,7 @@ export function registerMemberBookingRoutes(server: FastifyInstance, dependencie
           await tx.emailOutbox.create({ data: {
             eventKey: `reservation.created:${reservation.id}`, eventType: "reservation.created",
             ...scope, recipientEmail: recipient,
-            payload: { reservationId: reservation.id, salonName: salon.name, startsAt: startsAt.toISOString(),
-              serviceName: service.name, tenantSlug: salon.tenant.slug }
+            payload: reservationNotificationPayload({ ...reservation, customer: { name: input.customer.name } }, salon.name, salon.tenant.slug)
           } });
         }
         await audit(tx, request, identity, salon.tenantId, salon.id, reservation.id, "member.reservation.create");

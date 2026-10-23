@@ -3,19 +3,14 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { deriveInvitationToken } from "./invitation-token.js";
 import { sendTextEmail, SesMailError } from "./ses-mail.js";
+import { reservationNotificationEmail, reservationNotificationSchema } from "./reservation-notification.js";
+import { checkoutNotificationEmail, checkoutNotificationSchema } from "./checkout-notification.js";
 
 const MAX_ATTEMPTS = 12;
 const RESERVATION_EVENT = "reservation.created";
 const INVITATION_EVENT = "invitation.created";
 const DEFAULT_BASE_URL = "https://salon-reserve.beauty-gum.jp";
 
-const reservationPayload = z.object({
-  reservationId: z.string().min(1),
-  salonName: z.string().min(1),
-  startsAt: z.string().datetime(),
-  serviceName: z.string().min(1),
-  tenantSlug: z.string().min(1)
-}).strict();
 const invitationPayload = z.object({
   invitationId: z.string().min(1),
   tenantName: z.string().min(1),
@@ -75,18 +70,14 @@ async function deliver(database: PrismaClient, id: string, send: SendText, baseU
   let text: string;
 
   if (item.eventType === RESERVATION_EVENT) {
-    const payload = reservationPayload.parse(item.payload);
+    const payload = reservationNotificationSchema.parse(item.payload);
     if (item.eventKey !== `${RESERVATION_EVENT}:${payload.reservationId}` || !item.salonId) throw new Error("Invalid reservation outbox scope");
-    const listUrl = new URL(`/${encodeURIComponent(payload.tenantSlug)}/reservations`, baseUrl).href;
-    subject = `[SalonOps] 新しい予約（${cleanLine(payload.salonName)}）`;
-    text = [
-      "新しい予約が入りました。",
-      `店舗: ${cleanLine(payload.salonName)}`,
-      `日時: ${japanDateTime(new Date(payload.startsAt))}`,
-      `メニュー: ${cleanLine(payload.serviceName)}`,
-      `予約番号: ${payload.reservationId}`,
-      `管理画面: ${listUrl}`
-    ].join("\n");
+    ({ subject, text } = reservationNotificationEmail(payload, baseUrl));
+  } else if (item.eventType === "checkout.finalized" || item.eventType === "checkout.reversed") {
+    const payload = checkoutNotificationSchema.parse(item.payload);
+    if (item.eventType !== payload.eventType || item.eventKey !== `${payload.eventType}:${payload.checkoutId}` ||
+      item.tenantId !== payload.tenantId || item.salonId !== payload.salonId) throw new Error("Invalid checkout outbox scope");
+    ({ subject, text } = checkoutNotificationEmail(payload, baseUrl));
   } else if (item.eventType === INVITATION_EVENT) {
     const payload = invitationPayload.parse(item.payload);
     if (item.eventKey !== `${INVITATION_EVENT}:${payload.invitationId}` || item.salonId) throw new Error("Invalid invitation outbox scope");

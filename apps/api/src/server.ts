@@ -1,5 +1,6 @@
 import cors from "@fastify/cors";
 import { reservationPrice } from "./reservation-price.js";
+import { reservationNotificationPayload } from "./reservation-notification.js";
 import { registerMemberBookingRoutes } from "./member-booking-routes.js";
 import {
   CategoryType,
@@ -1229,13 +1230,7 @@ server.post("/api/reservations", async (request, reply) => {
           tenantId: context.tenant.id,
           salonId: salon.id,
           recipientEmail: recipient,
-          payload: {
-            reservationId: created.id,
-            salonName: salon.name,
-            startsAt: startsAt.toISOString(),
-            serviceName: service.name,
-            tenantSlug: context.tenant.slug
-          }
+          payload: reservationNotificationPayload(created, salon.name, context.tenant.slug)
         } });
       }
     }

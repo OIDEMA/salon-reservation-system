@@ -12,10 +12,10 @@ if (testDatabaseUrl) {
 
 type Headers = { authorization: string; "x-tenant-slug": string; "x-salon-id": string };
 type Payment = { method: "CASH" | "CARD" | "BANK" | "EXTERNAL_PREPAYMENT" | "OTHER"; amountYen: number; reference: string };
-type Receipt = { id: string; reservationId: string; version: number; status: string; totalYen: number; taxYen: number; cashYen: number;
+type Receipt = { id: string; reservationId: string; version: number; status: string; totalYen: number; taxYen: number; cashYen: number; pointsDiscountYen: number;
   supersedesCheckoutId: string | null; finalizedSessionId: string | null; reversedSessionId: string | null;
   reservationSnapshot: Record<string, unknown>; legacyPaidAcknowledged: boolean; notes: string;
-  items: { label: string; quantity: number; unitPriceYen: number; discountYen: number; taxRate: number; taxYen: number; totalYen: number }[];
+  items: { label: string; quantity: number; unitPriceYen: number; discountYen: number; pointsDiscountYen: number; taxRate: number; taxYen: number; totalYen: number }[];
   payments: Payment[]; taxBreakdown: { taxRate: number; taxYen: number; taxableTotalYen: number }[] };
 type Register = { id: string; version: number; status: string; businessDate: string; expectedCashYen: number; differenceYen: number | null;
   movements: { kind: string; amountYen: number }[]; closeSnapshot: any };
@@ -89,7 +89,7 @@ test("cash and register API preserve accounting with real PostgreSQL", { skip: !
     function body(checkout: Receipt, payments: Payment[], extras: Record<string, unknown> = {}) {
       return { version: checkout.version,
         items: checkout.items.map(({ label, quantity, unitPriceYen, discountYen, taxRate }) => ({ label, quantity, unitPriceYen, discountYen, taxRate })),
-        payments, notes: checkout.notes, legacyPaidAcknowledged: false, ...extras };
+        payments, pointsDiscountYen: checkout.pointsDiscountYen, notes: checkout.notes, legacyPaidAcknowledged: false, ...extras };
     }
     async function update(checkout: Receipt, payments: Payment[], salonId: string, extras: Record<string, unknown> = {}) {
       return good<Receipt>("PUT", `/api/cash/checkouts/${checkout.id}`, body(checkout, payments, extras), owner.headers(salonId));
@@ -199,7 +199,7 @@ test("cash and register API preserve accounting with real PostgreSQL", { skip: !
     await t.test("changed reservation blocks stale finalization and explicit refresh rebuilds the draft", async () => {
       const headers = owner.headers(c.salonId);
       let changed = await create(c.reservation.id, c.salonId);
-      changed = await update(changed, [{ method: "CARD", amountYen: 1000, reference: "仮記録" }], c.salonId);
+      changed = await update(changed, [{ method: "CARD", amountYen: 900, reference: "仮記録" }], c.salonId, { pointsDiscountYen: 100 });
       const session = await open(c.salonId, 500);
       await good("PATCH", `/api/reservations/${c.reservation.id}`, { durationMinutes: 75 }, headers);
       const stale = await call("POST", `/api/cash/checkouts/${changed.id}/finalize`, { version: changed.version, requestId: randomUUID(), registerSessionId: session.id }, headers);
@@ -207,6 +207,7 @@ test("cash and register API preserve accounting with real PostgreSQL", { skip: !
       assert.equal(await spent(c.customer.id), 0);
       changed = await good<Receipt>("POST", `/api/cash/checkouts/${changed.id}/refresh-reservation`, { version: changed.version }, headers);
       assert.equal(changed.payments.length, 0); assert.equal(changed.cashYen, 0); assert.equal(changed.legacyPaidAcknowledged, false);
+      assert.equal(changed.pointsDiscountYen, 0); assert.ok(changed.items.every((item) => item.pointsDiscountYen === 0));
       const storedReservation = await prisma.reservation.findUniqueOrThrow({ where: { id: c.reservation.id } });
       assert.equal(changed.reservationSnapshot.endsAt, storedReservation.endsAt.toISOString());
       changed = await update(changed, [{ method: "CARD", amountYen: 1000, reference: "改定予約を確認" }], c.salonId);
@@ -316,6 +317,105 @@ test("cash and register API preserve accounting with real PostgreSQL", { skip: !
       await prisma.tenant.update({ where: { id: tenant.id }, data: { status: "ACTIVE" } });
     });
 
+    await t.test("point discounts, atomic admin notices and reversals preserve immutable accounting snapshots", async () => {
+      const h = await fixture("points-notice", 2200);
+      const headers = owner.headers(h.salonId);
+      const scope = { tenantId: tenant.id, salonId: h.salonId };
+      await prisma.salonSettings.create({ data: { ...scope, storeId: "points-notice", cancellationMessage: "", friendMessage: "",
+        notifyReservationEmail: true, notificationEmail: "checkout-admin@example.test" } });
+      await prisma.customer.update({ where: { id: h.customer.id }, data: { phone: "090-1234-5678", memo: "非公開顧客メモ" } });
+      let checkout = await create(h.reservation.id, h.salonId);
+      assert.equal(checkout.pointsDiscountYen, 0);
+      const invalid = await call("PUT", `/api/cash/checkouts/${checkout.id}`, body(checkout, [], { pointsDiscountYen: 2201 }), headers);
+      assert.equal(invalid.statusCode, 400, invalid.body);
+      assert.equal((await good<Receipt>("GET", `/api/cash/checkouts/${checkout.id}`, undefined, headers)).version, checkout.version);
+      checkout = await update(checkout, [{ method: "CASH", amountYen: 500, reference: "" }, { method: "CARD", amountYen: 1500, reference: "非公開決済参照" }], h.salonId, {
+        items: [{ label: "施術", quantity: 1, unitPriceYen: 1200, discountYen: 100, taxRate: 10 },
+          { label: "店販", quantity: 1, unitPriceYen: 1080, discountYen: 0, taxRate: 8 }], pointsDiscountYen: 180, notes: "非公開会計メモ"
+      });
+      assert.deepEqual([checkout.totalYen, checkout.pointsDiscountYen, checkout.taxYen], [2000, 180, 164]);
+      assert.deepEqual(checkout.items.map((item) => item.pointsDiscountYen), [91, 89]);
+      const { pointsDiscountYen: _points, ...legacyBody } = body(checkout, checkout.payments);
+      checkout = await good<Receipt>("PUT", `/api/cash/checkouts/${checkout.id}`, legacyBody, headers);
+      assert.equal(checkout.pointsDiscountYen, 180); assert.equal(checkout.totalYen, 2000);
+      const { pointsDiscountYen: _preserved, ...smallerLegacyBody } = body(checkout, [], {
+        items: [{ label: "金額を減らした旧画面", quantity: 1, unitPriceYen: 100, discountYen: 0, taxRate: 10 }]
+      });
+      assert.equal((await call("PUT", `/api/cash/checkouts/${checkout.id}`, smallerLegacyBody, headers)).statusCode, 400);
+      checkout = await update(checkout, checkout.payments, h.salonId, { pointsDiscountYen: 0 });
+      assert.equal(checkout.pointsDiscountYen, 0); assert.equal(checkout.totalYen, 2180);
+      checkout = await update(checkout, checkout.payments, h.salonId, { pointsDiscountYen: 180 });
+      const register = await open(h.salonId);
+      const finalize = { version: checkout.version, requestId: randomUUID(), registerSessionId: register.id };
+      // A queue write failure must roll back the settlement and its register/customer effects.
+      const collision = await prisma.emailOutbox.create({ data: { ...scope, eventKey: `checkout.finalized:${checkout.id}`,
+        eventType: "checkout.finalized", recipientEmail: "fixture@example.test", payload: {} } });
+      assert.equal((await call("POST", `/api/cash/checkouts/${checkout.id}/finalize`, finalize, headers)).statusCode, 409);
+      assert.equal((await good<Receipt>("GET", `/api/cash/checkouts/${checkout.id}`, undefined, headers)).status, "DRAFT");
+      assert.equal((await prisma.reservation.findUniqueOrThrow({ where: { id: h.reservation.id } })).paymentStatus, "UNPAID");
+      assert.equal(await spent(h.customer.id), 0);
+      assert.equal(await prisma.cashRegisterMovement.count({ where: { ...scope, checkoutId: checkout.id } }), 0);
+      assert.equal((await good<Register>("GET", `/api/cash/register-sessions/${register.id}`, undefined, headers)).version, 1);
+      await prisma.emailOutbox.delete({ where: { id: collision.id } });
+      await prisma.customer.update({ where: { id: h.customer.id }, data: { name: "会計確定時の顧客" } });
+      const finalized = await Promise.all([call("POST", `/api/cash/checkouts/${checkout.id}/finalize`, finalize, headers), call("POST", `/api/cash/checkouts/${checkout.id}/finalize`, finalize, headers)]);
+      assert.deepEqual(finalized.map((response) => response.statusCode), [200, 200], finalized.map((response) => response.body).join("\n"));
+      checkout = finalized[0].json(); assert.equal(await spent(h.customer.id), 2000);
+      const notice = await prisma.emailOutbox.findUniqueOrThrow({ where: { eventKey: `checkout.finalized:${checkout.id}` } });
+      assert.equal(notice.recipientEmail, "checkout-admin@example.test"); assert.equal(notice.tenantId, tenant.id); assert.equal(notice.salonId, h.salonId);
+      const snapshot = notice.payload as Record<string, unknown>;
+      assert.equal(snapshot.customerName, "会計確定時の顧客"); assert.equal(snapshot.serviceName, h.service.name); assert.equal(snapshot.staffName, "指名なし");
+      assert.deepEqual([snapshot.subtotalYen, snapshot.discountYen, snapshot.pointsDiscountYen, snapshot.totalYen, snapshot.taxYen], [2280, 100, 180, 2000, 164]);
+      assert.deepEqual(snapshot.payments, [{ method: "CASH", amountYen: 500 }, { method: "CARD", amountYen: 1500 }]);
+      for (const excluded of ["090-1234-5678", "非公開顧客メモ", "非公開決済参照", "非公開会計メモ"]) assert(!JSON.stringify(snapshot).includes(excluded));
+      await prisma.customer.update({ where: { id: h.customer.id }, data: { name: "後日変更した顧客名" } });
+      await prisma.service.update({ where: { id: h.service.id }, data: { price: 3400, name: "後日変更メニュー" } });
+      await prisma.salonSettings.update({ where: { tenantId_salonId: scope }, data: { notificationEmail: "updated-admin@example.test" } });
+      const reverse = { requestId: randomUUID(), reason: "テスト訂正", refundRecorded: true, registerSessionId: register.id };
+      const reversed = await Promise.all([call("POST", `/api/cash/checkouts/${checkout.id}/reverse`, reverse, headers), call("POST", `/api/cash/checkouts/${checkout.id}/reverse`, reverse, headers)]);
+      assert.deepEqual(reversed.map((response) => response.statusCode), [200, 200], reversed.map((response) => response.body).join("\n"));
+      assert.equal(await spent(h.customer.id), 0);
+      const reversalNotice = await prisma.emailOutbox.findUniqueOrThrow({ where: { eventKey: `checkout.reversed:${checkout.id}` } });
+      assert.equal(reversalNotice.recipientEmail, "updated-admin@example.test");
+      const reversal = reversalNotice.payload as Record<string, unknown>;
+      for (const field of ["customerName", "serviceName", "subtotalYen", "discountYen", "pointsDiscountYen", "totalYen", "taxYen", "payments"]) assert.deepEqual(reversal[field], snapshot[field]);
+      assert.deepEqual((await prisma.emailOutbox.findUniqueOrThrow({ where: { id: notice.id } })).payload, snapshot);
+      assert.equal(await prisma.emailOutbox.count({ where: scope }), 2);
+      let correction = await create(h.reservation.id, h.salonId);
+      assert.equal(correction.supersedesCheckoutId, checkout.id); assert.equal(correction.pointsDiscountYen, 0);
+      correction = await update(correction, [{ method: "CARD", amountYen: 1000, reference: "訂正会計" }], h.salonId, {
+        items: [{ label: "訂正施術", quantity: 1, unitPriceYen: 1100, discountYen: 0, taxRate: 10 }], pointsDiscountYen: 100
+      });
+      await good("POST", `/api/cash/checkouts/${correction.id}/finalize`, { version: correction.version, requestId: randomUUID(), registerSessionId: register.id }, headers);
+      assert.equal(await spent(h.customer.id), 1000); assert.equal(await prisma.emailOutbox.count({ where: scope }), 3);
+      const updatedRegister = await good<Register>("GET", `/api/cash/register-sessions/${register.id}`, undefined, headers);
+      const closed = await good<Register>("POST", `/api/cash/register-sessions/${register.id}/close`, { version: updatedRegister.version, requestId: randomUUID(), countedCashYen: 5000 }, headers);
+      assert.deepEqual([closed.closeSnapshot.salesTotalYen, closed.closeSnapshot.refundsTotalYen, closed.closeSnapshot.netTotalYen], [3000, 2000, 1000]);
+      assert.deepEqual([closed.closeSnapshot.discountYen, closed.closeSnapshot.pointsDiscountYen, closed.closeSnapshot.refundsPointsDiscountYen], [100, 280, 180]);
+    });
+
+    await t.test("all-points checkout sends zero-sale snapshots with no payment and disabled admin notices stay disabled", async () => {
+      const h = await fixture("all-points", 1000);
+      const headers = owner.headers(h.salonId); const scope = { tenantId: tenant.id, salonId: h.salonId };
+      await prisma.salonSettings.create({ data: { ...scope, storeId: "all-points", cancellationMessage: "", friendMessage: "",
+        notifyReservationEmail: true, notificationEmail: "points-admin@example.test" } });
+      let checkout = await create(h.reservation.id, h.salonId);
+      checkout = await update(checkout, [], h.salonId, { pointsDiscountYen: 1000 });
+      const register = await open(h.salonId);
+      checkout = await good<Receipt>("POST", `/api/cash/checkouts/${checkout.id}/finalize`, { version: checkout.version, requestId: randomUUID(), registerSessionId: register.id }, headers);
+      assert.equal(checkout.totalYen, 0); assert.equal(checkout.taxYen, 0); assert.equal(await spent(h.customer.id), 0);
+      assert.equal(await prisma.cashRegisterMovement.count({ where: scope }), 0);
+      const payload = (await prisma.emailOutbox.findUniqueOrThrow({ where: { eventKey: `checkout.finalized:${checkout.id}` } })).payload as Record<string, unknown>;
+      assert.equal(payload.totalYen, 0); assert.equal(payload.pointsDiscountYen, 1000); assert.deepEqual(payload.payments, []);
+      await prisma.salonSettings.update({ where: { tenantId_salonId: scope }, data: { notifyReservationEmail: false } });
+      await good("POST", `/api/cash/checkouts/${checkout.id}/reverse`, { requestId: randomUUID(), reason: "テスト取消", refundRecorded: true, registerSessionId: register.id }, headers);
+      assert.equal(await prisma.emailOutbox.count({ where: { eventKey: `checkout.reversed:${checkout.id}` } }), 0);
+      let correction = await create(h.reservation.id, h.salonId);
+      correction = await update(correction, [{ method: "CARD", amountYen: 1000, reference: "通常精算" }], h.salonId);
+      await good("POST", `/api/cash/checkouts/${correction.id}/finalize`, { version: correction.version, requestId: randomUUID(), registerSessionId: register.id }, headers);
+      assert.equal(await prisma.emailOutbox.count({ where: scope }), 1);
+    });
+
     await t.test("a historical receipt refunds into today's register without rewriting the old close", async () => {
       const headers = owner.headers(f.salonId);
       const yesterday = businessDateAt(new Date(Date.now() - 86_400_000), "Asia/Tokyo");
@@ -350,6 +450,7 @@ test("cash and register API preserve accounting with real PostgreSQL", { skip: !
     // Only this run's fixture tenants are removed. Never reset or truncate shared data.
     if (tenantIds.length) {
       const where = { tenantId: { in: tenantIds } };
+      await prisma.emailOutbox.deleteMany({ where });
       await prisma.cashRegisterMovement.deleteMany({ where });
       await prisma.cashCheckoutItem.deleteMany({ where });
       await prisma.cashPaymentAllocation.deleteMany({ where });

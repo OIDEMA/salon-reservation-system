@@ -17,16 +17,18 @@ export const cashDraftSchema = z.object({
     method: z.enum(cashPaymentMethods), amountYen: yen.refine((amount) => amount > 0),
     reference: z.string().trim().max(160).default("")
   }).strict()).max(20),
+  pointsDiscountYen: yen.default(0),
   legacyPaidAcknowledged: z.boolean(),
   notes: z.string().trim().max(2000).default("")
 }).strict();
 
 export type CashDraft = z.infer<typeof cashDraftSchema>;
-export type CashItem = CashDraft["items"][number] & { lineNumber: number; taxYen: number; totalYen: number };
+export type CashItem = CashDraft["items"][number] & { lineNumber: number; pointsDiscountYen: number; taxYen: number; totalYen: number };
 export type CashTotals = {
   items: CashItem[];
   subtotalYen: number;
   discountYen: number;
+  pointsDiscountYen: number;
   taxYen: number;
   totalYen: number;
   cashYen: number;
@@ -50,18 +52,39 @@ function sumBounded(values: number[]) {
 }
 
 /** All entered prices are tax-inclusive. Round once per tax rate per receipt. */
-export function calculateCashDraft(input: Pick<CashDraft, "items" | "payments">): CashTotals {
+export function calculateCashDraft(input: Pick<CashDraft, "items" | "payments"> & Partial<Pick<CashDraft, "pointsDiscountYen">>): CashTotals {
   const items: CashItem[] = input.items.map((item, lineNumber) => {
     const gross = item.quantity * item.unitPriceYen;
     cashAssert(Number.isSafeInteger(gross) && gross <= CASH_MAX_YEN,
       "CASH_AMOUNT_LIMIT", "明細金額が取扱上限を超えています。");
     cashAssert(item.discountYen <= gross, "CASH_DISCOUNT_LIMIT", "値引き額が明細金額を超えています。");
     const totalYen = gross - item.discountYen;
-    return { ...item, lineNumber, totalYen, taxYen: Math.floor(totalYen * item.taxRate / (100 + item.taxRate)) };
+    return { ...item, lineNumber, pointsDiscountYen: 0, totalYen, taxYen: 0 };
   });
   const subtotalYen = sumBounded(items.map((item) => item.quantity * item.unitPriceYen));
   const discountYen = sumBounded(items.map((item) => item.discountYen));
-  const totalYen = subtotalYen - discountYen;
+  const afterDiscountYen = subtotalYen - discountYen;
+  const pointsDiscountYen = input.pointsDiscountYen ?? 0;
+  cashAssert(Number.isSafeInteger(pointsDiscountYen) && pointsDiscountYen >= 0 && pointsDiscountYen <= afterDiscountYen,
+    "CASH_POINTS_DISCOUNT_LIMIT", "ポイント利用額は通常値引き後の金額以内で入力してください。");
+  // Products can exceed Number.MAX_SAFE_INTEGER at the allowed 100-million-yen
+  // limit. BigInt keeps proportional allocation and its tie-break exact.
+  if (pointsDiscountYen > 0) {
+    const denominator = BigInt(afterDiscountYen);
+    const allocation = items.map((item) => {
+      const numerator = BigInt(pointsDiscountYen) * BigInt(item.totalYen);
+      item.pointsDiscountYen = Number(numerator / denominator);
+      return { item, remainder: numerator % denominator };
+    });
+    let remainder = pointsDiscountYen - items.reduce((sum, item) => sum + item.pointsDiscountYen, 0);
+    allocation.sort((left, right) => left.remainder === right.remainder ? left.item.lineNumber - right.item.lineNumber : left.remainder > right.remainder ? -1 : 1);
+    for (const { item } of allocation) if (remainder > 0) { item.pointsDiscountYen++; remainder--; }
+  }
+  for (const item of items) {
+    item.totalYen -= item.pointsDiscountYen;
+    item.taxYen = Math.floor(item.totalYen * item.taxRate / (100 + item.taxRate));
+  }
+  const totalYen = afterDiscountYen - pointsDiscountYen;
   const taxBreakdown = [0, 8, 10].filter((rate) => items.some((item) => item.taxRate === rate)).map((taxRate) => {
     const rows = items.filter((item) => item.taxRate === taxRate);
     const taxableTotalYen = sumBounded(rows.map((item) => item.totalYen));
@@ -71,7 +94,7 @@ export function calculateCashDraft(input: Pick<CashDraft, "items" | "payments">)
     for (const item of rows) if (remainder > 0) { item.taxYen++; remainder--; }
     return { taxRate, taxableTotalYen, taxYen };
   });
-  return { items, subtotalYen, discountYen, totalYen, taxBreakdown,
+  return { items, subtotalYen, discountYen, pointsDiscountYen, totalYen, taxBreakdown,
     taxYen: taxBreakdown.reduce((sum, group) => sum + group.taxYen, 0),
     allocatedYen: sumBounded(input.payments.map((payment) => payment.amountYen)),
     cashYen: sumBounded(input.payments.filter((payment) => payment.method === "CASH").map((payment) => payment.amountYen)) };

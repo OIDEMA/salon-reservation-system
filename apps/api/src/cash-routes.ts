@@ -7,6 +7,7 @@ import { refreshCustomerAccounting } from "./accounting-stats.js";
 import { reservationPrice } from "./reservation-price.js";
 import { checkoutPage, checkoutPageQuerySchema } from "./checkout-page.js";
 import { registerPage, registerPageQuerySchema, openRegisterOptions } from "./register-page.js";
+import { enqueueCheckoutNotification } from "./checkout-notification.js";
 import { assertCashSettlement, assertCashVersion, businessDateAt, calculateCashDraft, cashAssert,
   cashDraftSchema, CashError, cashRequestHash, expectedCash, CASH_MAX_YEN } from "./cash-domain.js";
 
@@ -43,7 +44,7 @@ function draftFrom(checkout: Checkout) {
   return cashDraftSchema.parse({ version: checkout.version,
     items: checkout.items.map(({ label, quantity, unitPriceYen, discountYen, taxRate }) => ({ label, quantity, unitPriceYen, discountYen, taxRate })),
     payments: checkout.payments.map(({ method, amountYen, reference }) => ({ method, amountYen, reference })),
-    legacyPaidAcknowledged: checkout.legacyPaidAcknowledged, notes: checkout.notes });
+    pointsDiscountYen: checkout.pointsDiscountYen, legacyPaidAcknowledged: checkout.legacyPaidAcknowledged, notes: checkout.notes });
 }
 
 async function storeLines(tx: Tx, context: Context, id: string, draft: ReturnType<typeof draftFrom>, totals: ReturnType<typeof calculateCashDraft>) {
@@ -137,7 +138,7 @@ export function registerCashRoutes(server: FastifyInstance) {
           customerId: reservation.customerId, serviceId: reservation.serviceId, staffId: reservation.staffId,
           staffName: reservation.staff?.name ?? "指名なし", salonName: context.salon.name,
           startsAt: reservation.startsAt.toISOString(), endsAt: reservation.endsAt.toISOString() },
-        subtotalYen: totals.subtotalYen, discountYen: totals.discountYen, totalYen: totals.totalYen,
+        subtotalYen: totals.subtotalYen, discountYen: totals.discountYen, pointsDiscountYen: totals.pointsDiscountYen, totalYen: totals.totalYen,
         taxYen: totals.taxYen, taxBreakdown: totals.taxBreakdown, cashYen: 0 } });
       await storeLines(tx, context, checkout.id, draft, totals);
       await operationAudit(tx, context, request, { action: "checkout.create", resource: "cashCheckout", resourceId: checkout.id,
@@ -152,17 +153,20 @@ export function registerCashRoutes(server: FastifyInstance) {
     if (!context) return;
     const { id } = paramsSchema.parse(request.params);
     const draft = cashDraftSchema.parse(request.body);
-    const totals = calculateCashDraft(draft);
+    const pointsSpecified = Object.prototype.hasOwnProperty.call(request.body, "pointsDiscountYen");
     return cashTransaction(async (tx) => {
       await lockOperation(tx, context, "checkout.write");
       const checkout = await checkoutFor(tx, context, id);
       assertCashVersion(checkout, draft.version, "DRAFT");
+      // Clients loaded before points support must not silently remove a newer discount.
+      const savedDraft = { ...draft, pointsDiscountYen: pointsSpecified ? draft.pointsDiscountYen : checkout.pointsDiscountYen };
+      const totals = calculateCashDraft(savedDraft);
       const updated = await tx.cashCheckout.updateMany({ where: { ...scope(context), id, status: "DRAFT", version: draft.version }, data: {
-        version: { increment: 1 }, subtotalYen: totals.subtotalYen, discountYen: totals.discountYen,
+        version: { increment: 1 }, subtotalYen: totals.subtotalYen, discountYen: totals.discountYen, pointsDiscountYen: totals.pointsDiscountYen,
         totalYen: totals.totalYen, taxYen: totals.taxYen, taxBreakdown: totals.taxBreakdown,
         cashYen: totals.cashYen, legacyPaidAcknowledged: draft.legacyPaidAcknowledged, notes: draft.notes } });
       cashAssert(updated.count === 1, "CASH_VERSION_CONFLICT", "別の操作で更新されました。", 409);
-      await storeLines(tx, context, id, draft, totals);
+      await storeLines(tx, context, id, savedDraft, totals);
       await operationAudit(tx, context, request, { action: "checkout.draft.update", resource: "cashCheckout", resourceId: id,
         metadata: { totalYen: totals.totalYen, version: draft.version + 1 } });
       return checkoutFor(tx, context, id);
@@ -184,7 +188,7 @@ export function registerCashRoutes(server: FastifyInstance) {
       }
       assertCashVersion(checkout, input.version, "DRAFT");
       await tx.$queryRaw`SELECT id FROM "Reservation" WHERE "tenantId"=${context.tenant.id} AND "salonId"=${context.salon.id} AND id=${checkout.reservationId} FOR UPDATE`;
-      const reservation = await tx.reservation.findFirst({ where: { ...scope(context), id: checkout.reservationId } });
+      const reservation = await tx.reservation.findFirst({ where: { ...scope(context), id: checkout.reservationId }, include: { customer: true, service: true, staff: true } });
       cashAssert(reservation, "RESERVATION_NOT_FOUND", "予約が見つかりません。", 404);
       cashAssert(!["CANCELLED", "NO_SHOW"].includes(reservation.status), "CASH_RESERVATION_CANCELLED", "取消・無断キャンセルの予約は会計を確定できません。", 409);
       const snapshot = checkout.reservationSnapshot as Record<string, unknown>;
@@ -202,14 +206,19 @@ export function registerCashRoutes(server: FastifyInstance) {
       await tx.cashCheckout.updateMany({ where: { ...scope(context), id, status: "DRAFT", version: input.version }, data: {
         status: "FINALIZED", version: { increment: 1 }, finalizedAt: new Date(), finalizedByUserId: context.user.id,
         finalizeRequestId: input.requestId, finalizeRequestHash: hash, legacyPaymentStatus: reservation.paymentStatus,
-        finalizedSessionId: register.id } });
+        finalizedSessionId: register.id,
+        reservationSnapshot: { customerId: reservation.customerId, serviceId: reservation.serviceId, staffId: reservation.staffId,
+          customerName: reservation.customer.name, serviceName: reservation.service.name, staffName: reservation.staff?.name ?? "指名なし",
+          salonName: context.salon.name, startsAt: reservation.startsAt.toISOString(), endsAt: reservation.endsAt.toISOString() } } });
       if (totals.cashYen > 0) await addCheckoutMovement(tx, context, request, register, checkout, "SALE", input.requestId);
       await tx.cashRegisterSession.updateMany({ where: { ...scope(context), id: register.id, status: "OPEN" }, data: { version: { increment: 1 } } });
       await tx.reservation.updateMany({ where: { ...scope(context), id: checkout.reservationId }, data: { paymentStatus: "PAID" } });
       await refreshCustomerAccounting(tx, context.tenant.id, context.salon.id, reservation.customerId);
       await operationAudit(tx, context, request, { action: "checkout.finalize", resource: "cashCheckout", resourceId: id,
-        metadata: { reservationId: checkout.reservationId, totalYen: checkout.totalYen, cashYen: checkout.cashYen, paymentRecordsOnly: true } });
-      return checkoutFor(tx, context, id);
+        metadata: { reservationId: checkout.reservationId, totalYen: checkout.totalYen, pointsDiscountYen: checkout.pointsDiscountYen, cashYen: checkout.cashYen, paymentRecordsOnly: true } });
+      const finalized = await checkoutFor(tx, context, id);
+      await enqueueCheckoutNotification(tx, { ...scope(context), tenantSlug: context.tenant.slug, eventType: "checkout.finalized", checkout: finalized });
+      return finalized;
     });
   });
 
@@ -238,8 +247,10 @@ export function registerCashRoutes(server: FastifyInstance) {
       const reservation = await tx.reservation.findFirst({ where: { ...scope(context), id: checkout.reservationId }, select: { customerId: true } });
       if (reservation) await refreshCustomerAccounting(tx, context.tenant.id, context.salon.id, reservation.customerId);
       await operationAudit(tx, context, request, { action: "checkout.reverse", resource: "cashCheckout", resourceId: id,
-        metadata: { totalYen: checkout.totalYen, cashYen: checkout.cashYen, reason: input.reason, refundRecordsOnly: true } });
-      return checkoutFor(tx, context, id);
+        metadata: { totalYen: checkout.totalYen, pointsDiscountYen: checkout.pointsDiscountYen, cashYen: checkout.cashYen, reason: input.reason, refundRecordsOnly: true } });
+      const reversed = await checkoutFor(tx, context, id);
+      await enqueueCheckoutNotification(tx, { ...scope(context), tenantSlug: context.tenant.slug, eventType: "checkout.reversed", checkout: reversed });
+      return reversed;
     });
   });
 
@@ -261,7 +272,7 @@ export function registerCashRoutes(server: FastifyInstance) {
       const totals = calculateCashDraft(draft);
       await tx.cashCheckout.updateMany({ where: { ...scope(context), id, status: "DRAFT", version: input.version }, data: {
         version: { increment: 1 }, legacyPaymentStatus: reservation.paymentStatus, legacyPaidAcknowledged: false,
-        subtotalYen: totals.subtotalYen, discountYen: 0, totalYen: totals.totalYen, taxYen: totals.taxYen,
+        subtotalYen: totals.subtotalYen, discountYen: 0, pointsDiscountYen: 0, totalYen: totals.totalYen, taxYen: totals.taxYen,
         taxBreakdown: totals.taxBreakdown, cashYen: 0,
         reservationSnapshot: { customerId: reservation.customerId, serviceId: reservation.serviceId, staffId: reservation.staffId,
           customerName: reservation.customer.name, serviceName: reservation.service.name, staffName: reservation.staff?.name ?? "指名なし",
@@ -386,6 +397,8 @@ export function registerCashRoutes(server: FastifyInstance) {
         salesCount: sales.length, refundsCount: reversals.length, salesTotalYen, refundsTotalYen,
         netTotalYen: salesTotalYen - refundsTotalYen,
         discountYen: sales.reduce((sum, checkout) => sum + checkout.discountYen, 0),
+        pointsDiscountYen: sales.reduce((sum, checkout) => sum + checkout.pointsDiscountYen, 0),
+        refundsPointsDiscountYen: reversals.reduce((sum, checkout) => sum + checkout.pointsDiscountYen, 0),
         taxYen: sales.reduce((sum, checkout) => sum + checkout.taxYen, 0),
         refundsTaxYen: reversals.reduce((sum, checkout) => sum + checkout.taxYen, 0),
         paymentTotals, salesIds: sales.map((checkout) => checkout.id), reversalIds: reversals.map((checkout) => checkout.id),

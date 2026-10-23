@@ -78,7 +78,10 @@ test("member booking keeps token, owner, publication, inventory and retry bounda
       assert.equal(notification.eventType, "reservation.created"); assert.equal(notification.status, "PENDING");
       assert.equal(notification.recipientEmail, "booking-notice@example.test"); assert.equal(notification.tenantId, tenant.id); assert.equal(notification.salonId, salon.id);
       assert.deepEqual(notification.payload, { reservationId, salonName: salon.name, startsAt: japanDateTime(date, "10:00").toISOString(),
-        serviceName: menu.name, tenantSlug: tenant.slug });
+        endsAt: japanDateTime(date, "10:30").toISOString(), durationMinutes: 30, serviceName: menu.name, tenantSlug: tenant.slug,
+        customerName: customer.name, reservationAmountYen: 5500, staffName: staff.name, isRequest: true,
+        source: "MINI_APP", status: "CONFIRMED", paymentStatus: "UNPAID" });
+      assert(!JSON.stringify(notification.payload).includes(customer.phone));
       assert.equal(await prisma.emailOutbox.count({ where: { eventKey: `reservation.created:${reservationId}` } }), 1);
       assert.equal(await prisma.memberCustomerLink.count({ where: { uid: uidA, customerId: saved.customerId } }), 1);
       const own = await list(); assert.equal(own.json().total, 1); assert.equal(own.json().reservations[0].id, reservationId); assert(!own.body.includes(old.id)); assert(!own.body.includes("private medical"));
