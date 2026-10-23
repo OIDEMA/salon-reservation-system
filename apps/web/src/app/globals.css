@@ -37,8 +37,36 @@ select {
   font: inherit;
 }
 
-button {
+/* Keep component-specific drag, resize, zoom, and loading cursors authoritative. */
+:where(
+  button,
+  a[href],
+  select,
+  summary,
+  [role="button"],
+  input:is([type="button"], [type="submit"], [type="reset"], [type="checkbox"], [type="radio"], [type="file"], [type="color"]),
+  label:has(input:is([type="checkbox"], [type="radio"]):enabled)
+) {
   cursor: pointer;
+}
+
+input:not(:disabled):not([readonly])::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+}
+
+input[type="file"]::file-selector-button {
+  cursor: inherit;
+}
+
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled,
+a[aria-disabled="true"],
+button[aria-disabled="true"],
+[role="button"][aria-disabled="true"],
+label:has(input:is([type="checkbox"], [type="radio"]):disabled) {
+  cursor: not-allowed;
 }
 
 a {

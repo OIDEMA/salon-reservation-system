@@ -847,7 +847,7 @@ function ReservationCard({
   return (
     <div
       className={`reservationCard ${statusMeta[reservation.status].className} ${selected ? "isSelected" : ""} ${dragging ? "isDragging" : ""}`}
-      style={{ ...style, cursor: editable ? undefined : "default", touchAction: editable ? undefined : "auto" }}
+      style={{ ...style, cursor: editable ? undefined : "pointer", touchAction: editable ? undefined : "auto" }}
       role="button"
       tabIndex={0}
       data-reservation-card
