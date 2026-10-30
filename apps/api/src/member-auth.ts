@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { firebaseAdminAuth } from "./auth.js";
+import { assertDefaultFirebaseRealm, firebaseAdminAuth } from "./auth.js";
 import { MEMBER_PROJECT_ID, type MemberIdentity } from "./member-booking-domain.js";
 
 /** Member credentials are Firebase ID tokens, never staff session cookies or shared app keys. */
@@ -10,6 +10,7 @@ export async function requireMemberIdentity(request: FastifyRequest, reply: Fast
   if (!match) { reply.code(401).send({ code: "UNAUTHENTICATED", message: "ログインが必要です。" }); return null; }
   try {
     const claims = await firebaseAdminAuth.verifyIdToken(match[1], true);
+    assertDefaultFirebaseRealm(claims);
     if (claims.aud !== MEMBER_PROJECT_ID || claims.iss !== `https://securetoken.google.com/${MEMBER_PROJECT_ID}` ||
       !claims.uid || claims.firebase?.sign_in_provider === "anonymous" ||
       !(claims.email && claims.email_verified === true || claims.phone_number)) {

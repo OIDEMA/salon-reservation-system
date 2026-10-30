@@ -10,16 +10,21 @@ import { requireAuthenticatedUser, requireTenantContext, requestedSalonId } from
 function fixture(t: TestContext) {
   const state = {
     revoked: false, verified: true, disabled: false,
+    firebaseTenant: undefined as unknown, provider: "password", useIdToken: false,
     membershipStatus: "ACTIVE", tenantStatus: "ACTIVE", salonIds: ["salon-a"]
   };
   const counts = { firebase: 0, user: 0, membership: 0, salon: 0 };
+  const claims = () => ({ uid: "synthetic-user", email: "synthetic@example.test", email_verified: state.verified,
+    firebase: { sign_in_provider: state.provider, tenant: state.firebaseTenant } });
   const session = t.mock.method(firebaseAdminAuth, "verifySessionCookie", async (credential: string, revoked?: boolean) => {
     counts.firebase++; assert.equal(revoked, true);
-    if (state.revoked || credential !== "synthetic-session") throw new Error("revoked credential");
-    return { uid: "synthetic-user", email: "synthetic@example.test", email_verified: state.verified };
+    if (state.revoked || state.useIdToken || credential !== "synthetic-session") throw new Error("revoked credential");
+    return claims();
   });
-  const idToken = t.mock.method(firebaseAdminAuth, "verifyIdToken", async (_credential: string, revoked?: boolean) => {
-    assert.equal(revoked, true); throw new Error("invalid ID token");
+  const idToken = t.mock.method(firebaseAdminAuth, "verifyIdToken", async (credential: string, revoked?: boolean) => {
+    assert.equal(revoked, true);
+    if (state.revoked || !state.useIdToken || credential !== "synthetic-session") throw new Error("invalid ID token");
+    return claims();
   });
   // Prisma delegates are dynamic proxies without method descriptors, so restore
   // their assigned functions explicitly instead of using mock.method.
@@ -66,10 +71,37 @@ function fixture(t: TestContext) {
     t.after(() => server.close());
     return server;
   }
-  return { state, counts, headers, app };
+  return { state, counts, headers, app, session, idToken };
 }
 
 test("tenant guards reuse successful checks only within the current HTTP request", async (t) => {
+  for (const mode of ["session cookie", "ID token"]) {
+    await t.test(`${mode} from another Firebase realm cannot resolve the same UID in the Salon database`, async (t) => {
+      const f = fixture(t), app = f.app(); f.state.useIdToken = mode === "ID token";
+      for (const provider of ["password", "google.com"]) for (const realm of ["foreign-auth-realm", "synthetic", "tenant-a", " ", null, {}]) {
+        f.state.provider = provider; f.state.firebaseTenant = realm;
+        const response = await app.inject({ url: "/page", headers: f.headers });
+        assert.equal(response.statusCode, 401, response.body); assert.equal(response.json().code, "UNAUTHENTICATED");
+        assert(!response.body.includes("foreign-auth-realm")); assert(!response.body.includes("synthetic-user"));
+      }
+      assert.equal(f.counts.user, 0); assert.equal(f.counts.membership, 0); assert.equal(f.counts.salon, 0);
+      // A rejected, successfully verified cookie is a policy failure, rather
+      // than an invitation to reinterpret it as a different credential type.
+      assert.equal(f.idToken.mock.callCount(), mode === "session cookie" ? 0 : 12);
+    });
+  }
+
+  await t.test("default-realm Google and email credentials retain normal tenant authorization for cookies and ID tokens", async (t) => {
+    const f = fixture(t), app = f.app();
+    for (const useIdToken of [false, true]) for (const provider of ["password", "google.com"]) for (const realm of [undefined, ""]) {
+      f.state.useIdToken = useIdToken; f.state.provider = provider; f.state.firebaseTenant = realm;
+      const response = await app.inject({ url: "/page", headers: f.headers });
+      assert.equal(response.statusCode, 200, response.body);
+      assert.deepEqual(response.json(), { tenantId: "tenant-a", salonId: "salon-a" });
+    }
+    assert.equal(f.counts.user, 8);
+  });
+
   await t.test("the permission hook and handler verify Firebase and database scope once, including implicit salon normalization", async (t) => {
     const f = fixture(t), app = f.app();
     const first = await app.inject({ url: "/page", headers: f.headers });

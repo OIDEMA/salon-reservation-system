@@ -10,6 +10,7 @@ import {
   SESSION_COOKIE
 } from "@/lib/session-constants";
 import { sameOrigin } from "@/lib/request-security";
+import { createDefaultRealmSessionCookie, FirebaseRealmError } from "@/lib/browser-session-cookie";
 
 const sessionSchema = z.object({
   idToken: z.string().min(1),
@@ -58,7 +59,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "再ログインしてください。" }, { status: 401 });
   }
 
-  const sessionCookie = await firebaseAdminAuth.createSessionCookie(input.idToken, { expiresIn });
+  let sessionCookie: string;
+  try {
+    sessionCookie = await createDefaultRealmSessionCookie(claims, () => firebaseAdminAuth.createSessionCookie(input.idToken, { expiresIn }));
+  } catch (error) {
+    if (error instanceof FirebaseRealmError) {
+      return NextResponse.json({ code: "UNAUTHENTICATED", message: "ログイン情報を確認できませんでした。もう一度ログインしてください。" }, { status: 401 });
+    }
+    throw error;
+  }
   const response = NextResponse.json({ ok: true });
   response.cookies.set(SESSION_COOKIE, sessionCookie, {
     httpOnly: true,

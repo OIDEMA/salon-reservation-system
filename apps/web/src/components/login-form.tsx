@@ -1,11 +1,12 @@
 "use client";
 
-import { signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { GoogleAuthProvider, signInWithEmailAndPassword, signInWithPopup, signOut } from "firebase/auth";
 import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import Image from "next/image";
+import { useRef, useState } from "react";
 import { firebaseAuth, firebaseAuthReady } from "@/lib/firebase-client";
-import { createBrowserSession, loginFailureMessage, SessionRequestError } from "@/lib/login-session";
+import { loginFailureMessage, loginWithBrowserSession, SessionRequestError } from "@/lib/login-session";
 import { safeStaffHandoffReturnTo } from "@/lib/staff-handoff";
 
 type Feedback = {
@@ -13,44 +14,52 @@ type Feedback = {
   tone: "error" | "success";
 };
 
-export function LoginForm({ initialEmail = "", onAuthenticated, returnTo }: { initialEmail?: string; onAuthenticated?: () => Promise<void>; returnTo?: string | null } = {}) {
+export type LoginFormProps = { initialEmail?: string; onAuthenticated?: () => Promise<void>; returnTo?: string | null };
+
+export function LoginForm({ initialEmail = "", onAuthenticated, returnTo }: LoginFormProps = {}) {
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [submitting, setSubmitting] = useState<"password" | "google" | null>(null);
+  const submittingRef = useRef(false);
 
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitting(true);
+  async function authenticate(method: "password" | "google") {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(method);
     setFeedback(null);
     try {
-      await firebaseAuthReady;
-      const credential = await signInWithEmailAndPassword(firebaseAuth, email, password);
-      if (!credential.user.emailVerified) {
-        await signOut(firebaseAuth);
-        setFeedback({ tone: "error", text: "メールアドレスの確認が完了していません。管理者にお問い合わせください。" });
-        return;
-      }
-
-      await createBrowserSession(await credential.user.getIdToken(true));
-      await signOut(firebaseAuth);
+      await loginWithBrowserSession(async () => {
+        await firebaseAuthReady;
+        return method === "google" ? signInWithPopup(firebaseAuth, new GoogleAuthProvider()) : signInWithEmailAndPassword(firebaseAuth, email, password);
+      }, () => signOut(firebaseAuth));
       setPassword("");
       if (onAuthenticated) await onAuthenticated();
       else window.location.assign(safeStaffHandoffReturnTo(returnTo) ?? "/select-tenant");
     } catch (error) {
       setFeedback({
         tone: "error",
-        text: error instanceof SessionRequestError ? error.message : loginFailureMessage(error)
+        text: error instanceof SessionRequestError ? error.message : loginFailureMessage(error, method)
       });
     } finally {
-      await signOut(firebaseAuth).catch(() => undefined);
-      setSubmitting(false);
+      submittingRef.current = false;
+      setSubmitting(null);
     }
+  }
+
+  function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void authenticate("password");
   }
 
   return (
     <form className="authForm" onSubmit={submit}>
+      <button className="authGoogle" type="button" disabled={Boolean(submitting)} aria-busy={submitting === "google"} onClick={() => void authenticate("google")}>
+        <Image src="/brand/google-g.png" width={20} height={20} alt="" aria-hidden="true" />
+        <span>Googleでログイン</span>
+      </button>
+      <div className="authDivider" aria-hidden="true">または</div>
       <label>
         <span>メールアドレス</span>
         <input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
@@ -71,8 +80,8 @@ export function LoginForm({ initialEmail = "", onAuthenticated, returnTo }: { in
         </div>
       </label>
       {feedback ? <p className={`authMessage ${feedback.tone}`} role={feedback.tone === "error" ? "alert" : "status"}>{feedback.text}</p> : null}
-      <button className="authSubmit" type="submit" disabled={submitting}>
-        {submitting ? "処理中…" : "ログイン"}
+      <button className="authSubmit" type="submit" disabled={Boolean(submitting)}>
+        {submitting === "password" ? "処理中…" : "ログイン"}
       </button>
       <Link className="authResetLink" href="/password-reset">
         パスワードをお忘れの方

@@ -2349,6 +2349,40 @@ a {
   opacity: 0.6;
 }
 
+@font-face {
+  font-family: "Google Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/brand/google-sans-latin-500.woff2") format("woff2");
+}
+
+/* Light Sign in with Google button; keep the official G asset unmodified. */
+.authGoogle {
+  display: grid;
+  grid-template-columns: 20px 1fr 20px;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  width: 100%;
+  padding: 0 12px;
+  border: 1px solid #747775;
+  border-radius: 20px;
+  background: #fff;
+  color: #1f1f1f;
+  font-family: "Google Sans", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.authGoogle:enabled:hover { background: #f8faff; }
+.authGoogle img { object-fit: contain; }
+.authGoogle:focus-visible { outline: 2px solid #4285f4; outline-offset: 2px; }
+.authGoogle:disabled { cursor: wait; opacity: 0.6; }
+.authDivider { text-align: center; color: #64748b; font-size: 12px; }
+
 .authActionCard {
   width: min(520px, 100%);
 }
