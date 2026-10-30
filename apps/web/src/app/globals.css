@@ -2192,8 +2192,15 @@ a {
   font-weight: 900;
 }
 
+/* Authentication also opens from the iOS app, outside the desktop app shell. */
+body:has(> .authPage) {
+  min-width: 0;
+}
+
 .authPage {
   display: grid;
+  width: 100%;
+  min-width: 0;
   min-height: 100vh;
   place-items: center;
   padding: 32px;
@@ -2202,6 +2209,7 @@ a {
 
 .authCard {
   width: min(460px, 100%);
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 18px;
   padding: 34px;
@@ -2259,12 +2267,14 @@ a {
 
 .authForm {
   display: grid;
+  min-width: 0;
   gap: 16px;
   margin-top: 24px;
 }
 
 .authForm label {
   display: grid;
+  min-width: 0;
   gap: 7px;
   color: #334155;
   font-size: 13px;
@@ -2272,11 +2282,18 @@ a {
 }
 
 .authForm input {
+  width: 100%;
+  min-width: 0;
   min-height: 46px;
   border: 1px solid var(--line);
   border-radius: 9px;
   padding: 0 12px;
   font: inherit;
+  font-size: 16px;
+}
+
+.authForm .passwordInput {
+  min-width: 0;
 }
 
 .passwordInput {
@@ -2461,6 +2478,30 @@ a {
 
 .authResetLink:disabled {
   opacity: 0.6;
+}
+
+@media (max-width: 680px) {
+  .authPage {
+    min-height: 100svh;
+    padding: 24px 16px;
+  }
+
+  .authCard {
+    padding: 24px 20px;
+    border-radius: 14px;
+  }
+
+  .authCard h1 {
+    font-size: 23px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
+  .authCard > p,
+  .authMessage {
+    font-size: 14px;
+    line-height: 1.7;
+  }
 }
 
 .tenantSelector {
