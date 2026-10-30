@@ -135,12 +135,14 @@ a {
 
 .topbar {
   display: flex;
-  height: 68px;
+  min-height: 68px;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.94);
-  padding: 0 28px;
+  padding: 10px 28px;
 }
 
 .storeIdentity {
@@ -165,6 +167,63 @@ a {
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
+}
+
+.topbarTools {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.tenantAccountControls {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 16px;
+}
+
+.loginUser {
+  display: flex;
+  min-height: 40px;
+  max-width: 260px;
+  align-items: center;
+  gap: 9px;
+  border-left: 1px solid var(--line);
+  padding-left: 16px;
+}
+
+.loginUserIcon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--teal-dark);
+  background: #e9fbf8;
+}
+
+.loginUserDetails {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.loginUserDetails strong,
+.loginUserDetails > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loginUserDetails strong {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.loginUserDetails > span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .tenantSwitcher {

@@ -22,7 +22,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { LogoutButton } from "@/components/logout-button";
 import { useTenantSlug, usePermissions } from "@/components/tenant-provider";
-import { TenantSwitcher } from "@/components/tenant-switcher";
+import { TenantAccountControls } from "@/components/tenant-account-controls";
 import { adminNavigation } from "@/lib/admin-navigation";
 import { tenantPath } from "@/lib/tenant-routing";
 
@@ -73,7 +73,7 @@ export function AdminShell({ active, title, actions, children }: AdminShellProps
         <header className="adminTopbar">
           <h1>{title}</h1>
           <div className="adminTopbarControls">
-            <TenantSwitcher />
+            <TenantAccountControls />
             {actions ? <div className="adminActions">{actions}</div> : null}
           </div>
         </header>

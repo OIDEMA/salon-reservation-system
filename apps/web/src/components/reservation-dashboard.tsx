@@ -26,7 +26,7 @@ import { AdminSidebar } from "@/components/admin-shell";
 import { fetchDashboard } from "@/lib/api";
 import { dashboardPreloadState, dashboardToday, matchingDashboardPreload, takeDashboardPreload, validDashboardDate, type DashboardPreload, type DashboardRequest } from "@/lib/dashboard-preload";
 import { useTenant, usePermissions } from "@/components/tenant-provider";
-import { TenantSwitcher } from "@/components/tenant-switcher";
+import { TenantAccountControls } from "@/components/tenant-account-controls";
 import { HistoricalScheduleAgenda, HistoricalScheduleCard } from "@/components/historical-schedule";
 import { buildScheduleLayout, scheduleCardKey, scheduleRowAcceptsNewReservation, SCHEDULE_HOUR_WIDTH, SCHEDULE_LANE_HEIGHT } from "@/lib/schedule-layout";
 import { TimelineReservationEditor, type TimelineEditorValue } from "@/components/timeline-reservation-editor";
@@ -562,7 +562,7 @@ export function ReservationDashboard({ initialData, renderId }: { initialData?: 
                 </button>
               ))}
             </div>
-            <TenantSwitcher />
+            <TenantAccountControls />
           </div>
         </header>
 

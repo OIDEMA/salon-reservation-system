@@ -5,6 +5,7 @@ import { receiptSettingsInputSchema } from "./receipt-settings.js";
 import { registerMemberBookingRoutes } from "./member-booking-routes.js";
 import { registerMembershipRoutes } from "./membership-routes.js";
 import { registerStaffMobileRoutes } from "./staff-mobile-routes.js";
+import { registerCurrentUserRoutes } from "./current-user-routes.js";
 import { MembershipError } from "./membership-domain.js";
 import { CashError } from "./cash-domain.js";
 import {
@@ -560,6 +561,8 @@ server.get("/ready", async (request, reply) => {
     return reply.code(503).send({ ok: false, service: "reservation-api", database: "unavailable" });
   }
 });
+
+registerCurrentUserRoutes(server);
 
 server.get("/api/me/tenants", async (request, reply) => {
   const user = await requireAuthenticatedUser(request, reply);

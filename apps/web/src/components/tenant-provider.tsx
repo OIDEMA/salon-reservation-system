@@ -2,6 +2,11 @@
 
 import { createContext, useContext, useState, type ReactNode } from "react";
 
+export type LoginUser = {
+  displayName: string | null;
+  email: string | null;
+};
+
 export type TenantMembership = {
   role?: "OWNER" | "ADMIN" | "MANAGER" | "STAFF" | "VIEWER";
   permissions?: string[];
@@ -14,6 +19,7 @@ export type TenantMembership = {
 };
 
 type TenantContextValue = {
+  currentUser?: LoginUser;
   tenantSlug: string;
   memberships: TenantMembership[];
   activeSalonId?: string;
@@ -25,10 +31,11 @@ type TenantContextValue = {
 
 const TenantContext = createContext<TenantContextValue | null>(null);
 
-export function TenantProvider({ tenantSlug, memberships, activeSalonId, children }: {
+export function TenantProvider({ tenantSlug, memberships, activeSalonId, currentUser, children }: {
   tenantSlug: string;
   memberships: TenantMembership[];
   activeSalonId?: string;
+  currentUser?: LoginUser;
   children: ReactNode;
 }) {
   const [savedSalonNames, setSavedSalonNames] = useState<Record<string, string>>({});
@@ -36,6 +43,7 @@ export function TenantProvider({ tenantSlug, memberships, activeSalonId, childre
   const permissions = activeMembership?.permissions ?? [];
   const salonIds = activeMembership?.tenant.salons.map((salon) => salon.id) ?? [];
   const value: TenantContextValue = {
+    currentUser,
     tenantSlug,
     activeSalonId: activeSalonId && salonIds.includes(activeSalonId) ? activeSalonId : salonIds[0],
     role: activeMembership?.role,
