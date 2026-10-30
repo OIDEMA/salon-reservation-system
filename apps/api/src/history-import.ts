@@ -35,7 +35,7 @@ export const historyReservationRecordSchema = z.object({
 });
 export type HistoryReservationRecord = z.infer<typeof historyReservationRecordSchema>;
 export const historyImportEnvelopeSchema = z.object({
-  version: z.literal(1), source: z.literal("SALONBOARD", { errorMap: () => ({ message: "取込ファイルの形式を確認してください。" }) }), sourceStoreId: z.literal(SALONBOARD_SOURCE_STORE),
+  version: z.literal(1), source: z.literal("SALONBOARD", { error: "取込ファイルの形式を確認してください。" }), sourceStoreId: z.literal(SALONBOARD_SOURCE_STORE),
   periodFrom: historyDateSchema, periodTo: historyDateSchema, capturedAt: timestamp,
   expectedCount: z.number().int().min(1).max(10000), records: z.array(historyReservationRecordSchema).min(1).max(10000)
 }).strict().superRefine((envelope, context) => {

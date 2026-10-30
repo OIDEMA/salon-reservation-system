@@ -7,6 +7,8 @@ import { TenantLink } from "@/components/tenant-link";
 import { usePermissions, useTenant, useTenantSlug } from "@/components/tenant-provider";
 import { tenantApiPath, tenantPath } from "@/lib/tenant-routing";
 import type { ReservationOption } from "@/lib/admin-types";
+import { membershipDraftFields } from "@/lib/membership-checkout";
+import { MembershipConfirmation } from "./membership-confirmation";
 import { cashMethodLabels, cashStatusLabels, cashYen, type CashCheckout, type CashCheckoutPage, type CashItem, type CashPayment, type CashRegister, type CashRegisterSummary, type CashRegisterPage } from "./cash-types";
 
 async function api<T>(slug: string, path: string, method = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
@@ -140,10 +142,18 @@ function editable(checkout: CashCheckout) {
   return { items: checkout.items.map(({ label, quantity, unitPriceYen, discountYen, taxRate }) => ({ label, quantity, unitPriceYen, discountYen, taxRate })),
     payments: checkout.payments.map(({ method, amountYen, reference }) => ({ method, amountYen, reference })),
     pointsDiscountYen: checkout.pointsDiscountYen ?? 0,
+    membership: checkout.membership ?? null,
     legacyPaidAcknowledged: checkout.legacyPaidAcknowledged, notes: checkout.notes };
 }
 
 export function CashCheckoutEditor({ initialCheckout, registers }: { initialCheckout: CashCheckout; registers: CashRegisterSummary[] }) {
+  const slug = useTenantSlug();
+  const { activeSalonId } = useTenant();
+  // Keep an old customer's draft and pending lookup out of a new staff context.
+  return <CashCheckoutEditorContent key={`${slug}:${activeSalonId ?? ""}:${initialCheckout.id}`} initialCheckout={initialCheckout} registers={registers} />;
+}
+
+function CashCheckoutEditorContent({ initialCheckout, registers }: { initialCheckout: CashCheckout; registers: CashRegisterSummary[] }) {
   const slug = useTenantSlug();
   const { can } = usePermissions();
   const canEdit = can("checkout.write");
@@ -157,26 +167,31 @@ export function CashCheckoutEditor({ initialCheckout, registers }: { initialChec
   const [message, setMessage] = useState("");
   const finalizeKey = useRef("");
   const reverseKey = useRef("");
+  const [membershipPending, setMembershipPending] = useState(false);
   const isDraft = checkout.status === "DRAFT";
   const dirty = JSON.stringify(form) !== JSON.stringify(editable(checkout));
   const subtotal = form.items.reduce((sum, item) => sum + item.quantity * item.unitPriceYen, 0);
   const discount = form.items.reduce((sum, item) => sum + item.discountYen, 0);
   const beforePoints = subtotal - discount;
-  const pointsInvalid = !Number.isSafeInteger(form.pointsDiscountYen) || form.pointsDiscountYen < 0 || form.pointsDiscountYen > beforePoints;
+  const membershipInvalid = form.membership && (form.membership.decision === "USE"
+    ? checkout.legacyPaymentStatus === "PAID" || form.membership.pointsToUse < 100 || form.membership.pointsToUse % 100 !== 0 || form.membership.pointsToUse !== form.pointsDiscountYen
+    : form.membership.pointsToUse !== 0 || form.pointsDiscountYen !== 0);
+  const pointsInvalid = !Number.isSafeInteger(form.pointsDiscountYen) || form.pointsDiscountYen < 0 || form.pointsDiscountYen > beforePoints || Boolean(membershipInvalid);
   const total = beforePoints - form.pointsDiscountYen;
   const allocated = form.payments.reduce((sum, payment) => sum + payment.amountYen, 0);
   const openRegisters = registers.filter((register) => register.status === "OPEN");
-  function replace(updated: CashCheckout) { setCheckout(updated); setForm(editable(updated)); }
+  function replace(updated: CashCheckout) { setCheckout(updated); setForm(editable(updated)); setMembershipPending(false); }
   function item(index: number, patch: Partial<CashItem>) { setForm((current) => ({ ...current, items: current.items.map((line, position) => position === index ? { ...line, ...patch } : line) })); }
   function payment(index: number, patch: Partial<CashPayment>) { setForm((current) => ({ ...current, payments: current.payments.map((line, position) => position === index ? { ...line, ...patch } : line) })); }
   async function save(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (busy || !canEdit) return; setBusy(true); setMessage("");
-    try { replace(await api<CashCheckout>(slug, `/checkouts/${checkout.id}`, "PUT", { ...form, version: checkout.version })); finalizeKey.current = ""; setMessage("下書きを保存しました。"); }
+    event.preventDefault(); if (busy || !canEdit || membershipPending || pointsInvalid) return; setBusy(true); setMessage("");
+    const { membership, ...draft } = form;
+    try { replace(await api<CashCheckout>(slug, `/checkouts/${checkout.id}`, "PUT", { ...draft, ...membershipDraftFields(membership), version: checkout.version })); finalizeKey.current = ""; setMessage("下書きを保存しました。"); }
     catch (error) { setMessage(error instanceof Error ? error.message : "保存できませんでした。"); }
     finally { setBusy(false); }
   }
   async function finalize() {
-    if (busy || dirty || !canEdit) return; setBusy(true); setMessage(""); finalizeKey.current ||= crypto.randomUUID();
+    if (busy || dirty || !canEdit || membershipPending || pointsInvalid) return; setBusy(true); setMessage(""); finalizeKey.current ||= crypto.randomUUID();
     try { replace(await api<CashCheckout>(slug, `/checkouts/${checkout.id}/finalize`, "POST", { version: checkout.version, requestId: finalizeKey.current, registerSessionId: sessionId })); setMessage("会計を確定しました。"); }
     catch (error) { setMessage(error instanceof Error ? error.message : "確定できませんでした。"); }
     finally { setBusy(false); }
@@ -214,9 +229,20 @@ export function CashCheckoutEditor({ initialCheckout, registers }: { initialChec
           <button type="button" className="miniButton" disabled={form.items.length === 1} onClick={() => setForm((current) => ({ ...current, items: current.items.filter((_, position) => position !== index) }))}>削除</button>
         </div>)}
         <button className="secondaryButton" type="button" disabled={form.items.length >= 100} onClick={() => setForm((current) => ({ ...current, items: [...current.items, { label: "", quantity: 1, unitPriceYen: 0, discountYen: 0, taxRate: 10 }] }))}>明細を追加</button>
+      </fieldset>
+      <MembershipConfirmation key={`${checkout.id}:${checkout.version}`} checkoutId={checkout.id} reservationId={checkout.reservationId}
+        customerId={checkout.reservationSnapshot.customerId} customerName={checkout.reservationSnapshot.customerName}
+        beforePointsYen={beforePoints} value={form.membership} readOnly={!isDraft || !canEdit} disabled={busy}
+        canLookup={isDraft && canEdit || can("customer.read")} canLink={isDraft && canEdit && can("customer.write")}
+        allowRedemption={checkout.legacyPaymentStatus !== "PAID"}
+        onPendingChange={setMembershipPending} onChange={(membership) => setForm((current) => ({ ...current, membership,
+          pointsDiscountYen: membership.decision === "USE" ? membership.pointsToUse : 0 }))} />
+      <fieldset disabled={busy || !isDraft || !canEdit} className="cashFields">
         <h3>ポイント利用</h3>
-        <label className="createField"><span>ポイント利用額（円）</span><input required type="number" min={0} max={Math.max(0, beforePoints)} step={1} aria-describedby="cash-points-help" aria-invalid={pointsInvalid || undefined} value={form.pointsDiscountYen} onChange={(event) => setForm((current) => ({ ...current, pointsDiscountYen: Number(event.target.value) }))} /></label>
-        <p id="cash-points-help" className="cashReceiptFootnote">利用するポイントの円換算額を入力してください。通常の値引き後の金額から差し引きます。会員アプリのポイント残高は別途更新してください。</p>
+        {form.membership ? <p className="membershipApplied">{form.membership.pointsToUse.toLocaleString("ja-JP")}ポイント利用 / {cashYen(form.pointsDiscountYen)}値引き</p>
+          : !membershipPending && <><label className="createField"><span>ポイント利用額（円）</span><input required type="number" min={0} max={Math.max(0, beforePoints)} step={1} aria-describedby="cash-points-help" aria-invalid={pointsInvalid || undefined} value={form.pointsDiscountYen} onChange={(event) => setForm((current) => ({ ...current, pointsDiscountYen: Number(event.target.value) }))} /></label>
+            <p id="cash-points-help" className="cashReceiptFootnote">会員連携を使わない従来のポイント値引きです。会員アプリのポイント残高は別途更新してください。会員残高と連動する場合は、上の「会員証を読み取る」から確認してください。</p></>}
+        {membershipPending && <p className="cashNotice" role="status">会員の確認と利用ポイントの入力をご確認ください。読み取りを閉じると、現在の会計内容で続けられます。</p>}
         {pointsInvalid ? <p className="cashDifference" role="alert">ポイント利用額は0円以上、通常値引き後の金額以下の整数で入力してください。</p> : null}
         <h3>支払内訳</h3>
         {checkout.legacyPaymentStatus === "PAID" ? <p className="cashNotice">この予約は入金済みです。確認済みの事前入金として記録してください。</p> : null}
@@ -232,15 +258,15 @@ export function CashCheckoutEditor({ initialCheckout, registers }: { initialChec
       </fieldset>
       <dl className="cashReceiptTotals"><div><dt>税込小計</dt><dd>{cashYen(subtotal)}</dd></div><div><dt>通常値引</dt><dd>{cashYen(discount)}</dd></div><div><dt>ポイント値引</dt><dd>{cashYen(form.pointsDiscountYen)}</dd></div></dl>
       <div className="cashMetrics"><div><span>会計金額（値引後）</span><strong>{cashYen(total)}</strong></div><div><span>支払記録合計</span><strong>{cashYen(allocated)}</strong></div><div><span>差額</span><strong className={allocated !== total ? "cashDifference" : ""}>{cashYen(total - allocated)}</strong></div></div>
-      {isDraft && canEdit ? <div className="masterCreateActions"><TenantLink className="secondaryButton" href="/checkout">一覧へ</TenantLink><button className="primaryButton" disabled={busy}>{busy ? "処理中..." : "下書きを保存"}</button></div> : null}
+      {isDraft && canEdit ? <div className="masterCreateActions"><TenantLink className="secondaryButton" href="/checkout">一覧へ</TenantLink><button className="primaryButton" disabled={busy || pointsInvalid || membershipPending}>{busy ? "処理中..." : "下書きを保存"}</button></div> : null}
       </form>
     </section>
     {((isDraft && canEdit) || (checkout.status === "FINALIZED" && canRefund)) ? <section className="adminPanel cashPanel">
       {!can("register.read") ? <p className="cashNotice">会計の確定・取消には営業レジの選択が必要です。店舗の管理者に「レジ・日報の閲覧」権限の追加を依頼してください。</p> : null}
       <label className="createField"><span>本日の営業レジ</span><select disabled={busy} value={sessionId} onChange={(event) => { setSessionId(event.target.value); finalizeKey.current = ""; reverseKey.current = ""; }}><option value="">レジを選択してください</option>{openRegisters.map((register) => <option key={register.id} value={register.id}>{register.businessDate} / 営業中</option>)}</select></label>
       {!openRegisters.length ? <p className="cashNotice">本日の営業レジが必要です。{can("register.close") ? <TenantLink href="/register/new">レジ開店へ</TenantLink> : "店舗の管理者にお問い合わせください。"}</p> : null}
-      {isDraft ? <><p>{dirty ? "変更した内容を下書き保存してから確定してください。" : "明細と受領済みの支払内訳を確認して確定してください。管理者メールへの通知が有効な店舗では、確定内容が送信されます。"}</p><button className="primaryButton" disabled={busy || dirty || pointsInvalid || allocated !== total || !sessionId} onClick={() => void finalize()} type="button">会計を確定</button></> :
-        <form className="cashStack" onSubmit={reverse}><h3>全額取消・返金記録</h3><p className="cashNotice">お客様への返金を完了した内容を記録します。カード等の返金操作は決済端末・外部サービスで行ってください。利用ポイントの返還も別途確認してください。</p><label className="createField"><span>取消理由</span><textarea disabled={busy} required maxLength={1000} value={reason} onChange={(event) => { setReason(event.target.value); reverseKey.current = ""; }} /></label><label className="cashCheck"><input disabled={busy} required type="checkbox" checked={refundRecorded} onChange={(event) => setRefundRecorded(event.target.checked)} />全額返金・利用ポイントの返還を確認しました</label><button className="secondaryButton" disabled={busy || !refundRecorded || !sessionId}>全額取消を記録</button></form>}
+      {isDraft ? <><p>{dirty ? "変更した内容を下書き保存してから確定してください。" : "明細と受領済みの支払内訳を確認して確定してください。管理者メールへの通知が有効な店舗では、確定内容が送信されます。"}</p><button className="primaryButton" disabled={busy || dirty || pointsInvalid || membershipPending || allocated !== total || !sessionId} onClick={() => void finalize()} type="button">会計を確定</button></> :
+        <form className="cashStack" onSubmit={reverse}><h3>全額取消・返金記録</h3><p className="cashNotice">お客様への返金を完了した内容を記録します。カード等の返金操作は決済端末・外部サービスで行ってください。{checkout.membership ? "連携した会員の利用ポイント返還と付与ポイント取消も記録します。" : "利用ポイントの返還も別途確認してください。"}</p><label className="createField"><span>取消理由</span><textarea disabled={busy} required maxLength={1000} value={reason} onChange={(event) => { setReason(event.target.value); reverseKey.current = ""; }} /></label><label className="cashCheck"><input disabled={busy} required type="checkbox" checked={refundRecorded} onChange={(event) => setRefundRecorded(event.target.checked)} />{checkout.membership ? "全額返金を確認しました" : "全額返金・利用ポイントの返還を確認しました"}</label><button className="secondaryButton" disabled={busy || !refundRecorded || !sessionId}>全額取消を記録</button></form>}
     </section> : checkout.status === "REVERSED" ? <section className="adminPanel cashPanel"><h3>全額取消済み</h3><p>{checkout.reversalReason}</p><p>{checkout.reversedAt ? new Date(checkout.reversedAt).toLocaleString("ja-JP") : ""}</p><TenantLink href="/checkout" className="secondaryButton">会計一覧へ</TenantLink></section> : null}
     <div className="cashFooter"><button className="secondaryButton" type="button" disabled={busy} onClick={() => void reload()}>最新の状態を取得</button>{isDraft && canEdit ? <div><button className="secondaryButton" type="button" disabled={busy} onClick={() => void refreshReservation()}>予約に合わせて下書きを作り直す</button><p className="cashReceiptFootnote">明細・通常値引・ポイント値引・支払内訳を初期化します。</p></div> : !isDraft ? <TenantLink className="secondaryButton" href={`/checkout/${checkout.id}/receipt`}>領収書の送付・会計控え</TenantLink> : null}</div>
   </div>;

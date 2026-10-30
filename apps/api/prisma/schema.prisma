@@ -82,6 +82,8 @@ enum MembershipStatus {
 }
 
 model Tenant {
+  membershipProgramId String? @unique
+  membershipProgram MembershipProgram? @relation(fields: [membershipProgramId], references: [id], onDelete: Restrict)
   id          String             @id @default(cuid())
   slug        String             @unique
   name        String
@@ -179,6 +181,7 @@ model AuditLog {
 }
 
 model Salon {
+  membershipPointEntries MembershipPointEntry[]
   historicalReservations HistoricalReservation[]
   historicalReservationImportRuns HistoricalReservationImportRun[]
   customerImportRuns CustomerImportRun[]
@@ -361,6 +364,7 @@ model SalonSettings {
 }
 
 model Customer {
+  membershipLinks MembershipCustomerLink[]
   memberLinks MemberCustomerLink[]
   externalRecords CustomerExternalRecord[]
   treatmentCharts TreatmentChart[]
@@ -628,6 +632,14 @@ enum CashMovementKind {
 }
 
 model CashCheckout {
+  membershipAccountId String?
+  pointUseDecision String?
+  pointsToUse Int @default(0)
+  pointPolicyVersion String?
+  pointsAwarded Int @default(0)
+  membershipSnapshot Json?
+  membershipAccount MembershipAccount? @relation(fields: [membershipAccountId], references: [id], onDelete: Restrict)
+  membershipPointEntries MembershipPointEntry[]
   id                       String             @id @default(uuid())
   tenantId                 String
   salonId                  String
@@ -934,5 +946,102 @@ model MemberBookingRateLimit {
   attempts Int @default(1)
 
   @@id([projectId, uid, windowStartsAt])
+  @@index([windowStartsAt])
+}
+
+// Each tenant owns its own program, cards and point ledger. Several salons in
+// that tenant may share the balance; another tenant cannot reuse the program.
+model MembershipProgram {
+  id String @id @default(uuid())
+  slug String @unique
+  name String
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  tenant Tenant?
+  accounts MembershipAccount[]
+}
+
+model MembershipAccount {
+  id String @id @default(uuid())
+  programId String
+  projectId String
+  uid String
+  // The database BEFORE INSERT trigger always assigns a sequence value. The
+  // placeholder lets Prisma omit this server-owned field from create inputs.
+  memberNumber String @unique @default(dbgenerated("NULL::text"))
+  displayName String
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  program MembershipProgram @relation(fields: [programId], references: [id], onDelete: Restrict)
+  customerLinks MembershipCustomerLink[]
+  pointEntries MembershipPointEntry[]
+  checkouts CashCheckout[]
+
+  @@unique([programId, projectId, uid])
+  @@unique([programId, id])
+}
+
+// Separate from MemberCustomerLink: reception linking grants no right to view
+// or cancel a customer's reservations through the member-booking API.
+model MembershipCustomerLink {
+  id String @id @default(uuid())
+  programId String
+  accountId String
+  tenantId String
+  salonId String
+  customerId String
+  linkedByUserId String
+  createdAt DateTime @default(now())
+  account MembershipAccount @relation(fields: [programId, accountId], references: [programId, id], onDelete: Restrict)
+  customer Customer @relation(fields: [tenantId, salonId, customerId], references: [tenantId, salonId, id], onDelete: Restrict)
+
+  @@unique([tenantId, salonId, customerId])
+  @@unique([programId, accountId, tenantId, salonId])
+}
+
+enum MembershipPointKind {
+  EARN
+  REDEEM
+  REFUND
+  EARN_REVERSAL
+}
+
+// Append-only financial history. A checkout/kind pair is written once; reversal
+// entries reference the original and never update or delete it.
+model MembershipPointEntry {
+  id String @id @default(uuid())
+  programId String
+  accountId String
+  tenantId String
+  salonId String
+  checkoutId String?
+  kind MembershipPointKind
+  delta Int
+  requestId String @unique
+  reversalOfId String? @unique
+  createdByUserId String
+  createdAt DateTime @default(now())
+  account MembershipAccount @relation(fields: [programId, accountId], references: [programId, id], onDelete: Restrict)
+  salon Salon @relation(fields: [tenantId, salonId], references: [tenantId, id], onDelete: Restrict)
+  checkout CashCheckout? @relation(fields: [tenantId, salonId, checkoutId], references: [tenantId, salonId, id], onDelete: Restrict)
+  reversalOf MembershipPointEntry? @relation("MembershipPointReversals", fields: [programId, accountId, reversalOfId], references: [programId, accountId, id], onDelete: Restrict)
+  reversal MembershipPointEntry? @relation("MembershipPointReversals")
+
+  @@unique([programId, accountId, id])
+  @@unique([programId, accountId, reversalOfId])
+  @@unique([checkoutId, kind])
+  @@index([programId, accountId, createdAt])
+  @@index([tenantId, salonId, accountId, createdAt])
+}
+
+// Count attempts by verified actor/program, never by an untrusted barcode.
+model MembershipLookupRateLimit {
+  actorKey String
+  programId String
+  windowStartsAt DateTime
+  attempts Int @default(1)
+
+  @@id([actorKey, programId, windowStartsAt])
   @@index([windowStartsAt])
 }

@@ -36,7 +36,7 @@ export const staffImportRecordSchema = z.object({
   }
 });
 export const staffImportEnvelopeSchema = z.object({
-  version: z.literal(1), source: z.literal("SALONBOARD", { errorMap: () => ({ message: "取込ファイルの形式を確認してください。" }) }), sourceStoreId: z.literal(STAFF_IMPORT_SOURCE_STORE),
+  version: z.literal(1), source: z.literal("SALONBOARD", { error: "取込ファイルの形式を確認してください。" }), sourceStoreId: z.literal(STAFF_IMPORT_SOURCE_STORE),
   capturedAt: z.string().datetime({ offset: true }), expectedCount: z.number().int().min(1).max(100),
   records: z.array(staffImportRecordSchema).min(1).max(100)
 }).strict().superRefine((input, context) => {

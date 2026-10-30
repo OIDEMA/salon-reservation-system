@@ -3,6 +3,10 @@ import { reservationPrice } from "./reservation-price.js";
 import { reservationNotificationPayload } from "./reservation-notification.js";
 import { receiptSettingsInputSchema } from "./receipt-settings.js";
 import { registerMemberBookingRoutes } from "./member-booking-routes.js";
+import { registerMembershipRoutes } from "./membership-routes.js";
+import { registerStaffMobileRoutes } from "./staff-mobile-routes.js";
+import { MembershipError } from "./membership-domain.js";
+import { CashError } from "./cash-domain.js";
 import {
   CategoryType,
   LineMessageStatus,
@@ -42,7 +46,7 @@ import { requestedSalonId, requireAuthenticatedUser, requireTenantContext, type 
 
 export const server = Fastify({
   logger: {
-    redact: ["req.headers.authorization", "req.headers.cookie", 'res.headers["set-cookie"]', "req.body.password", "req.body.token"],
+    redact: ["req.headers.authorization", "req.headers.cookie", 'req.headers["x-firebase-appcheck"]', 'res.headers["set-cookie"]', "req.body.password", "req.body.token", "req.body.refreshToken", "req.body.barcode", "req.body.code"],
     transport:
       process.env.NODE_ENV === "production"
         ? undefined
@@ -524,6 +528,13 @@ server.setErrorHandler((error, request, reply) => {
       message: error.issues[0]?.message ?? "入力内容を確認してください。",
       issues: error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }))
     });
+  }
+  // Only these application-owned errors carry reviewed client-facing messages.
+  // Preserve conflict/unavailable codes so clients can re-read the member and
+  // retain a draft instead of guessing whether a point mutation succeeded.
+  if ((error instanceof CashError || error instanceof MembershipError) &&
+    (error.statusCode >= 400 && error.statusCode < 500 || error instanceof MembershipError && error.statusCode === 503)) {
+    return reply.code(error.statusCode).send({ code: error.code, message: error.message });
   }
   request.log.error({ errorName: error instanceof Error ? error.name : "UnknownError", code: typeof error === "object" && error !== null && "code" in error ? String(error.code) : undefined }, "request failed");
   const statusCode = typeof error === "object" && error !== null && "statusCode" in error ? Number(error.statusCode) : 500;
@@ -1345,6 +1356,8 @@ server.patch("/api/reservations/:id/status", async (request, reply) => {
 });
 
 registerMemberBookingRoutes(server);
+registerMembershipRoutes(server);
+registerStaffMobileRoutes(server);
 await registerCashRoutes(server);
 registerReceiptEmailRoutes(server);
 await registerChartRoutes(server);

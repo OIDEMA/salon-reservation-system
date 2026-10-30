@@ -8,8 +8,10 @@ import { reservationPrice } from "./reservation-price.js";
 import { checkoutPage, checkoutPageQuerySchema } from "./checkout-page.js";
 import { registerPage, registerPageQuerySchema, openRegisterOptions } from "./register-page.js";
 import { enqueueCheckoutNotification } from "./checkout-notification.js";
+import { readCheckoutMembership, finalizeMembershipPoints, reverseMembershipPoints } from "./membership-domain.js";
 import { assertCashSettlement, assertCashVersion, businessDateAt, calculateCashDraft, cashAssert,
-  cashDraftSchema, CashError, cashRequestHash, expectedCash, CASH_MAX_YEN } from "./cash-domain.js";
+  cashDraftSchema, cashMembershipInputShape, resolveCashMembershipSelection, membershipDiscountYen, assertMembershipPrepayment,
+  CashError, cashRequestHash, expectedCash, CASH_MAX_YEN, type CashMembershipSelection } from "./cash-domain.js";
 
 type Context = NonNullable<Awaited<ReturnType<typeof requireOperationContext>>>;
 type Tx = Prisma.TransactionClient;
@@ -17,7 +19,8 @@ const uuid = z.string().uuid();
 const identifier = z.string().min(1).max(160);
 const amount = z.number().int().min(0).max(CASH_MAX_YEN);
 const paramsSchema = z.object({ id: uuid });
-const checkoutInclude = { items: { orderBy: { lineNumber: "asc" as const } }, payments: true };
+const checkoutInclude = { items: { orderBy: { lineNumber: "asc" as const } }, payments: true,
+  membershipAccount: { select: { memberNumber: true, displayName: true } } };
 type Checkout = Prisma.CashCheckoutGetPayload<{ include: typeof checkoutInclude }>;
 const registerInclude = { movements: { orderBy: [{ createdAt: "asc" as const }, { id: "asc" as const }] } };
 type Register = Prisma.CashRegisterSessionGetPayload<{ include: typeof registerInclude }>;
@@ -28,6 +31,40 @@ async function checkoutFor(tx: Tx, context: Context, id: string) {
   const checkout = await tx.cashCheckout.findFirst({ where: { ...scope(context), id }, include: checkoutInclude });
   cashAssert(checkout, "CHECKOUT_NOT_FOUND", "会計が見つかりません。", 404);
   return checkout;
+}
+
+function checkoutResponse(checkout: Checkout) {
+  const { membershipAccount, ...result } = checkout;
+  const snapshot = checkout.membershipSnapshot && typeof checkout.membershipSnapshot === "object" && !Array.isArray(checkout.membershipSnapshot)
+    ? checkout.membershipSnapshot : {};
+  return { ...result, membership: checkout.membershipAccountId ? {
+    accountId: checkout.membershipAccountId,
+    memberNumber: typeof snapshot.memberNumber === "string" ? snapshot.memberNumber : membershipAccount?.memberNumber ?? "",
+    memberName: typeof snapshot.memberName === "string" ? snapshot.memberName : membershipAccount?.displayName ?? "",
+    decision: checkout.pointUseDecision, pointsToUse: checkout.pointsToUse, policyVersion: checkout.pointPolicyVersion,
+    ...(checkout.status === "DRAFT" ? {} : { pointsAwarded: checkout.pointsAwarded })
+  } : null };
+}
+
+function membershipData(selection: CashMembershipSelection | null, snapshot: Prisma.InputJsonObject | null) {
+  return { membershipAccountId: selection?.membershipAccountId ?? null,
+    pointUseDecision: selection?.pointUseDecision ?? null, pointsToUse: selection?.pointsToUse ?? 0,
+    pointPolicyVersion: selection?.pointPolicyVersion ?? null, pointsAwarded: 0,
+    membershipSnapshot: snapshot ?? Prisma.DbNull };
+}
+
+async function prepareMembership(tx: Tx, context: Context, customerId: string, selection: CashMembershipSelection | null) {
+  if (!selection) return { discountYen: 0, snapshot: null };
+  const membership = await readCheckoutMembership(tx, { ...scope(context), customerId, accountId: selection.membershipAccountId, lock: true });
+  const discountYen = membershipDiscountYen(selection, membership.policy);
+  cashAssert(selection.pointsToUse <= membership.availablePoints, "CASH_POINTS_INSUFFICIENT", "ポイント残高が不足しています。会員情報を更新して利用ポイントを選び直してください。", 409);
+  return { discountYen, snapshot: { memberNumber: membership.account.memberNumber, memberName: membership.account.displayName } };
+}
+
+function assertCreationSelection(input: ReturnType<typeof resolveCashMembershipSelection>, checkout: Checkout) {
+  if (!input) return;
+  cashAssert(cashRequestHash(input) === cashRequestHash(resolveCashMembershipSelection(checkout)),
+    "CASH_MEMBER_SELECTION_CONFLICT", "既存の会計があります。会計画面を開き、会員とポイント利用を確認してください。", 409);
 }
 
 async function registerFor(tx: Tx, context: Context, id: string) {
@@ -44,7 +81,9 @@ function draftFrom(checkout: Checkout) {
   return cashDraftSchema.parse({ version: checkout.version,
     items: checkout.items.map(({ label, quantity, unitPriceYen, discountYen, taxRate }) => ({ label, quantity, unitPriceYen, discountYen, taxRate })),
     payments: checkout.payments.map(({ method, amountYen, reference }) => ({ method, amountYen, reference })),
-    pointsDiscountYen: checkout.pointsDiscountYen, legacyPaidAcknowledged: checkout.legacyPaidAcknowledged, notes: checkout.notes });
+    pointsDiscountYen: checkout.pointsDiscountYen, membershipAccountId: checkout.membershipAccountId,
+    pointUseDecision: checkout.pointUseDecision, pointsToUse: checkout.pointsToUse, pointPolicyVersion: checkout.pointPolicyVersion,
+    legacyPaidAcknowledged: checkout.legacyPaidAcknowledged, notes: checkout.notes });
 }
 
 async function storeLines(tx: Tx, context: Context, id: string, draft: ReturnType<typeof draftFrom>, totals: ReturnType<typeof calculateCashDraft>) {
@@ -77,11 +116,22 @@ async function addCheckoutMovement(tx: Tx, context: Context, request: FastifyReq
 }
 
 async function cashTransaction<T>(operation: (tx: Tx) => Promise<T>): Promise<T> {
-  try { return await runSerializable(operation); } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      throw new CashError("CASH_REQUEST_CONFLICT", "同じ番号が別の操作で使用されています。最新の状態を確認してください。", 409);
+  // runSerializable retries short conflicts immediately. Shared member balances
+  // also contend across companies, so give fully aborted transactions bounded
+  // backoff before retrying their complete authorization and balance checks.
+  for (let attempt = 0; ; attempt++) {
+    try { return await runSerializable(operation); } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        const conflict = error.code === "P2034" || error.code === "P2010" && ["40001", "40P01"].includes(String(error.meta?.code));
+        if (conflict) {
+          if (attempt >= 4) throw new CashError("CASH_RETRY_REQUIRED", "処理が混み合っています。最新の会計を確認して、同じ操作を再試行してください。", 409);
+          await new Promise((resolve) => setTimeout(resolve, 40 * 2 ** attempt + Math.floor(Math.random() * 25)));
+          continue;
+        }
+        if (error.code === "P2002") throw new CashError("CASH_REQUEST_CONFLICT", "同じ番号が別の操作で使用されています。最新の状態を確認してください。", 409);
+      }
+      throw error;
     }
-    throw error;
   }
 }
 
@@ -90,8 +140,10 @@ export function registerCashRoutes(server: FastifyInstance) {
     const context = await requireOperationContext(request, reply, "checkout.read");
     if (!context) return;
     const query = z.object({ reservationId: identifier.optional() }).strict().parse(request.query);
-    return prisma.cashCheckout.findMany({ where: { ...scope(context), ...(query.reservationId ? { reservationId: query.reservationId } : {}) },
+    reply.header("Cache-Control", "private, no-store");
+    const checkouts = await prisma.cashCheckout.findMany({ where: { ...scope(context), ...(query.reservationId ? { reservationId: query.reservationId } : {}) },
       include: checkoutInclude, orderBy: { createdAt: "desc" }, take: 200 });
+    return checkouts.map(checkoutResponse);
   });
 
   server.get("/api/cash/checkouts/page", async (request, reply) => {
@@ -107,33 +159,39 @@ export function registerCashRoutes(server: FastifyInstance) {
     const { id } = paramsSchema.parse(request.params);
     const checkout = await prisma.cashCheckout.findFirst({ where: { ...scope(context), id }, include: checkoutInclude });
     if (!checkout) return reply.code(404).send({ code: "CHECKOUT_NOT_FOUND", message: "会計が見つかりません。" });
-    return checkout;
+    return reply.header("Cache-Control", "private, no-store").send(checkoutResponse(checkout));
   });
 
   server.post("/api/cash/checkouts", async (request, reply) => {
     const context = await requireOperationContext(request, reply, "checkout.write");
     if (!context) return;
-    const input = z.object({ reservationId: identifier, requestId: uuid }).strict().parse(request.body);
+    const input = z.object({ reservationId: identifier, requestId: uuid, ...cashMembershipInputShape }).strict().parse(request.body);
+    const selection = resolveCashMembershipSelection(input);
     const result = await cashTransaction(async (tx) => {
       await lockOperation(tx, context, "checkout.write");
       const retried = await tx.cashCheckout.findFirst({ where: { ...scope(context), createRequestId: input.requestId }, include: checkoutInclude });
       if (retried) {
         cashAssert(retried.reservationId === input.reservationId, "CASH_REQUEST_CONFLICT", "リクエスト番号が別の予約で使用されています。", 409);
+        assertCreationSelection(selection, retried);
         return retried;
       }
       const existing = await tx.cashCheckout.findFirst({ where: { ...scope(context), reservationId: input.reservationId, status: { not: "REVERSED" } }, include: checkoutInclude });
-      if (existing) return existing;
+      if (existing) { assertCreationSelection(selection, existing); return existing; }
       const previous = await tx.cashCheckout.findFirst({ where: { ...scope(context), reservationId: input.reservationId, status: "REVERSED" }, orderBy: { createdAt: "desc" } });
       const reservation = await tx.reservation.findFirst({ where: { ...scope(context), id: input.reservationId }, include: { customer: true, service: true, staff: true, memberBookingRequest: { select: { price: true } } } });
       cashAssert(reservation, "RESERVATION_NOT_FOUND", "予約が見つかりません。", 404);
       cashAssert(!["CANCELLED", "NO_SHOW"].includes(reservation.status), "CASH_RESERVATION_CANCELLED", "取消・無断キャンセルの予約は会計できません。", 409);
       cashAssert(reservation.paymentStatus !== "REFUNDED" || previous, "CASH_RESERVATION_REFUNDED", "返金済み予約には訂正元の会計記録が必要です。", 409);
+      assertMembershipPrepayment(selection, reservation.paymentStatus);
+      const membership = await prepareMembership(tx, context, reservation.customerId, selection);
       const draft = cashDraftSchema.parse({ version: 1, items: [{ label: reservation.service.name, quantity: 1,
-        unitPriceYen: reservationPrice(reservation), discountYen: 0, taxRate: 10 }], payments: [], legacyPaidAcknowledged: false, notes: "" });
+        unitPriceYen: reservationPrice(reservation), discountYen: 0, taxRate: 10 }], payments: [],
+        pointsDiscountYen: membership.discountYen, ...(selection ?? {}), legacyPaidAcknowledged: false, notes: "" });
       const totals = calculateCashDraft(draft);
       const checkout = await tx.cashCheckout.create({ data: { ...scope(context), reservationId: reservation.id,
         createRequestId: input.requestId, createdByUserId: context.user.id, legacyPaymentStatus: reservation.paymentStatus,
         supersedesCheckoutId: previous?.id,
+        ...membershipData(selection, membership.snapshot),
         reservationSnapshot: { customerName: reservation.customer.name, serviceName: reservation.service.name,
           customerId: reservation.customerId, serviceId: reservation.serviceId, staffId: reservation.staffId,
           staffName: reservation.staff?.name ?? "指名なし", salonName: context.salon.name, timezone: context.salon.timezone,
@@ -145,7 +203,7 @@ export function registerCashRoutes(server: FastifyInstance) {
         metadata: { reservationId: reservation.id } });
       return checkoutFor(tx, context, checkout.id);
     });
-    return reply.code(201).send(result);
+    return reply.code(201).send(checkoutResponse(result));
   });
 
   server.put("/api/cash/checkouts/:id", async (request, reply) => {
@@ -154,15 +212,24 @@ export function registerCashRoutes(server: FastifyInstance) {
     const { id } = paramsSchema.parse(request.params);
     const draft = cashDraftSchema.parse(request.body);
     const pointsSpecified = Object.prototype.hasOwnProperty.call(request.body, "pointsDiscountYen");
-    return cashTransaction(async (tx) => {
+    const result = await cashTransaction(async (tx) => {
       await lockOperation(tx, context, "checkout.write");
       const checkout = await checkoutFor(tx, context, id);
       assertCashVersion(checkout, draft.version, "DRAFT");
       // Clients loaded before points support must not silently remove a newer discount.
-      const savedDraft = { ...draft, pointsDiscountYen: pointsSpecified ? draft.pointsDiscountYen : checkout.pointsDiscountYen };
+      const selection = resolveCashMembershipSelection(draft, checkout);
+      const reservation = await tx.reservation.findFirst({ where: { ...scope(context), id: checkout.reservationId }, select: { customerId: true, paymentStatus: true } });
+      cashAssert(reservation, "RESERVATION_NOT_FOUND", "予約が見つかりません。", 404);
+      assertMembershipPrepayment(selection, reservation.paymentStatus);
+      const membership = await prepareMembership(tx, context, reservation.customerId, selection);
+      if (selection && pointsSpecified) cashAssert(draft.pointsDiscountYen === membership.discountYen,
+        "CASH_POINTS_DISCOUNT_MISMATCH", "会員ポイントの値引き額を確認してください。値引き額はサーバーが計算します。");
+      const savedDraft = { ...draft, ...(selection ?? {}), pointsDiscountYen: selection ? membership.discountYen
+        : pointsSpecified ? draft.pointsDiscountYen : checkout.membershipAccountId ? 0 : checkout.pointsDiscountYen };
       const totals = calculateCashDraft(savedDraft);
       const updated = await tx.cashCheckout.updateMany({ where: { ...scope(context), id, status: "DRAFT", version: draft.version }, data: {
         version: { increment: 1 }, subtotalYen: totals.subtotalYen, discountYen: totals.discountYen, pointsDiscountYen: totals.pointsDiscountYen,
+        ...membershipData(selection, membership.snapshot),
         totalYen: totals.totalYen, taxYen: totals.taxYen, taxBreakdown: totals.taxBreakdown,
         cashYen: totals.cashYen, legacyPaidAcknowledged: draft.legacyPaidAcknowledged, notes: draft.notes } });
       cashAssert(updated.count === 1, "CASH_VERSION_CONFLICT", "別の操作で更新されました。", 409);
@@ -171,6 +238,7 @@ export function registerCashRoutes(server: FastifyInstance) {
         metadata: { totalYen: totals.totalYen, version: draft.version + 1 } });
       return checkoutFor(tx, context, id);
     });
+    return checkoutResponse(result);
   });
 
   server.post("/api/cash/checkouts/:id/finalize", async (request, reply) => {
@@ -179,7 +247,7 @@ export function registerCashRoutes(server: FastifyInstance) {
     const { id } = paramsSchema.parse(request.params);
     const input = z.object({ version: z.number().int().positive(), requestId: uuid, registerSessionId: uuid.optional() }).strict().parse(request.body);
     const hash = cashRequestHash({ version: input.version, registerSessionId: input.registerSessionId ?? null });
-    return cashTransaction(async (tx) => {
+    const result = await cashTransaction(async (tx) => {
       await lockOperation(tx, context, "checkout.write");
       const checkout = await checkoutFor(tx, context, id);
       if (checkout.finalizeRequestId === input.requestId) {
@@ -196,6 +264,8 @@ export function registerCashRoutes(server: FastifyInstance) {
         snapshot.staffId === reservation.staffId && snapshot.startsAt === reservation.startsAt.toISOString() && snapshot.endsAt === reservation.endsAt.toISOString(),
         "CASH_RESERVATION_CHANGED", "予約の内容が会計作成後に変更されています。会計の対象を確認してください。", 409);
       const draft = draftFrom(checkout);
+      const selection = resolveCashMembershipSelection(draft);
+      assertMembershipPrepayment(selection, reservation.paymentStatus);
       const totals = calculateCashDraft(draft);
       cashAssert(totals.totalYen === checkout.totalYen && totals.cashYen === checkout.cashYen && totals.taxYen === checkout.taxYen,
         "CASH_SNAPSHOT_MISMATCH", "会計明細を再保存してから確定してください。", 409);
@@ -203,10 +273,18 @@ export function registerCashRoutes(server: FastifyInstance) {
         reservationId: checkout.reservationId, status: "REVERSED" } }) : null;
       assertCashSettlement(draft, totals, reservation.paymentStatus, Boolean(previous));
       const register = await openRegister(tx, context, input.registerSessionId);
+      const membership = await prepareMembership(tx, context, reservation.customerId, selection);
+      if (selection) cashAssert(membership.discountYen === checkout.pointsDiscountYen,
+        "CASH_POINTS_DISCOUNT_MISMATCH", "会員とポイント利用の選択を再保存してから確定してください。", 409);
+      const pointResult = selection ? await finalizeMembershipPoints(tx, {
+        ...scope(context), customerId: reservation.customerId, accountId: selection.membershipAccountId, checkoutId: id,
+        pointsToUse: selection.pointsToUse, totalYen: totals.totalYen, policyVersion: selection.pointPolicyVersion, actorUserId: context.user.id
+      }) : null;
       await tx.cashCheckout.updateMany({ where: { ...scope(context), id, status: "DRAFT", version: input.version }, data: {
         status: "FINALIZED", version: { increment: 1 }, finalizedAt: new Date(), finalizedByUserId: context.user.id,
         finalizeRequestId: input.requestId, finalizeRequestHash: hash, legacyPaymentStatus: reservation.paymentStatus,
         finalizedSessionId: register.id,
+        ...(selection ? { membershipSnapshot: membership.snapshot!, pointsAwarded: pointResult!.pointsAwarded } : {}),
         reservationSnapshot: { customerId: reservation.customerId, serviceId: reservation.serviceId, staffId: reservation.staffId,
           customerName: reservation.customer.name, serviceName: reservation.service.name, staffName: reservation.staff?.name ?? "指名なし",
           salonName: context.salon.name, timezone: context.salon.timezone, startsAt: reservation.startsAt.toISOString(), endsAt: reservation.endsAt.toISOString() } } });
@@ -220,6 +298,7 @@ export function registerCashRoutes(server: FastifyInstance) {
       await enqueueCheckoutNotification(tx, { ...scope(context), tenantSlug: context.tenant.slug, eventType: "checkout.finalized", checkout: finalized });
       return finalized;
     });
+    return checkoutResponse(result);
   });
 
   server.post("/api/cash/checkouts/:id/reverse", async (request, reply) => {
@@ -229,7 +308,7 @@ export function registerCashRoutes(server: FastifyInstance) {
     const input = z.object({ requestId: uuid, reason: z.string().trim().min(1).max(1000),
       refundRecorded: z.literal(true), registerSessionId: uuid.optional() }).strict().parse(request.body);
     const hash = cashRequestHash({ reason: input.reason, refundRecorded: true, registerSessionId: input.registerSessionId ?? null });
-    return cashTransaction(async (tx) => {
+    const result = await cashTransaction(async (tx) => {
       await lockOperation(tx, context, "checkout.refund");
       const checkout = await checkoutFor(tx, context, id);
       if (checkout.reverseRequestId === input.requestId) {
@@ -238,6 +317,8 @@ export function registerCashRoutes(server: FastifyInstance) {
       }
       cashAssert(checkout.status === "FINALIZED", "CASH_NOT_FINALIZED", "確定済みの会計だけ全額取消できます。", 409);
       const register = await openRegister(tx, context, input.registerSessionId);
+      if (checkout.membershipAccountId) await reverseMembershipPoints(tx, { ...scope(context),
+        accountId: checkout.membershipAccountId, checkoutId: id, actorUserId: context.user.id });
       await tx.cashCheckout.updateMany({ where: { ...scope(context), id, status: "FINALIZED" }, data: {
         status: "REVERSED", version: { increment: 1 }, reversedAt: new Date(), reversedByUserId: context.user.id,
         reversalReason: input.reason, reverseRequestId: input.requestId, reverseRequestHash: hash, reversedSessionId: register.id } });
@@ -252,6 +333,7 @@ export function registerCashRoutes(server: FastifyInstance) {
       await enqueueCheckoutNotification(tx, { ...scope(context), tenantSlug: context.tenant.slug, eventType: "checkout.reversed", checkout: reversed });
       return reversed;
     });
+    return checkoutResponse(result);
   });
 
   server.post("/api/cash/checkouts/:id/refresh-reservation", async (request, reply) => {
@@ -259,7 +341,7 @@ export function registerCashRoutes(server: FastifyInstance) {
     if (!context) return;
     const { id } = paramsSchema.parse(request.params);
     const input = z.object({ version: z.number().int().positive() }).strict().parse(request.body);
-    return cashTransaction(async (tx) => {
+    const result = await cashTransaction(async (tx) => {
       await lockOperation(tx, context, "checkout.write");
       const checkout = await checkoutFor(tx, context, id);
       assertCashVersion(checkout, input.version, "DRAFT");
@@ -274,6 +356,7 @@ export function registerCashRoutes(server: FastifyInstance) {
         version: { increment: 1 }, legacyPaymentStatus: reservation.paymentStatus, legacyPaidAcknowledged: false,
         subtotalYen: totals.subtotalYen, discountYen: 0, pointsDiscountYen: 0, totalYen: totals.totalYen, taxYen: totals.taxYen,
         taxBreakdown: totals.taxBreakdown, cashYen: 0,
+        ...membershipData(null, null),
         reservationSnapshot: { customerId: reservation.customerId, serviceId: reservation.serviceId, staffId: reservation.staffId,
           customerName: reservation.customer.name, serviceName: reservation.service.name, staffName: reservation.staff?.name ?? "指名なし",
           salonName: context.salon.name, timezone: context.salon.timezone, startsAt: reservation.startsAt.toISOString(), endsAt: reservation.endsAt.toISOString() } } });
@@ -282,6 +365,7 @@ export function registerCashRoutes(server: FastifyInstance) {
         metadata: { reservationId: reservation.id, paymentRecordsCleared: true } });
       return checkoutFor(tx, context, id);
     });
+    return checkoutResponse(result);
   });
 
   server.get("/api/cash/register-sessions", async (request, reply) => {

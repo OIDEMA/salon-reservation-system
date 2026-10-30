@@ -4,6 +4,12 @@ import { z } from "zod";
 export const CASH_MAX_YEN = 100_000_000;
 const yen = z.number().int().min(0).max(CASH_MAX_YEN);
 export const cashPaymentMethods = ["CASH", "CARD", "BANK", "EXTERNAL_PREPAYMENT", "OTHER"] as const;
+export const cashMembershipInputShape = {
+  membershipAccountId: z.string().min(1).max(160).nullable().optional(),
+  pointUseDecision: z.enum(["USE", "SKIP"]).nullable().optional(),
+  pointsToUse: z.number().int().min(0).max(CASH_MAX_YEN).optional(),
+  pointPolicyVersion: z.string().min(1).max(100).nullable().optional()
+};
 export const cashDraftSchema = z.object({
   version: z.number().int().positive(),
   items: z.array(z.object({
@@ -18,11 +24,16 @@ export const cashDraftSchema = z.object({
     reference: z.string().trim().max(160).default("")
   }).strict()).max(20),
   pointsDiscountYen: yen.default(0),
+  ...cashMembershipInputShape,
   legacyPaidAcknowledged: z.boolean(),
   notes: z.string().trim().max(2000).default("")
 }).strict();
 
 export type CashDraft = z.infer<typeof cashDraftSchema>;
+export type CashMembershipSelection = {
+  membershipAccountId: string; pointUseDecision: "USE" | "SKIP"; pointsToUse: number; pointPolicyVersion: string;
+};
+type CashMembershipFields = Pick<CashDraft, "membershipAccountId" | "pointsToUse" | "pointPolicyVersion"> & { pointUseDecision?: string | null };
 export type CashItem = CashDraft["items"][number] & { lineNumber: number; pointsDiscountYen: number; taxYen: number; totalYen: number };
 export type CashTotals = {
   items: CashItem[];
@@ -42,6 +53,44 @@ export class CashError extends Error {
 
 export function cashAssert(condition: unknown, code: string, message: string, statusCode = 400): asserts condition {
   if (!condition) throw new CashError(code, message, statusCode);
+}
+
+/** Older clients may omit membership fields; they must not silently detach a saved member. */
+export function resolveCashMembershipSelection(input: CashMembershipFields, previous: CashMembershipFields = {}): CashMembershipSelection | null {
+  if (input.membershipAccountId === null) {
+    cashAssert(input.pointUseDecision == null && (input.pointsToUse ?? 0) === 0 && input.pointPolicyVersion == null,
+      "CASH_MEMBER_SELECTION_INVALID", "会員を外す場合はポイント利用の選択も解除してください。");
+    return null;
+  }
+  const accountId = input.membershipAccountId ?? previous.membershipAccountId;
+  const changedAccount = input.membershipAccountId !== undefined && input.membershipAccountId !== previous.membershipAccountId;
+  const decision = input.pointUseDecision !== undefined ? input.pointUseDecision : changedAccount ? null : previous.pointUseDecision;
+  const pointsToUse = input.pointsToUse !== undefined ? input.pointsToUse : changedAccount ? undefined : previous.pointsToUse;
+  const policyVersion = input.pointPolicyVersion !== undefined ? input.pointPolicyVersion : changedAccount ? null : previous.pointPolicyVersion;
+  if (!accountId) {
+    cashAssert(decision == null && (pointsToUse ?? 0) === 0 && policyVersion == null,
+      "CASH_MEMBER_SELECTION_INVALID", "ポイント利用には会員証の読み取りと会員確認が必要です。");
+    return null;
+  }
+  cashAssert((decision === "USE" || decision === "SKIP") && Number.isSafeInteger(pointsToUse) && pointsToUse! >= 0 && typeof policyVersion === "string" && policyVersion.length > 0,
+    "CASH_MEMBER_DECISION_REQUIRED", "利用ポイントを確認してください。利用しない場合は0を入力してください。");
+  return { membershipAccountId: accountId, pointUseDecision: decision, pointsToUse: pointsToUse!, pointPolicyVersion: policyVersion };
+}
+
+/** A linked membership controls the yen discount; legacy hand-entered yen discounts stay separate. */
+export function membershipDiscountYen(selection: CashMembershipSelection, policy: { version: string; pointValueYen: number; redemptionUnit: number }) {
+  cashAssert(selection.pointPolicyVersion === policy.version, "CASH_POINT_POLICY_CHANGED", "ポイントの利用条件が更新されています。会員情報を再確認してください。", 409);
+  cashAssert(selection.pointUseDecision === "SKIP" ? selection.pointsToUse === 0 : selection.pointsToUse > 0 && selection.pointsToUse % policy.redemptionUnit === 0,
+    "CASH_POINT_UNIT_INVALID", `ポイントは${policy.redemptionUnit}ポイント単位で指定してください。使わない場合は0ポイントにしてください。`);
+  const discount = selection.pointsToUse * policy.pointValueYen;
+  cashAssert(Number.isSafeInteger(discount) && discount >= 0 && discount <= CASH_MAX_YEN,
+    "CASH_POINTS_DISCOUNT_LIMIT", "ポイント利用額が取扱上限を超えています。");
+  return discount;
+}
+
+export function assertMembershipPrepayment(selection: CashMembershipSelection | null, paymentStatus: string) {
+  cashAssert(!selection || selection.pointUseDecision !== "USE" || paymentStatus !== "PAID",
+    "CASH_PREPAID_POINT_USE_UNAVAILABLE", "入金済みの予約では新しくポイントを利用できません。利用ポイントを0にしてください。", 409);
 }
 
 function sumBounded(values: number[]) {

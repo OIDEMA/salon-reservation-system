@@ -1,8 +1,13 @@
 export type CashItem = { label: string; quantity: number; unitPriceYen: number; discountYen: number; pointsDiscountYen?: number; taxRate: number; taxYen?: number; totalYen?: number };
 export type CashPayment = { method: "CASH" | "CARD" | "BANK" | "EXTERNAL_PREPAYMENT" | "OTHER"; amountYen: number; reference: string };
+export type CashMembership = {
+  accountId: string; memberNumber: string; memberName: string;
+  decision: "USE" | "SKIP"; pointsToUse: number; policyVersion: string; pointsAwarded?: number;
+};
 export type CashCheckout = {
   id: string; reservationId: string; status: "DRAFT" | "FINALIZED" | "REVERSED"; version: number;
-  reservationSnapshot: { customerName: string; serviceName: string; staffName: string; salonName: string; startsAt: string };
+  reservationSnapshot: { customerId?: string; customerName: string; serviceName: string; staffName: string; salonName: string; startsAt: string };
+  membership?: CashMembership | null;
   items: CashItem[]; payments: CashPayment[]; legacyPaymentStatus: string; legacyPaidAcknowledged: boolean;
   subtotalYen: number; discountYen: number; pointsDiscountYen?: number; taxYen: number; totalYen: number; cashYen: number; notes: string;
   taxBreakdown: { taxRate: number; taxableTotalYen: number; taxYen: number }[];

@@ -44,7 +44,7 @@ export const salonboardCustomerRecordSchema = z.object({
 });
 export type SalonboardCustomerRecord = z.infer<typeof salonboardCustomerRecordSchema>;
 export const salonboardImportEnvelopeSchema = z.object({
-  version: z.literal(1), source: z.literal("SALONBOARD", { errorMap: () => ({ message: "取込ファイルの形式を確認してください。" }) }), sourceStoreId: z.literal(SALONBOARD_SOURCE_STORE),
+  version: z.literal(1), source: z.literal("SALONBOARD", { error: "取込ファイルの形式を確認してください。" }), sourceStoreId: z.literal(SALONBOARD_SOURCE_STORE),
   expectedCount: z.number().int().min(1).max(10000), capturedAt: z.string().datetime({ offset: true }),
   records: z.array(salonboardCustomerRecordSchema).min(1).max(10000)
 }).strict().superRefine((input, context) => {

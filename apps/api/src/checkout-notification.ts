@@ -12,6 +12,7 @@ export const checkoutNotificationSchema = z.object({
   serviceName: z.string().min(1), staffName: z.string().min(1),
   startsAt: z.string().datetime(), occurredAt: z.string().datetime(),
   subtotalYen: amount, discountYen: amount, pointsDiscountYen: amount, totalYen: amount, taxYen: amount,
+  membership: z.object({ pointsUsed: amount, pointsAwarded: amount, policyVersion: z.string().min(1).max(100) }).strict().optional(),
   payments: z.array(z.object({ method: z.enum(cashPaymentMethods), amountYen: amount.refine((value) => value > 0) }).strict()).max(20)
 }).strict().superRefine((payload, context) => {
   if (payload.subtotalYen - payload.discountYen - payload.pointsDiscountYen !== payload.totalYen ||
@@ -26,6 +27,7 @@ type SnapshotCheckout = {
   status: string; finalizedAt: Date | null; reversedAt: Date | null;
   subtotalYen: number; discountYen: number; pointsDiscountYen: number; totalYen: number; taxYen: number;
   payments: { method: typeof cashPaymentMethods[number]; amountYen: number }[];
+  membershipAccountId?: string | null; pointsToUse?: number; pointsAwarded?: number; pointPolicyVersion?: string | null;
 };
 
 export async function enqueueCheckoutNotification(tx: Prisma.TransactionClient, input: {
@@ -46,6 +48,9 @@ export async function enqueueCheckoutNotification(tx: Prisma.TransactionClient, 
     checkoutId: checkout.id, reservationId: checkout.reservationId, ...snapshot, occurredAt: occurredAt.toISOString(),
     subtotalYen: checkout.subtotalYen, discountYen: checkout.discountYen, pointsDiscountYen: checkout.pointsDiscountYen,
     totalYen: checkout.totalYen, taxYen: checkout.taxYen,
+    ...(checkout.membershipAccountId ? { membership: {
+      pointsUsed: checkout.pointsToUse, pointsAwarded: checkout.pointsAwarded, policyVersion: checkout.pointPolicyVersion
+    } } : {}),
     payments: checkout.payments.map(({ method, amountYen }) => ({ method, amountYen })) });
   await tx.emailOutbox.create({ data: { eventKey: `${eventType}:${checkout.id}`, eventType, tenantId, salonId, recipientEmail: recipient, payload } });
 }
@@ -76,7 +81,10 @@ export function checkoutNotificationEmail(payload: Notification, baseUrl: string
       `${reversed ? "返金記録" : "支払記録"}合計: ${yen(payload.totalYen)}`,
       ...payments.map((payment) => `${reversed ? "返金" : "支払"}内訳・${paymentLabels[payment.method]}: ${yen(payment.amountYen)}`),
       ...(reversed ? [`この会計による売上計上は取り消されました（売上の増減: -${yen(payload.totalYen)}）。`,
-        "ポイント利用値引きも取消となります。ポイント残高の返還が必要な場合は、別途ご確認ください。"] : []),
+        ...(payload.membership ? [
+          ...(payload.membership.pointsUsed ? [`利用した${payload.membership.pointsUsed.toLocaleString("ja-JP")}ポイントを会員の残高へ返還しました。`] : []),
+          ...(payload.membership.pointsAwarded ? [`この会計で付与した${payload.membership.pointsAwarded.toLocaleString("ja-JP")}ポイントを取り消しました。`] : [])
+        ] : ["ポイント利用値引きも取消となります。ポイント残高の返還が必要な場合は、別途ご確認ください。"])] : []),
       `予約番号: ${cleanLine(payload.reservationId)}`, `会計番号: ${payload.checkoutId}`, `管理画面: ${checkoutUrl}`
     ].join("\n")
   };

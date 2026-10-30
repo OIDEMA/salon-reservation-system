@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { assertCashSettlement, assertCashVersion, businessDateAt, calculateCashDraft,
-  cashDraftSchema, cashRequestHash, expectedCash } from "../src/cash-domain.js";
+  cashDraftSchema, cashRequestHash, expectedCash, resolveCashMembershipSelection, membershipDiscountYen, assertMembershipPrepayment } from "../src/cash-domain.js";
 
 const draft = (overrides: Record<string, unknown> = {}) => cashDraftSchema.parse({ version: 1,
   items: [{ label: "フェイシャルケア", quantity: 1, unitPriceYen: 9800, discountYen: 0, taxRate: 10 }],
@@ -151,4 +151,39 @@ test("idempotency hashes ignore object-key order but preserve changed amounts an
 test("the business date uses the salon timezone", () => {
   assert.equal(businessDateAt(new Date("2026-10-13T15:30:00Z"), "Asia/Tokyo"), "2026-10-14");
   assert.equal(businessDateAt(new Date("2026-10-13T15:30:00Z"), "UTC"), "2026-10-13");
+});
+
+const membership = { membershipAccountId: "account-one", pointUseDecision: "USE" as const, pointsToUse: 300, pointPolicyVersion: "policy-v1" };
+const policy = { version: "policy-v1", pointValueYen: 1, redemptionUnit: 100 };
+
+test("linked membership requires an explicit use-or-skip decision and never infers points from an old yen discount", () => {
+  assert.equal(resolveCashMembershipSelection(draft({ pointsDiscountYen: 300 })), null);
+  assert.throws(() => resolveCashMembershipSelection({ membershipAccountId: "account-one" }), { code: "CASH_MEMBER_DECISION_REQUIRED" });
+  assert.throws(() => resolveCashMembershipSelection({ pointsToUse: 100 }), { code: "CASH_MEMBER_SELECTION_INVALID" });
+  assert.deepEqual(resolveCashMembershipSelection(membership), membership);
+  const skip = { ...membership, pointUseDecision: "SKIP" as const, pointsToUse: 0 };
+  assert.equal(membershipDiscountYen(skip, policy), 0);
+  assert.equal(membershipDiscountYen(membership, policy), 300);
+});
+
+test("membership redemption validates the policy and hundred-point units", () => {
+  for (const pointsToUse of [0, 1, 99, 101, 150]) assert.throws(() => membershipDiscountYen({ ...membership, pointsToUse }, policy), { code: "CASH_POINT_UNIT_INVALID" });
+  assert.throws(() => membershipDiscountYen({ ...membership, pointUseDecision: "SKIP" }, policy), { code: "CASH_POINT_UNIT_INVALID" });
+  assert.throws(() => membershipDiscountYen({ ...membership, pointPolicyVersion: "old-policy" }, policy), { code: "CASH_POINT_POLICY_CHANGED", statusCode: 409 });
+  for (const pointsToUse of [-1, 0.5, 100_000_001]) assert.throws(() => draft({ ...membership, pointsToUse }));
+});
+
+test("older editors preserve a selected member; changing the member requires a new complete decision", () => {
+  assert.deepEqual(resolveCashMembershipSelection({}, membership), membership);
+  assert.deepEqual(resolveCashMembershipSelection({ pointUseDecision: "SKIP", pointsToUse: 0 }, membership), { ...membership, pointUseDecision: "SKIP", pointsToUse: 0 });
+  assert.throws(() => resolveCashMembershipSelection({ membershipAccountId: "another-account" }, membership), { code: "CASH_MEMBER_DECISION_REQUIRED" });
+  assert.equal(resolveCashMembershipSelection({ membershipAccountId: null }, membership), null);
+  assert.throws(() => resolveCashMembershipSelection({ membershipAccountId: null, pointsToUse: 100 }, membership), { code: "CASH_MEMBER_SELECTION_INVALID" });
+});
+
+test("a paid reservation cannot newly spend membership points, while legacy discounts and explicit skip remain supported", () => {
+  assert.throws(() => assertMembershipPrepayment(membership, "PAID"), { code: "CASH_PREPAID_POINT_USE_UNAVAILABLE", statusCode: 409 });
+  assert.doesNotThrow(() => assertMembershipPrepayment(membership, "UNPAID"));
+  assert.doesNotThrow(() => assertMembershipPrepayment({ ...membership, pointUseDecision: "SKIP", pointsToUse: 0 }, "PAID"));
+  assert.doesNotThrow(() => assertMembershipPrepayment(null, "PAID"));
 });

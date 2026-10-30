@@ -308,6 +308,22 @@ test("finalized and reversed checkout snapshots use the same captured admin deli
   }
 });
 
+test("linked checkout reversal reports automatic point return and earn cancellation; legacy records keep manual guidance", async () => {
+  const row = checkoutRow("checkout.reversed");
+  for (const linked of [true, false]) {
+    const { database } = fakeDatabase({ ...row, payload: { ...row.payload,
+      ...(linked ? { membership: { pointsUsed: 1000, pointsAwarded: 200, policyVersion: "beautygum-20261029-v1" } } : {}) } });
+    const sent: TextEmail[] = [];
+    const result = await processEmailOutbox(database, { now: () => now, send: async (message) => { sent.push(message); return { messageId: "point-refund" }; } });
+    assert.equal(result.sent, 1);
+    if (linked) {
+      assert.match(sent[0]!.text, /利用した1,000ポイントを会員の残高へ返還しました/);
+      assert.match(sent[0]!.text, /付与した200ポイントを取り消しました/);
+      assert.doesNotMatch(sent[0]!.text, /別途ご確認/);
+    } else assert.match(sent[0]!.text, /ポイント残高の返還が必要な場合は、別途ご確認/);
+  }
+});
+
 test("checkout outbox refuses cross-tenant, cross-salon or mismatched event references", async () => {
   for (const mismatch of [{ tenantId: "other-tenant" }, { salonId: "other-salon" }, { salonId: null },
     { eventKey: "checkout.finalized:other-checkout" }, { eventType: "checkout.reversed", eventKey: "checkout.reversed:707b079c-6caf-4712-97bf-08259d741059" }]) {

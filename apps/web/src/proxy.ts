@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE } from "@/lib/session-constants";
 import { isTenantSlug, TENANT_SLUG_HEADER } from "@/lib/tenant-routing";
+import { safeStaffHandoffReturnTo } from "@/lib/staff-handoff";
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -18,7 +19,7 @@ export function proxy(request: NextRequest) {
 
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE)?.value);
   if (pathname === "/login") {
-    return hasSession ? NextResponse.redirect(new URL("/select-tenant", request.url)) : NextResponse.next();
+    return hasSession ? NextResponse.redirect(new URL(safeStaffHandoffReturnTo(request.nextUrl.searchParams.get("returnTo")) ?? "/select-tenant", request.url)) : NextResponse.next();
   }
   if (pathname === "/select-tenant") {
     return hasSession ? NextResponse.next() : NextResponse.redirect(new URL("/login", request.url));

@@ -6,13 +6,14 @@ import Link from "next/link";
 import { useState } from "react";
 import { firebaseAuth, firebaseAuthReady } from "@/lib/firebase-client";
 import { createBrowserSession, loginFailureMessage, SessionRequestError } from "@/lib/login-session";
+import { safeStaffHandoffReturnTo } from "@/lib/staff-handoff";
 
 type Feedback = {
   text: string;
   tone: "error" | "success";
 };
 
-export function LoginForm({ initialEmail = "", onAuthenticated }: { initialEmail?: string; onAuthenticated?: () => Promise<void> } = {}) {
+export function LoginForm({ initialEmail = "", onAuthenticated, returnTo }: { initialEmail?: string; onAuthenticated?: () => Promise<void>; returnTo?: string | null } = {}) {
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -36,7 +37,7 @@ export function LoginForm({ initialEmail = "", onAuthenticated }: { initialEmail
       await signOut(firebaseAuth);
       setPassword("");
       if (onAuthenticated) await onAuthenticated();
-      else window.location.assign("/select-tenant");
+      else window.location.assign(safeStaffHandoffReturnTo(returnTo) ?? "/select-tenant");
     } catch (error) {
       setFeedback({
         tone: "error",

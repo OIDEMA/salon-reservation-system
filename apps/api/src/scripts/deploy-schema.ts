@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
+import { ensureMembershipSequence, ensureMembershipInvariants, ensureTenantMembershipProgramUniqueness } from "../membership-invariants.js";
 
 const maximumAttempts = 8;
 const retryDelayMs = 15_000;
@@ -87,12 +88,16 @@ async function main() {
     for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
       let exitCode = 1;
       try {
+        await ensureMembershipSequence(prisma);
+        await ensureTenantMembershipProgramUniqueness(prisma);
         for (const tableName of ["Reservation", "HistoricalReservation"] as const) {
           const prepared = await ensureScopedReferenceIndex(prisma, tableName);
           console.log(`${tableName} reference index: ${prepared}.`);
         }
         exitCode = await runPrismaPush();
+        if (exitCode === 0) await ensureMembershipInvariants(prisma);
       } catch {
+        exitCode = 1;
         // Prisma/SQL diagnostics can include connection details or row values.
         console.error("Schema preparation failed; check database connectivity and the scoped primary key/index definitions.");
       }
